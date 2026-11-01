@@ -48,7 +48,9 @@
     <h1>RL Map Editor</h1>
     <section>
       <h2>Map</h2>
-      <select id="map"></select>
+      <button id="open" class="primary" title="A Rocket League workshop map (.udk); you can also drop it on the view">Open map…</button>
+      <input type="file" id="file" accept=".udk,.upk" hidden>
+      <div id="mapName" class="muted kv" style="margin-top:6px">No map open. Your maps never leave this computer.</div>
     </section>
     <section>
       <h2>Show</h2>
@@ -56,6 +58,7 @@
       <label style="margin-top:6px"><input type="checkbox" id="showVolumes"> Trigger zones (volumes)</label>
       <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
       <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
+      <label title="Real-size references you can move around; never saved into the map"><input type="checkbox" id="showRefs" checked> Car and ball (editor only)</label>
       <div id="count" class="muted"></div>
     </section>
     <section>
@@ -64,7 +67,8 @@
       <select id="palette" size="8" style="margin-top:6px"></select>
       <div class="actions">
         <button id="add">Add at view center</button>
-        <button id="addCheckpoint" title="A zone that becomes your respawn point when you drive through it">Add checkpoint</button>
+        <button id="addCarCheckpoint" title="Flying trials: becomes your respawn point when your car flies or drives through it">Car checkpoint</button>
+        <button id="addBallCheckpoint" title="Dribbling: becomes your respawn point when the ball gets into it; resetting drops a ball onto your car">Ball checkpoint</button>
       </div>
     </section>
     <section>
@@ -108,9 +112,10 @@
       <input id="outName" style="margin-top:6px">
       <div class="actions">
         <button id="save" class="primary">Save as</button>
-        <button id="play" disabled>Load into game</button>
+        <button id="play" title="Writes the edited map over Free Play's Underpass (Chrome or Edge). Be on the main menu, not in Underpass.">Load into game</button>
         <button id="undo">Undo</button>
       </div>
+      <div class="actions"><button id="restore" title="Put the game's own Underpass back">Restore Underpass</button></div>
       <div id="status"></div>
     </section>
     <section class="muted">
@@ -128,6 +133,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Package } from './ue3.js';
+import { build, describe, isOriginalGameMap, shapes } from './map.js';
 
 // Unreal is left-handed Z-up, Three.js right-handed Y-up: swapping Y and Z converts without mirroring.
 const UU = Math.PI / 32768;                       // rotator units to radians
@@ -254,13 +262,41 @@ function materialFor(a) {
   return matCache.get(key);
 }
 
-let mapName = null, actors = [], palette = [], zone = null, objects = [], selected = null, savedName = null;
-const checkpointMat = new THREE.MeshBasicMaterial({ color: 0x3ddc84, transparent: true, opacity: 0.28, depthWrite: false });
+let mapName = null, source = null, pkg = null, actors = [], palette = [], zone = null, objects = [], selected = null;
+const CHECKPOINT_COLORS = { car: 0x3ddc84, ball: 0xff9f43 };
+const checkpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
+  [k, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.28, depthWrite: false })]));
 const terrainMat = new THREE.MeshStandardMaterial({ color: 0xa08a64, roughness: 0.9, flatShading: true });
 function addArrow(obj) {                          // checkpoints respawn the car facing their local +X
   const b = obj.userData.actor.bounds;
-  obj.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(b[0], b[2], b[1]), b[3] * 1.4, 0x3ddc84, b[3] * 0.4, b[3] * 0.25));
+  obj.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(b[0], b[2], b[1]), b[3] * 1.4, CHECKPOINT_COLORS[obj.userData.checkpoint], b[3] * 0.4, b[3] * 0.25));
 }
+// Editor-only size references: an Octane (its hitbox, origin 17 units above the floor at rest) and the ball.
+function carGeometry() {
+  const wheels = (x, r) => [-30, 30].map(z => new THREE.CylinderGeometry(r, r, 12, 20).rotateX(Math.PI / 2).translate(x, r - 17, z));
+  return mergeGeometries([new THREE.BoxGeometry(118, 36.2, 84.2).translate(13.9, 20.8, 0),        // hitbox
+                          new THREE.BoxGeometry(46, 15, 64).translate(-10, 46.4, 0),             // cabin, so the front reads
+                          ...wheels(51, 12.5), ...wheels(-34, 15)], true);
+}
+const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.8 });
+const references = [
+  new THREE.Mesh(carGeometry(), [new THREE.MeshStandardMaterial({ color: 0x2f6fdb, roughness: 0.5 }),
+                                 new THREE.MeshStandardMaterial({ color: 0x173a78, roughness: 0.3 }), wheelMat, wheelMat, wheelMat, wheelMat]),
+  new THREE.Mesh(new THREE.SphereGeometry(91.25, 32, 16), new THREE.MeshStandardMaterial({ color: 0xe6e6e6, roughness: 0.45 })),
+];
+['Car (Octane)', 'Ball'].forEach((name, k) => {
+  references[k].userData = { reference: true, actor: { i: null, name, cls: 'Reference', mesh: null, loc: [0, 0, 0], rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null } };
+  references[k].visible = false;
+  scene.add(references[k]);
+});
+function placeReferences(start) {                 // the car on the floor at the spawn, facing its way, the ball ahead
+  const floor = floorHeight(), yaw = start.rot[1] * UU, [car, ball] = references;
+  car.userData.actor.loc = [start.loc[0], start.loc[1], floor + 17];
+  car.userData.actor.rot = [0, start.rot[1], 0];
+  ball.userData.actor.loc = [start.loc[0] + 600 * Math.cos(yaw), start.loc[1] + 600 * Math.sin(yaw), floor + 91.25];
+  references.forEach(r => { applyActor(r); r.visible = $('showRefs').checked; });
+}
+
 const dirty = new Set(), removed = new Set(), added = [], undo = [];
 const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0);
 const group = new THREE.Group();
@@ -283,21 +319,38 @@ function readBack(obj) {                          // three object -> actor trans
   a.scale3d = [obj.scale.x, obj.scale.z, obj.scale.y].map(v => v / a.scale);
 }
 
-async function loadMap(name) {
+async function openFile(file) {
+  if (!file) return;
+  if (changeCount() && !confirm(`Discard ${changeCount()} unsaved changes?`)) return;
   $('loading').hidden = false;
-  $('loading').textContent = `Loading ${name}…`;
+  $('loading').textContent = `Loading ${file.name}…`;
+  await new Promise(r => setTimeout(r, 30));      // let the message paint before parsing blocks the page
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let data, parsed;
+  try {
+    parsed = new Package(bytes);
+    data = describe(parsed);
+  } catch (err) {
+    $('loading').hidden = !!mapName;
+    $('loading').textContent = 'Open a map to start.';
+    return setStatus(`${file.name}: ${err.message}`, 'warn');
+  }
+  loadMap(file.name, bytes, parsed, data);
+}
+
+function loadMap(name, bytes, parsed, data) {
   select(null);
   setSculpt(false);
   group.clear();
-  dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; savedName = null;
-  $('play').disabled = true;
-  const res = await fetch('/api/map?name=' + encodeURIComponent(name));
-  const data = await res.json();
+  dirty.clear(); removed.clear(); added.length = 0; undo.length = 0;
   ({ actors, palette, zone } = data);
-  const checkpointZones = new Set(data.checkpoints);
+  const checkpointZones = new Map(data.checkpoints.map(c => [c.i, c.ball ? 'ball' : 'car']));
   mapName = name;
+  source = bytes;
+  pkg = parsed;
+  $('mapName').textContent = `${name} · ${(bytes.length / 1e6).toFixed(0)} MB`;
   renderPalette();
-  $('addCheckpoint').disabled = !zone;
+  $('addCarCheckpoint').disabled = $('addBallCheckpoint').disabled = !zone;
   const t = data.terrain;
   ter = { tile: t.tile, cell: t.cell, sink: t.sink, base: t.base, tiles: new Map(), dirty: new Set() };
   for (const { tx, ty, heights } of t.tiles) makeTile(tx, ty, Float32Array.from(heights));
@@ -310,7 +363,11 @@ async function loadMap(name) {
     const obj = new THREE.Mesh(geometryFor(a.bounds), materialFor(a));
     obj.userData.actor = a;
     obj.userData.original = { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale };
-    if (checkpointZones.has(a.i)) { obj.userData.checkpoint = true; obj.material = checkpointMat; addArrow(obj); }
+    if (checkpointZones.has(a.i)) {
+      obj.userData.checkpoint = checkpointZones.get(a.i);
+      obj.material = checkpointMats[obj.userData.checkpoint];
+      addArrow(obj);
+    }
     applyActor(obj);
     group.add(obj);
     return obj;
@@ -318,41 +375,30 @@ async function loadMap(name) {
   $('outName').value = name.replace(/\.(udk|upk)$/i, '') + '-edit.udk';
   applyFilter();
   updateDirty();
-  await loadMeshes(name);
+  loadMeshes();
   const start = actors.find(a => a.cls.startsWith('PlayerStart')) || actors[0];
   const target = toThree(start.loc);
   orbit.target.copy(target);
   camera.position.copy(target).add(new THREE.Vector3(3000, 2500, 3000));
+  placeReferences(start);
   $('loading').hidden = true;
   setStatus(`${actors.length} objects loaded`, '');
 }
 
-function triangleRecords(buf) {                  // records of int32 id, int32 float count, triangle corners
-  const dv = new DataView(buf), geos = new Map();
-  for (let p = 0; p < buf.byteLength;) {
-    const index = dv.getInt32(p, true), n = dv.getInt32(p + 4, true);
-    p += 8;
-    if (n) {
-      const src = new Float32Array(buf, p, n), pos = new Float32Array(n);
-      for (let v = 0; v < n; v += 3) {               // the Y/Z mirror also turns Unreal's clockwise fronts counter-clockwise
-        pos[v] = src[v]; pos[v + 1] = src[v + 2]; pos[v + 2] = src[v + 1];
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      g.computeVertexNormals();
-      geos.set(index, g);
-    }
-    p += n * 4;
+function cornerGeometry(src) {                    // triangle corners in Unreal axes
+  const pos = new Float32Array(src.length);
+  for (let v = 0; v < src.length; v += 3) {      // the Y/Z mirror also turns Unreal's clockwise fronts counter-clockwise
+    pos[v] = src[v]; pos[v + 1] = src[v + 2]; pos[v + 2] = src[v + 1];
   }
-  return geos;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
 }
 
-async function loadMeshes(name) {
+function loadMeshes() {
   const ids = [...new Set(actors.map(a => a.meshIndex).filter(i => i !== null))];
-  if (!ids.length) return;
-  $('loading').textContent = `Loading ${ids.length} shapes…`;
-  const buf = await (await fetch(`/api/meshes?name=${encodeURIComponent(name)}&i=${ids.join(',')}`)).arrayBuffer();
-  const geos = triangleRecords(buf);
+  const geos = new Map([...shapes(pkg, ids)].map(([i, corners]) => [i, cornerGeometry(corners)]));
   for (const obj of objects) {
     const g = geos.get(obj.userData.actor.meshIndex);
     if (g) { obj.geometry = g; obj.userData.huge = undefined; }
@@ -400,10 +446,15 @@ function showSelection() {
   readBack(selected);
   selBox.setFromObject(selected);
   const a = selected.userData.actor, isNew = a.i === null;
-  $('selInfo').innerHTML = selected.userData.checkpoint
-    ? `<div class="kv"><b>Checkpoint</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">Drive through it, reset, and you respawn here facing the arrow.</div>`
+  $('selInfo').innerHTML = selected.userData.reference
+    ? `<div class="kv"><b>${a.name}</b> <span class="muted">(editor only)</span></div><div class="kv muted">A real-size reference to check what fits; it is never saved into the map.</div>`
+    : selected.userData.checkpoint
+    ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} checkpoint</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
+        ? 'Get the ball into it, reset, and you respawn here facing the arrow with a ball dropped onto your car.'
+        : 'Drive or fly through it, reset, and you respawn here facing the arrow.'}</div>`
     : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
   $('selEdit').hidden = false;
+  $('duplicate').hidden = $('delete').hidden = !!selected.userData.reference;
   const vals = { loc: a.loc.map(v => Math.round(v)), rot: a.rot.map(v => +(v * 360 / 65536).toFixed(1)), scale: a.scale3d.map(v => +(v * a.scale).toFixed(3)) };
   document.querySelectorAll('#selEdit input').forEach(inp => {
     if (document.activeElement !== inp) inp.value = vals[inp.dataset.f][+inp.dataset.k];
@@ -457,7 +508,7 @@ function popUndo() {
 }
 
 function duplicateSelected() {
-  if (!selected) return;
+  if (!selected || selected.userData.reference) return;
   readBack(selected);
   const width = boxOf(selected).getSize(new THREE.Vector3()).x;
   const loc = selected.userData.actor.loc;
@@ -473,14 +524,14 @@ function placeNew(obj) {
   applyFilter();
   updateDirty();
 }
-function addCheckpoint() {
+function addCheckpoint(kind) {
   if (!zone) return setStatus('This map has no trigger zone to copy for checkpoints.', 'warn');
   const loc = fromThree(orbit.target);             // rest the zone on the point you're looking at
   loc[2] += zone.bounds[5] - 50;
   const a = { i: null, name: 'Checkpoint', cls: 'TriggerVolume', mesh: null, loc, rot: [0, 0, 0], scale3d: [1, 1, 1],
               scale: 1, bounds: zone.bounds };
-  const obj = new THREE.Mesh(geometryFor(zone.bounds), checkpointMat);
-  obj.userData = { actor: a, copy: true, checkpoint: true };
+  const obj = new THREE.Mesh(geometryFor(zone.bounds), checkpointMats[kind]);
+  obj.userData = { actor: a, copy: true, checkpoint: kind };
   addArrow(obj);
   placeNew(obj);
 }
@@ -545,6 +596,7 @@ function apron(tx, ty) {                          // the tile's heights plus a o
 function floorHeight() {                          // top of whatever the car spawns on
   const start = actors.find(a => a.cls.startsWith('PlayerStart'));
   if (!start) return orbit.target.y;
+  scene.updateMatrixWorld();                      // objects placed since the last frame are not in their spots yet
   ray.set(toThree(start.loc), new THREE.Vector3(0, -1, 0));
   const solid = objects.filter(o => !o.userData.deleted && o.userData.actor.bounds && !isVolume(o.userData.actor));
   const hit = ray.intersectObjects(solid, false)[0];
@@ -684,7 +736,7 @@ function copyObject(source, loc) {
   placeNew(obj);
 }
 function deleteSelected() {
-  if (!selected) return;
+  if (!selected || selected.userData.reference) return;
   const obj = selected;
   select(null);
   obj.userData.deleted = true;
@@ -705,7 +757,7 @@ function changes(obj) {                           // transform fields that diffe
 }
 function markDirty(obj) {
   if (!obj) return;
-  if (obj.userData.copy) readBack(obj);
+  if (obj.userData.copy || obj.userData.reference) readBack(obj);
   else Object.keys(changes(obj)).length ? dirty.add(obj) : dirty.delete(obj);
   updateDirty();
 }
@@ -713,32 +765,101 @@ function updateDirty() { $('dirty').textContent = changeCount(); }
 
 function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.className = kind; }
 
-async function save() {
+function editedMap() {                            // [map bytes with every change applied, summary]
   const edits = [...dirty].filter(o => !removed.has(o)).map(o => ({ i: o.userData.actor.i, ...changes(o) }));
   const duplicates = added.filter(o => !o.userData.checkpoint).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
-  const checkpoints = added.filter(o => o.userData.checkpoint).map(changes);
+  const checkpoints = added.filter(o => o.userData.checkpoint).map(o => ({ ...changes(o), ball: o.userData.checkpoint === 'ball' }));
   const removes = [...removed].map(o => o.userData.actor.i);
   const terrain = ter.dirty.size ? { base: ter.base, material: +$('terrainMat').value, tiles: [...ter.dirty].map(key => {
     const [tx, ty] = key.split(',').map(Number);
     return { tx, ty, heights: apron(tx, ty) };
   }) } : null;
-  setStatus('Saving…', '');
-  const res = await fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: mapName, out: $('outName').value.trim(), edits, duplicates, checkpoints, terrain, removes }) });
-  const out = await res.json();
-  if (!res.ok) return setStatus(out.error, 'warn');
-  savedName = out.saved;
-  $('play').disabled = false;
   const summary = [edits.length && `${edits.length} moved`, duplicates.length && `${duplicates.length} added`,
                    checkpoints.length && `${checkpoints.length} checkpoints`, terrain && `${terrain.tiles.length} terrain tiles`,
-                   removes.length && `${removes.length} deleted`].filter(Boolean).join(', ');
-  setStatus(`Saved ${out.saved} (${summary || 'no changes'})`, 'ok');
-  refreshMaps(mapName);
+                   removes.length && `${removes.length} deleted`].filter(Boolean).join(', ') || 'no changes';
+  return [build(source, { edits, duplicates, checkpoints, terrain, removes }), summary];
+}
+const failed = err => err.name !== 'AbortError' && setStatus(err.message, 'warn');   // cancelling a dialog is no error
+const nextFrame = () => new Promise(r => setTimeout(r, 30));
+
+async function save() {
+  if (!source) return setStatus('Open a map first.', 'warn');
+  const name = $('outName').value.trim() || 'edited.udk';
+  try {
+    // ask for the file first: the browser only allows the dialog right after the click
+    const handle = window.showSaveFilePicker
+      ? await showSaveFilePicker({ suggestedName: name, types: [{ description: 'Rocket League map', accept: { 'application/octet-stream': ['.udk'] } }] })
+      : null;
+    setStatus('Saving…', '');
+    await nextFrame();
+    const [bytes, summary] = editedMap();
+    if (handle) {
+      const out = await handle.createWritable();
+      await out.write(bytes);
+      await out.close();
+    } else {
+      const link = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([bytes])), download: name });
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+    }
+    setStatus(`Saved ${handle ? handle.name : name} (${summary})`, 'ok');
+  } catch (err) { failed(err); }
+}
+
+// The game folder (TAGame/CookedPCConsole) is asked for once and remembered in IndexedDB.
+function remembered(key, value) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open('rl-map-editor', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('handles');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const store = open.result.transaction('handles', 'readwrite').objectStore('handles');
+      const req = value === undefined ? store.get(key) : store.put(value, key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    };
+  });
+}
+const SLOT = 'Labs_Underpass_P.upk', BACKUP = 'Labs_Underpass_P.upk.original';
+async function gameFolder() {
+  if (!window.showDirectoryPicker) throw new Error('Loading into the game needs Chrome or Edge. Use Save as, then copy the file over Labs_Underpass_P.upk in the game folder.');
+  let dir = await remembered('game').catch(() => null);
+  if (!dir || await dir.requestPermission({ mode: 'readwrite' }) !== 'granted') {
+    setStatus('Pick the game folder TAGame/CookedPCConsole (the one with Labs_Underpass_P.upk).', '');
+    dir = await showDirectoryPicker({ id: 'rl-game', mode: 'readwrite' });
+  }
+  if (!await dir.getFileHandle(SLOT).catch(() => null)) throw new Error(`${dir.name} has no ${SLOT}; pick TAGame/CookedPCConsole in the game folder.`);
+  await remembered('game', dir);
+  return dir;
+}
+async function writeFile(dir, name, bytes) {
+  const out = await (await dir.getFileHandle(name, { create: true })).createWritable();
+  await out.write(bytes);
+  await out.close();
 }
 async function play() {
-  const res = await fetch('/api/play', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: savedName }) });
-  const out = await res.json();
-  setStatus(res.ok ? `${savedName} is in the Underpass slot: Free Play → Underpass` : out.error, res.ok ? 'ok' : 'warn');
+  if (!source) return setStatus('Open a map first.', 'warn');
+  try {
+    const dir = await gameFolder();
+    if (!await dir.getFileHandle(BACKUP).catch(() => null)) {            // keep the real Underpass before the first swap
+      const slot = new Uint8Array(await (await (await dir.getFileHandle(SLOT)).getFile()).arrayBuffer());
+      if (isOriginalGameMap(slot)) await writeFile(dir, BACKUP, slot);
+    }
+    setStatus('Writing the map into the game…', '');
+    await nextFrame();
+    const [bytes, summary] = editedMap();
+    await writeFile(dir, SLOT, bytes);
+    setStatus(`${mapName} (${summary}) is in the game: Free Play → Underpass`, 'ok');
+  } catch (err) { failed(err); }
+}
+async function restore() {
+  try {
+    const dir = await gameFolder();
+    const backup = await dir.getFileHandle(BACKUP).catch(() => null);
+    if (!backup) return setStatus('No backup of the original Underpass here; verify the game files in your launcher to get it back.', 'warn');
+    await writeFile(dir, SLOT, new Uint8Array(await (await backup.getFile()).arrayBuffer()));
+    setStatus('The original Underpass is back.', 'ok');
+  } catch (err) { failed(err); }
 }
 
 const pointer = new THREE.Vector2(), ray = new THREE.Raycaster();
@@ -770,7 +891,7 @@ renderer.domElement.addEventListener('pointerup', e => {
   if (sculpting || !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4 || gizmo.dragging) return;
   setPointer(e);
   ray.setFromCamera(pointer, camera);
-  const hits = ray.intersectObjects(objects.filter(o => o.visible), false);
+  const hits = ray.intersectObjects([...objects, ...references].filter(o => o.visible), false);
   const solid = hits.find(h => !isVolume(h.object.userData.actor)) || hits[0];
   select(solid ? solid.object : null);
 });
@@ -826,35 +947,35 @@ $('filter').addEventListener('input', applyFilter);
 $('showVolumes').addEventListener('change', applyFilter);
 $('showMarkers').addEventListener('change', applyFilter);
 $('showHuge').addEventListener('change', applyFilter);
+$('showRefs').addEventListener('change', () => {
+  if (references.includes(selected)) select(null);
+  references.forEach(r => { r.visible = $('showRefs').checked && !!mapName; });
+});
 $('save').addEventListener('click', save);
 $('play').addEventListener('click', play);
 $('undo').addEventListener('click', popUndo);
 $('duplicate').addEventListener('click', duplicateSelected);
 $('add').addEventListener('click', addFromPalette);
-$('addCheckpoint').addEventListener('click', addCheckpoint);
+$('addCarCheckpoint').addEventListener('click', () => addCheckpoint('car'));
+$('addBallCheckpoint').addEventListener('click', () => addCheckpoint('ball'));
 $('sculpt').addEventListener('click', () => setSculpt(!sculpting));
 document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 $('brushSize').addEventListener('input', showBrush);
 $('palette').addEventListener('dblclick', addFromPalette);
 $('paletteFilter').addEventListener('input', renderPalette);
 $('delete').addEventListener('click', deleteSelected);
-$('map').addEventListener('change', e => {
-  if (changeCount() && !confirm(`Discard ${changeCount()} unsaved changes?`)) { e.target.value = mapName; return; }
-  loadMap(e.target.value);
-});
+$('restore').addEventListener('click', restore);
+$('open').addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', e => { openFile(e.target.files[0]); e.target.value = ''; });
+view.addEventListener('dragover', e => e.preventDefault());
+view.addEventListener('drop', e => { e.preventDefault(); openFile(e.dataTransfer.files[0]); });
 window.addEventListener('beforeunload', e => { if (changeCount()) e.preventDefault(); });
 
-async function refreshMaps(current) {
-  const maps = await (await fetch('/api/maps')).json();
-  $('map').innerHTML = maps.map(m => `<option>${m}</option>`).join('');
-  $('map').value = current || maps.find(m => /Spiral/i.test(m)) || maps[0];
-  return $('map').value;
-}
 setMode('translate');
 setTool('raise');
+$('loading').textContent = 'Open a map to start: click Open map or drop a .udk file here.';
 window.editor = { objects: () => objects, camera, orbit, gizmo, pivot, select, duplicateSelected, deleteSelected, addFromPalette, addCheckpoint,
-                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool };
-loadMap(await refreshMaps());
+                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, references };
 </script>
 </body>
 </html>
