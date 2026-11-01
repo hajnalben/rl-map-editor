@@ -1,5 +1,6 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
+import { pack } from './bytes.js';
 import { addCheckpoints, checkpointZones, mainSequence } from './kismet.js';
 import { CELL, SINK, TILE, addShapes, saveTerrain, terrain } from './mesh.js';
 import { compact } from './compact.js';
@@ -35,8 +36,16 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   const before = pkg.levelList().length;
   let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [];
   const missing = pkg.apply(edits);
-  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length) {
+  // ball checkpoints switched between ball in front / on top: their mode variable (UDK leaves an IntValue of 0 out)
+  const zones = new Map(checkpointZones(pkg).map(z => [z.i, z])), unsetModes = [];
+  for (const edit of edits) {
+    const modeVar = 'ballOnTop' in edit ? zones.get(edit.i)?.modeVar : null;
+    if (modeVar === null || modeVar === undefined) continue;
+    try { pkg.set(pkg.exports[modeVar], 'IntValue', '<i', edit.ballOnTop ? 1 : 0); } catch { unsetModes.push([modeVar, edit.ballOnTop ? 1 : 0]); }
+  }
+  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length) {
     const add = new Additions(pkg);
+    for (const [v, value] of unsetModes) add.setProps(v, { IntValue: add.tag('IntValue', 'IntProperty', pack('<i', value)) });
     if (fresh) add.clearRefs(mainSequence(pkg), 'SequenceObjects');
     for (const [i, values] of missing) add.setValues(i, values);
     for (const dup of duplicates) add.duplicate(dup.src, [0, 0, 0], editValues(dup));
@@ -44,7 +53,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     if (checkpoints.length) {
       const zone = pkg.zoneTemplate();
       if (!zone) throw new Error('this map has no trigger zone to copy for checkpoints');
-      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball })), fresh);
+      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball, ballOnTop: !!c.ballOnTop })), fresh);
     }
     if (ground) [tilesAdded, tilesRemoved] = saveTerrain(add, Number(ground.base), ground.material, ground.tiles);
     if (shapes.length) addShapes(add, shapes.map(s => ({ key: s.key, values: editValues(s) })), shapeGeometry, shapeMaterial);
@@ -55,9 +64,13 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
 
   const saved = new Package(out), actors = saved.levelActors(), byIndex = new Map(actors.map(a => [a.i, a]));
   check(saved.levelList().length === before + duplicates.length + checkpoints.length + shapes.length + tilesAdded - removes.length - tilesRemoved, 'level actor count');
-  if (triggers.length) {
-    const zones = new Map(checkpointZones(saved).map(z => [z.i, z.ball]));
-    triggers.forEach((t, k) => check(zones.get(t) === !!checkpoints[k].ball, `checkpoint ${k + 1} wiring`));
+  const savedZones = new Map(checkpointZones(saved).map(z => [z.i, z]));
+  triggers.forEach((t, k) => {
+    const z = savedZones.get(t), c = checkpoints[k];
+    check(z && z.ball === !!c.ball && (!c.ball || z.ballOnTop === !!c.ballOnTop), `checkpoint ${k + 1} wiring`);
+  });
+  for (const edit of edits) {
+    if ('ballOnTop' in edit && zones.get(edit.i)?.modeVar != null) check(savedZones.get(edit.i)?.ballOnTop === !!edit.ballOnTop, `${edit.i} ball placement`);
   }
   if (ground) {
     const tiles = terrain(saved, actors).tiles, w = TILE + 3;

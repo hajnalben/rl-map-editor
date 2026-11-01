@@ -140,34 +140,43 @@ function liveNodes(pkg) {
   return new Set(Array.isArray(refs) ? refs.map(r => r - 1) : []);
 }
 
-function namedVar(pkg, name, live = liveNodes(pkg)) {   // export index of the live object variable called `name`, or null
-  const i = pkg.exports.findIndex((e, k) => live.has(k) && pkg.classOf(e) === 'SeqVar_Object' && nodeProps(pkg, e).VarName === name);
+// export index of the live variable called `name`, or null
+function namedVar(pkg, name, live = liveNodes(pkg), cls = 'SeqVar_Object') {
+  const i = pkg.exports.findIndex((e, k) => live.has(k) && pkg.classOf(e) === cls && nodeProps(pkg, e).VarName === name);
   return i >= 0 ? i : null;
 }
 
 // Checkpoint zones as [{i, ball}]: every zone stored into LastCheckpoint when touched; ball checkpoints also go
 // into LastBallCheckpoint.
+// Ball checkpoints also store whether the respawned ball goes on top of the car: modeVar is the SeqVar_Int their
+// SetInt writes into BallOnTop (null in maps made before the setting existed, where it always goes on top).
 export function checkpointZones(pkg) {
   const live = liveNodes(pkg), last = namedVar(pkg, 'LastCheckpoint', live), lastBall = namedVar(pkg, 'LastBallCheckpoint', live);
   if (last === null) return [];
-  const zones = [], ballZones = new Set();
+  const onTop = namedVar(pkg, 'BallOnTop', live, 'SeqVar_Int');
+  const links = e => new Map((nodeProps(pkg, e).VariableLinks || []).map(l => [l.LinkDesc, l.LinkedVariables || []]));
+  const zones = [], balls = new Map();
   for (const k of live) {
     const e = pkg.exports[k];
     if (pkg.classOf(e) !== 'SeqAct_SetObject') continue;
-    const links = new Map((nodeProps(pkg, e).VariableLinks || []).map(l => [l.LinkDesc, l.LinkedVariables || []]));
-    const target = links.get('Target') || [];
-    for (const v of links.get('Value') || []) {
+    const target = links(e).get('Target') || [];
+    for (const v of links(e).get('Value') || []) {
       const zone = v > 0 ? nodeProps(pkg, pkg.exports[v - 1]).ObjValue : null;
       if (!zone) continue;
       if (target.includes(last + 1)) zones.push(zone - 1);
-      if (lastBall !== null && target.includes(lastBall + 1)) ballZones.add(zone - 1);
+      if (lastBall === null || !target.includes(lastBall + 1)) continue;
+      const next = (nodeProps(pkg, e).OutputLinks?.[0]?.Links || [])[0]?.LinkedOp;
+      const setInt = next > 0 && pkg.classOf(pkg.exports[next - 1]) === 'SeqAct_SetInt' ? links(pkg.exports[next - 1]) : null;
+      const modeVar = onTop !== null && setInt && (setInt.get('Target') || []).includes(onTop + 1) ? (setInt.get('Value') || [])[0] - 1 : null;
+      balls.set(zone - 1, { ballOnTop: modeVar === null || nodeProps(pkg, pkg.exports[modeVar]).IntValue === 1, modeVar });
     }
   }
-  return zones.map(i => ({ i, ball: ballZones.has(i) }));
+  return zones.map(i => ({ i, ball: balls.has(i), ballOnTop: balls.get(i)?.ballOnTop ?? false, modeVar: balls.get(i)?.modeVar ?? null }));
 }
 
 const PACKAGES = { SeqEvent_CarSpawned_TA: 'TAGame', SeqAct_AddGameBall_TA: 'TAGame' };   // the others live in Engine
-const BALL_LIFT = 200;                            // a respawned ball starts this far above the checkpoint, over the car
+export const BALL_LIFT = 200;                     // a respawned ball on top starts this far above the checkpoint, over the car
+export const BALL_AHEAD = 250;                    // one in front starts this far ahead of it, the way the checkpoint faces
 
 // Copy trigger zone `template` once per checkpoint ({values: {prop: [fmt, values]}, ball}) and wire Kismet:
 // touching a car checkpoint with the car, or a ball checkpoint with the ball, makes it the respawn point, and a
@@ -218,22 +227,30 @@ export function addCheckpoints(add, template, checkpoints, fresh = false) {
 
   const lastBall = namedVar(pkg, 'LastBallCheckpoint', live);
   let lastBallRef = lastBall === null ? null : lastBall + 1;
+  const onTop = namedVar(pkg, 'BallOnTop', live, 'SeqVar_Int');
+  let onTopRef = onTop === null ? null : onTop + 1;
   if (lastBallRef === null && checkpoints.some(c => c.ball)) {
-    // on reset, if the last checkpoint was a ball one: remove the balls, add one, lift it above the checkpoint
-    const r = refs(['lastBall', 'none', 'player', 'ball', 'at', 'x', 'y', 'z', 'lift', 'z2', 'above',
-                    'spawned', 'hasBall', 'isBall', 'clear', 'addBall', 'where', 'split', 'raise', 'join', 'place']);
+    // on reset, if the last checkpoint was a ball one: remove the balls, add one, and put it above the checkpoint
+    // (on the car) or ahead of it along the way it faces
+    const r = refs(['lastBall', 'onTop', 'one', 'none', 'player', 'ball', 'at', 'dir', 'x', 'y', 'z', 'fx', 'fy', 'fz', 'lift', 'ahead',
+                    'z2', 'dx', 'dy', 'x2', 'y2', 'above', 'front', 'spawned', 'hasBall', 'isBall', 'clear', 'addBall', 'where', 'split',
+                    'which', 'raise', 'join', 'place', 'splitDir', 'mulX', 'mulY', 'subX', 'subY', 'joinFront', 'placeFront']);
     lastBallRef = r.lastBall;
+    onTopRef = r.onTop;
     const [vx, vy, x, y] = [x0 + 1000, y0 + 220, x0 + 800, y0];
-    const vec = cls('SeqVar_Vector'), flt = cls('SeqVar_Float');
+    const vec = cls('SeqVar_Vector'), flt = cls('SeqVar_Float'), int = cls('SeqVar_Int');
     node('SeqVar_Object', vars(vx, vy, [['VarName', N, 'LastBallCheckpoint']]));
-    node('SeqVar_Object', vars(vx + 60, vy));
-    node('SeqVar_Player', vars(vx + 120, vy));
+    node('SeqVar_Int', vars(vx + 60, vy, [['VarName', N, 'BallOnTop']]));
+    node('SeqVar_Int', vars(vx + 120, vy, [['IntValue', I, 1]]));
     node('SeqVar_Object', vars(vx + 180, vy));
-    node('SeqVar_Vector', vars(vx + 240, vy));
-    for (let k = 0; k < 3; k++) node('SeqVar_Float', vars(vx + 300 + 60 * k, vy));
-    node('SeqVar_Float', vars(vx + 480, vy, [['FloatValue', F, -BALL_LIFT]]));
-    node('SeqVar_Float', vars(vx + 540, vy));
-    node('SeqVar_Vector', vars(vx + 600, vy));
+    node('SeqVar_Player', vars(vx + 240, vy));
+    node('SeqVar_Object', vars(vx + 300, vy));
+    for (let k = 0; k < 2; k++) node('SeqVar_Vector', vars(vx + 360 + 60 * k, vy));
+    for (let k = 0; k < 6; k++) node('SeqVar_Float', vars(vx + 480 + 60 * k, vy));
+    node('SeqVar_Float', vars(vx + 840, vy, [['FloatValue', F, -BALL_LIFT]]));
+    node('SeqVar_Float', vars(vx + 900, vy, [['FloatValue', F, -BALL_AHEAD]]));
+    for (let k = 0; k < 5; k++) node('SeqVar_Float', vars(vx + 960 + 60 * k, vy));
+    for (let k = 0; k < 2; k++) node('SeqVar_Vector', vars(vx + 1260 + 60 * k, vy));
     node('SeqEvent_CarSpawned_TA', [
       ['MaxWidth', I, 97],
       ['OutputLinks', A, [outputLink('Out', [r.hasBall], y + 66)]],
@@ -256,38 +273,54 @@ export function addCheckpoints(add, template, checkpoints, fresh = false) {
       ...layout(1, parent, px, y, 254, 149)];
     node('SeqAct_AddGameBall_TA', addBall({ DestroyedAll: [r.addBall] }, [], [], x + 600));
     node('SeqAct_AddGameBall_TA', addBall({ Added: [r.where] }, [lastRef], [r.ball], x + 900));
-    const step = (outTo, links, px, w, version = 1) => [
-      ['InputLinks', A, [inputLink(y + 34)]],
-      ['OutputLinks', A, [outputLink('Out', outTo, y + 34)]],
+    const step = (outTo, links, px, py, w, version = 1) => [
+      ['InputLinks', A, [inputLink(py + 34)]],
+      ['OutputLinks', A, [outputLink('Out', outTo, py + 34)]],
       ['VariableLinks', A, links],
-      ...layout(version, parent, px, y, w, 77)];
+      ...layout(version, parent, px, py, w, 77)];
     node('SeqAct_GetLocationAndRotation', step([r.split], [
       varLink('Target', obj, [lastRef], x + 1238, { prop: 'Targets', maxVars: 1 }),
       varLink('Location', vec, [r.at], x + 1304, { prop: 'Location', writeable: true, delta: 76 }),
-      varLink('Rotation Vector', vec, [], x + 1375, { prop: 'RotationVector', writeable: true, delta: 148 }),
-      varLink('Rotation', vec, [], x + 1446, { prop: 'Rotation', writeable: true, delta: 219 })], x + 1200, 290, 3));
-    const xyz = (first, firstProp, vector, zVar, px, writeable) => [
+      varLink('Rotation Vector', vec, [r.dir], x + 1375, { prop: 'RotationVector', writeable: true, delta: 148 }),
+      varLink('Rotation', vec, [], x + 1446, { prop: 'Rotation', writeable: true, delta: 219 })], x + 1200, y, 290, 3));
+    const xyz = (first, firstProp, vector, [vX, vY, vZ], px, writeable) => [
       varLink(first, vec, [vector], px + 46, { prop: firstProp, writeable, delta: 22 }),
-      varLink('X', flt, [r.x], px + 91, { prop: 'X', delta: 87 }), varLink('Y', flt, [r.y], px + 116, { prop: 'Y', delta: 112 }),
-      varLink('Z', flt, [zVar], px + 141, { prop: 'Z', delta: 137 })];
-    node('SeqAct_GetVectorComponents', step([r.raise], xyz('Input Vector', 'InVector', r.at, r.z, x + 1550, false), x + 1550, 168));
-    node('SeqAct_SubtractFloat', step([r.join], [
-      varLink('A', flt, [r.z], x + 1770, { prop: 'ValueA' }), varLink('B', flt, [r.lift], x + 1795, { prop: 'ValueB', delta: 41 }),
-      varLink('FloatResult', flt, [r.z2], x + 1835, { prop: 'FloatResult', writeable: true, delta: 65 }),
-      varLink('IntResult', cls('SeqVar_Int'), [], x + 1900, { prop: 'IntResult', writeable: true, delta: 121 })], x + 1750, 196));
-    node('SeqAct_SetVectorComponents', step([r.place], xyz('Output Vector', 'OutVector', r.above, r.z2, x + 2000, true), x + 2000, 168));
-    node('SeqAct_SetLocation', [
-      ['InputLinks', A, [inputLink(y + 34)]],
-      ['OutputLinks', A, [outputLink('Out', [], y + 34)]],
-      ['VariableLinks', A, [varLink('Location', vec, [r.above], x + 2244, { maxVars: 1 }),
-                            varLink('Rotation', vec, [], x + 2315, { maxVars: 1, delta: 88 }),
-                            varLink('Target', obj, [r.ball], x + 2381, { prop: 'Target', writeable: true, maxVars: 1, delta: 159 })]],
-      ...layout(3, parent, x + 2200, y, 219, 61)]);
+      varLink('X', flt, [vX], px + 91, { prop: 'X', delta: 87 }), varLink('Y', flt, [vY], px + 116, { prop: 'Y', delta: 112 }),
+      varLink('Z', flt, [vZ], px + 141, { prop: 'Z', delta: 137 })];
+    const math = (a, b, result, px) => [
+      varLink('A', flt, [a], px + 20, { prop: 'ValueA' }), varLink('B', flt, [b], px + 45, { prop: 'ValueB', delta: 41 }),
+      varLink('FloatResult', flt, [result], px + 85, { prop: 'FloatResult', writeable: true, delta: 65 }),
+      varLink('IntResult', int, [], px + 150, { prop: 'IntResult', writeable: true, delta: 121 })];
+    node('SeqAct_GetVectorComponents', step([r.which], xyz('Input Vector', 'InVector', r.at, [r.x, r.y, r.z], x + 1550, false), x + 1550, y, 168));
+    node('SeqCond_CompareInt', [
+      ['InputLinks', A, [inputLink(y + 59, 'In', 59)]],
+      ['OutputLinks', A, [['A <= B', [], 15], ['A > B', [], 37], ['A == B', [r.raise], 59], ['A < B', [r.splitDir], 81], ['A >= B', [], 103]]
+        .map(([d, to, delta]) => outputLink(d, to, y + delta, delta))],
+      ['VariableLinks', A, [varLink('A', int, [r.onTop], x + 1780, { prop: 'ValueA', delta: 29 }),
+                            varLink('B', int, [r.one], x + 1805, { prop: 'ValueB', delta: 54 })]],
+      ...layout(1, parent, x + 1750, y, 91, 157)]);
+    const y2 = y + 250, setLocation = (at, px, py) => [
+      ['InputLinks', A, [inputLink(py + 34)]],
+      ['OutputLinks', A, [outputLink('Out', [], py + 34)]],
+      ['VariableLinks', A, [varLink('Location', vec, [at], px + 44, { maxVars: 1 }),
+                            varLink('Rotation', vec, [], px + 115, { maxVars: 1, delta: 88 }),
+                            varLink('Target', obj, [r.ball], px + 181, { prop: 'Target', writeable: true, maxVars: 1, delta: 159 })]],
+      ...layout(3, parent, px, py, 219, 61)];
+    node('SeqAct_SubtractFloat', step([r.join], math(r.z, r.lift, r.z2, x + 1950), x + 1950, y, 196));
+    node('SeqAct_SetVectorComponents', step([r.place], xyz('Output Vector', 'OutVector', r.above, [r.x, r.y, r.z2], x + 2200, true), x + 2200, y, 168));
+    node('SeqAct_SetLocation', setLocation(r.above, x + 2400, y));
+    node('SeqAct_GetVectorComponents', step([r.mulX], xyz('Input Vector', 'InVector', r.dir, [r.fx, r.fy, r.fz], x + 1950, false), x + 1950, y2, 168));
+    node('SeqAct_MultiplyFloat', step([r.mulY], math(r.fx, r.ahead, r.dx, x + 2150), x + 2150, y2, 196));
+    node('SeqAct_MultiplyFloat', step([r.subX], math(r.fy, r.ahead, r.dy, x + 2380), x + 2380, y2, 196));
+    node('SeqAct_SubtractFloat', step([r.subY], math(r.x, r.dx, r.x2, x + 2610), x + 2610, y2, 196));
+    node('SeqAct_SubtractFloat', step([r.joinFront], math(r.y, r.dy, r.y2, x + 2840), x + 2840, y2, 196));
+    node('SeqAct_SetVectorComponents', step([r.placeFront], xyz('Output Vector', 'OutVector', r.front, [r.x2, r.y2, r.z], x + 3070, true), x + 3070, y2, 168));
+    node('SeqAct_SetLocation', setLocation(r.front, x + 3270, y2));
     placed(r, 'ball respawn');
   }
 
   const triggers = [];
-  checkpoints.forEach(({ values, ball }, k) => {
+  checkpoints.forEach(({ values, ball, ballOnTop = false }, k) => {
     const trig = add.duplicate(template, [0, 0, 0], values);
     triggers.push(trig);
     const x = x0 + 600 * (k + 1), y = y0 + 600;
@@ -312,7 +345,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false) {
       return;
     }
     // the zone fires for anything; only when what touched it is not the player's car was it the ball
-    const r = refs(['value', 'instigator', 'player', 'notCar', 'setLast', 'setBall', 'touch']);
+    const r = refs(['value', 'instigator', 'player', 'notCar', 'setLast', 'setBall', 'touch', ...(onTopRef ? ['mode', 'setMode'] : [])]);
     node('SeqVar_Object', vars(x + 30, y + 220, [['ObjValue', O, trig + 1]]));
     node('SeqVar_Object', vars(x + 80, y + 220));
     node('SeqVar_Player', vars(x + 130, y + 220));
@@ -322,8 +355,18 @@ export function addCheckpoints(add, template, checkpoints, fresh = false) {
       ['VariableLinks', A, [varLink('A', obj, [r.instigator], x + 249, { delta: 45 }), varLink('B', obj, [r.player], x + 274, { delta: 70 })]],
       ...layout(1, parent, x + 200, y, 123, 85)]);
     node('SeqAct_SetObject', setObject(r.value, lastRef, [r.setBall], x + 360, y));
-    node('SeqAct_SetObject', setObject(r.value, lastBallRef, [], x + 520, y));
+    node('SeqAct_SetObject', setObject(r.value, lastBallRef, onTopRef ? [r.setMode] : [], x + 520, y));
     node('SeqEvent_Touch', touch(false, [r.notCar], [r.instigator]));
+    if (onTopRef) {                               // maps made before the setting always put the ball on top
+      const int = cls('SeqVar_Int');
+      node('SeqVar_Int', vars(x + 180, y + 220, [['IntValue', I, ballOnTop ? 1 : 0]]));
+      node('SeqAct_SetInt', [
+        ['InputLinks', A, [inputLink(y + 34)]],
+        ['OutputLinks', A, [outputLink('Out', [], y + 34)]],
+        ['VariableLinks', A, [varLink('Value', int, [r.mode], x + 714, { prop: 'Value' }),
+                              varLink('Target', int, [onTopRef], x + 770, { prop: 'Target', writeable: true, delta: 68 })]],
+        ...layout(2, parent, x + 680, y, 128, 61)]);
+    }
     placed(r, 'ball checkpoint');
   });
 
