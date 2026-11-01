@@ -930,7 +930,7 @@ async function save() {
       link.click();
       setTimeout(() => URL.revokeObjectURL(link.href), 60000);
     }
-    setStatus(`Saved ${handle ? handle.name : name} (${summary})`, 'ok');
+    setStatus(`Saved ${handle ? handle.name : name} (${summary}; ${(bytes.length / 1e6).toFixed(1)} MB)`, 'ok');
   } catch (err) { failed(err); }
 }
 

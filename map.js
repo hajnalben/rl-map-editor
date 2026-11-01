@@ -2,6 +2,7 @@
 import { Additions, Package, editValues } from './ue3.js';
 import { addCheckpoints, checkpointZones, mainSequence } from './kismet.js';
 import { CELL, SINK, TILE, saveTerrain, terrain } from './mesh.js';
+import { compact } from './compact.js';
 
 export function describe(pkg) {
   const all = pkg.levelActors(), ground = terrain(pkg, all);
@@ -46,6 +47,8 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     if (ground) [tilesAdded, tilesRemoved] = saveTerrain(add, Number(ground.base), ground.material, ground.tiles);
     out = add.save();
   }
+  const packed = compact(out).bytes;              // unused meshes and textures shrunk, superseded copies gone
+  if (packed.length < out.length) out = packed;
 
   const saved = new Package(out), actors = saved.levelActors(), byIndex = new Map(actors.map(a => [a.i, a]));
   check(saved.levelList().length === before + duplicates.length + checkpoints.length + tilesAdded - removes.length - tilesRemoved, 'level actor count');
