@@ -8,10 +8,11 @@
   :root { --bg: #111317; --panel: #1a1d23; --panel2: #20242c; --text: #e7e9ec; --muted: #969ead; --accent: #4da3ff; --border: #2b3039; --warn: #ffb547; --ok: #5fd38d; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; overflow: hidden; }
   #app { display: grid; height: 100%; grid-template: "top top top" 46px "left view right" 1fr "foot foot foot" 26px / 250px 1fr 280px; }
-  header { grid-area: top; display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border); min-width: 0; }
+  header { grid-area: top; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border); min-width: 0; }
+  header .side { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  header .side.end { justify-content: flex-end; }
   .brand { font-size: 14px; white-space: nowrap; }
   .group { display: flex; gap: 4px; align-items: center; padding-right: 10px; border-right: 1px solid var(--border); }
-  .spacer { flex: 1; }
   #mapName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
   aside { background: var(--panel); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 18px; }
   #left { grid-area: left; border-right: 1px solid var(--border); }
@@ -28,7 +29,7 @@
   input[type=number] { width: 100%; box-sizing: border-box; padding: 4px 6px; }
   input[type=checkbox] { padding: 0; }
   select, #paletteFilter, #filter { width: 100%; box-sizing: border-box; }
-  #palette { min-height: 220px; flex: 1; margin-top: 6px; }
+  #palette { min-height: 160px; flex: 1; margin-top: 6px; }
   #palette optgroup { color: var(--muted); font-style: normal; }
   #palette option { color: var(--text); padding: 2px 4px; }
   button, summary { cursor: pointer; background: #232832; white-space: nowrap; }
@@ -44,7 +45,18 @@
   .items { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; min-width: 230px; display: flex; flex-direction: column; gap: 6px;
            padding: 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .45); }
   .items button { text-align: left; }
-  #addSection { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  section.fill { flex: 1; display: flex; flex-direction: column; min-height: 160px; }
+  .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
+  #outline { flex: 1; overflow: auto; margin-top: 6px; padding: 4px 0; background: #0f1114; border: 1px solid var(--border); border-radius: 6px; user-select: none; }
+  #outline summary { display: block; padding: 3px 8px; border: 0; border-radius: 0; background: none; color: var(--muted); }
+  #outline summary::before { content: '▸ '; } #outline details[open] > summary::before { content: '▾ '; }
+  #outline summary:hover { color: var(--text); }
+  #outline details details > summary { padding-left: 20px; }
+  #outline .item { padding: 2px 8px 2px 26px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #outline details details .item { padding-left: 40px; }
+  #outline .item:hover { background: #1c2129; }
+  #outline .item.sel { background: rgba(77, 163, 255, .18); color: var(--accent); }
+  #outline .empty { padding: 4px 10px; color: var(--muted); }
   .row { display: grid; grid-template-columns: 62px 1fr 1fr 1fr; gap: 4px; align-items: center; margin-bottom: 4px; }
   .row span { color: var(--muted); }
   .tools-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 10px; }
@@ -70,61 +82,47 @@
 <body>
 <div id="app">
   <header>
-    <b class="brand">RL Map Editor</b>
-    <div class="group">
-      <button id="newMap" title="Start over with flat ground, the car and the ball">New</button>
-      <button id="open" title="Open a Rocket League workshop map (.udk), or drop one on the view. Maps never leave this computer. (⌘O)">Open…</button>
-      <button id="save" class="primary" title="Save the map as a .udk file (⌘S)">Save as…</button>
+    <div class="side">
+      <div class="group">
+        <button id="newMap" title="Start over with flat ground, the car and the ball">New</button>
+        <button id="open" title="Open a Rocket League workshop map (.udk), or drop one on the view. Maps never leave this computer. (⌘O)">Open…</button>
+        <button id="save" class="primary" title="Save the map as a .udk file (⌘S)">Save as…</button>
+        <details class="menu">
+          <summary title="Put the map into Rocket League (Chrome or Edge)">Game ▾</summary>
+          <div class="items">
+            <button id="play" title="Writes the map over Free Play's Underpass. Be on the main menu, not in Underpass.">Load into game</button>
+            <button id="restore" title="Put the game's own Underpass back">Restore the original Underpass</button>
+          </div>
+        </details>
+      </div>
+      <div class="group">
+        <button id="undo" title="Undo (⌘Z)">↶ Undo</button>
+        <button id="sculpt" title="Paint hills, mountains and roads onto the ground (T)">Sculpt</button>
+      </div>
       <details class="menu">
-        <summary title="Put the map into Rocket League (Chrome or Edge)">Game ▾</summary>
+        <summary>View ▾</summary>
         <div class="items">
-          <button id="play" title="Writes the map over Free Play's Underpass. Be on the main menu, not in Underpass.">Load into game</button>
-          <button id="restore" title="Put the game's own Underpass back">Restore the original Underpass</button>
+          <label><input type="checkbox" id="showVolumes"> Trigger zones (volumes)</label>
+          <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
+          <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
+          <label title="Real-size references you can move around; never saved into the map"><input type="checkbox" id="showRefs" checked> Car and ball (editor only)</label>
         </div>
       </details>
     </div>
-    <div class="group">
-      <button id="undo" title="Undo (⌘Z)">↶ Undo</button>
+    <b class="brand">RL Map Editor</b>
+    <div class="side end">
+      <div id="mapName" class="muted"></div>
+      <div class="muted"><span id="dirty">0</span> changes</div>
+      <button id="helpButton" title="Keyboard and mouse controls (?)">?</button>
     </div>
-    <div class="group" role="toolbar" aria-label="Tools">
-      <button data-mode="translate" title="Move the selection (1)">Move</button>
-      <button data-mode="rotate" title="Rotate the selection (2)">Rotate</button>
-      <button data-mode="scale" title="Scale the selection (3)">Scale</button>
-      <button id="sculpt" title="Paint hills, mountains and roads onto the ground (T)">Sculpt</button>
-    </div>
-    <details class="menu">
-      <summary>View ▾</summary>
-      <div class="items">
-        <input id="filter" placeholder="Filter: name, class or mesh">
-        <label><input type="checkbox" id="showVolumes"> Trigger zones (volumes)</label>
-        <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
-        <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
-        <label title="Real-size references you can move around; never saved into the map"><input type="checkbox" id="showRefs" checked> Car and ball (editor only)</label>
-        <div id="count" class="muted"></div>
-      </div>
-    </details>
-    <div class="spacer"></div>
-    <div id="mapName" class="muted"></div>
-    <div class="muted"><span id="dirty">0</span> changes</div>
-    <button id="helpButton" title="Keyboard and mouse controls (?)">?</button>
   </header>
 
   <aside id="left">
-    <section id="addSection">
-      <h2>Add</h2>
-      <input id="paletteFilter" placeholder="Search shapes">
-      <select id="palette" size="14"></select>
-      <div class="actions">
-        <button id="add" class="primary" title="Place the picked shape where you're looking (or double-click it in the list)">Place</button>
-      </div>
-      <label class="field">Surface <select id="shapeMat" title="Surface of built-in shapes and shapes from your other maps"></select></label>
-    </section>
-    <section>
-      <h2>Checkpoints</h2>
-      <div class="actions" style="margin-top:0">
-        <button id="addCarCheckpoint" title="Flying trials: becomes your respawn point when your car flies or drives through it">Car checkpoint</button>
-        <button id="addBallCheckpoint" title="Dribbling: becomes your respawn point when the ball gets into it; resetting drops a ball onto your car">Ball checkpoint</button>
-      </div>
+    <section class="fill">
+      <h2>Map</h2>
+      <input id="filter" placeholder="Find objects: name, kind or shape">
+      <div id="outline" role="tree" aria-label="Objects in the map"></div>
+      <div id="count" class="muted" style="margin-top:6px"></div>
     </section>
   </aside>
 
@@ -134,14 +132,15 @@
   </main>
 
   <aside id="right">
-    <section>
-      <h2>Objects</h2>
-      <select id="outliner" size="8" title="Checkpoints and everything you've added; click one to select it"></select>
-    </section>
     <section id="selection">
       <h2>Inspector</h2>
-      <div id="selInfo" class="muted">Nothing selected. Click an object in the view, or place a shape from the list on the left.</div>
+      <div id="selInfo" class="muted">Nothing selected. Click an object in the view or in the Map list.</div>
       <div id="selEdit" hidden style="margin-top:10px">
+        <div class="modes">
+          <button data-mode="translate" title="Move it in the view (1)">Move</button>
+          <button data-mode="rotate" title="Rotate it in the view (2)">Rotate</button>
+          <button data-mode="scale" title="Scale it in the view (3)">Scale</button>
+        </div>
         <div class="row"><span>Location</span><input type="number" data-f="loc" data-k="0"><input type="number" data-f="loc" data-k="1"><input type="number" data-f="loc" data-k="2"></div>
         <div class="row"><span>Rotation°</span><input type="number" data-f="rot" data-k="0" title="Pitch"><input type="number" data-f="rot" data-k="1" title="Yaw"><input type="number" data-f="rot" data-k="2" title="Roll"></div>
         <div class="row"><span>Scale</span><input type="number" step="0.05" data-f="scale" data-k="0"><input type="number" step="0.05" data-f="scale" data-k="1"><input type="number" step="0.05" data-f="scale" data-k="2"></div>
@@ -165,6 +164,17 @@
       <div class="muted" id="brushHint" style="margin-top:8px"></div>
       <label class="field">Surface <select id="terrainMat" title="Surface of the terrain; set when its first hill is saved"></select></label>
     </section>
+    <section class="fill">
+      <h2>Add</h2>
+      <input id="paletteFilter" placeholder="Search shapes">
+      <select id="palette" size="10"></select>
+      <div class="actions">
+        <button id="add" class="primary" title="Place the picked shape where you're looking (or double-click it in the list)">Place</button>
+        <button id="addCarCheckpoint" title="Flying trials: becomes your respawn point when your car flies or drives through it">Car checkpoint</button>
+        <button id="addBallCheckpoint" title="Dribbling: becomes your respawn point when the ball gets into it; resetting drops a ball onto your car">Ball checkpoint</button>
+      </div>
+      <label class="field">Surface <select id="shapeMat" title="Surface of built-in shapes and shapes from your other maps"></select></label>
+    </section>
   </aside>
 
   <footer>
@@ -181,7 +191,7 @@
       <dt>Q / E</dt><dd>Turn the camera</dd>
       <dt>Left-drag · Right-drag · Wheel</dt><dd>Orbit · pan · zoom</dd>
       <dt>Click</dt><dd>Select · F focuses it · Esc deselects</dd>
-      <dt>1 / 2 / 3</dt><dd>Move / rotate / scale tool</dd>
+      <dt>1 / 2 / 3</dt><dd>Move / rotate / scale the selection</dd>
       <dt>T</dt><dd>Sculpt the ground (Shift lowers, ⌥-drag orbits)</dd>
       <dt>⌘D · ⌫ · ⌘Z</dt><dd>Duplicate · delete · undo</dd>
       <dt>⌘S · ⌘O</dt><dd>Save as · open a map</dd>
@@ -251,6 +261,7 @@ scene.add(gizmo);
 gizmo.addEventListener('dragging-changed', e => {
   orbit.enabled = !e.value;
   if (e.value) pushUndo(selected);
+  else scheduleOutline();
 });
 // The gizmo drives a helper at the mesh's visible center; Unreal pivots can sit far away from the mesh.
 const pivot = new THREE.Object3D(), pivotOffset = new THREE.Matrix4();
@@ -607,11 +618,11 @@ function applyFilter() {
     obj.visible = !obj.userData.deleted
       && ($('showHuge').checked || !obj.userData.huge)
       && (!q || `${a.name} ${a.cls} ${a.mesh || ''}`.toLowerCase().includes(q))
-      && ($('showVolumes').checked || !isVolume(a) || obj.userData.checkpoint)
+      && ($('showVolumes').checked || !isVolume(a) || !!obj.userData.checkpoint)
       && ($('showMarkers').checked || !!a.bounds);
     shown += obj.visible;
   }
-  $('count').textContent = `${shown} of ${objects.length} objects shown`;
+  $('count').textContent = objects.length ? `${shown} of ${objects.length} objects shown` : '';
 }
 
 function select(obj) {
@@ -619,7 +630,13 @@ function select(obj) {
   if (obj) { attachGizmo(obj); setMode(gizmo.mode); } else gizmo.detach();
   selBox.visible = !!obj;
   showSelection();
-  renderOutliner();
+  if (obj && objects.includes(obj)) {             // open its group in the Map list and scroll to it
+    const [g, sub] = groupOf(obj);
+    openGroups.add(g);
+    if (sub) openGroups.add(`${g}/${sub}`);
+    revealing = obj;
+  }
+  scheduleOutline();
 }
 function setMode(mode) {
   if (sculpting) setSculpt(false);
@@ -1016,20 +1033,78 @@ function markDirty(obj) {
   else Object.keys(changes(obj)).length ? dirty.add(obj) : dirty.delete(obj);
   updateDirty();
 }
+// The Map list: every object grouped by kind, shapes by their mesh; it follows the selection.
+const GROUPS = ['Checkpoints', 'Shapes', 'Spawn & game', 'Lights & atmosphere', 'Volumes', 'Other'];
+const openGroups = new Set(['Checkpoints', 'Shapes', 'Editor only']);
+let outlinePending = false, revealing = null;
+function groupOf(o) {                             // [group, sub-group or null]
+  const a = o.userData.actor;
+  if (o.userData.checkpoint) return ['Checkpoints', null];
+  if (/^PlayerStart|^Pylon|SceneCapture/.test(a.cls)) return ['Spawn & game', null];
+  if (/Light|Fog|PostProcess/.test(a.cls)) return ['Lights & atmosphere', null];
+  if (isVolume(a)) return ['Volumes', null];
+  if (a.mesh) return ['Shapes', a.mesh];
+  return ['Other', null];
+}
+function scheduleOutline() {
+  if (outlinePending) return;
+  outlinePending = true;
+  setTimeout(() => { outlinePending = false; renderOutline(); });
+}
+function renderOutline() {                        // • marks what isn't saved yet
+  const q = $('filter').value.trim().toLowerCase(), tree = new Map(GROUPS.map(g => [g, new Map()]));
+  for (const o of objects) {
+    if (o.userData.deleted) continue;
+    const a = o.userData.actor, [g, sub] = groupOf(o);
+    if (q && !`${a.name} ${a.cls} ${a.mesh || ''} ${g}`.toLowerCase().includes(q)) continue;
+    const subs = tree.get(g);
+    if (!subs.has(sub ?? '')) subs.set(sub ?? '', []);
+    subs.get(sub ?? '').push(o);
+  }
+  const where = o => o.userData.actor.loc.slice(0, 2).map(v => Math.round(v)).join(', ');
+  const numbers = {};
+  const label = o => {
+    if (!o.userData.checkpoint) return `${o.userData.actor.name} · ${where(o)}`;
+    const kind = `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} checkpoint`;
+    numbers[kind] = (numbers[kind] || 0) + 1;
+    return `${kind} ${numbers[kind]} · ${where(o)}`;
+  };
+  const row = (o, text, key, value) => {
+    const el = Object.assign(document.createElement('div'), { className: o === selected ? 'item sel' : 'item', textContent: text, title: o.userData.actor.name });
+    el.dataset[key] = value;
+    return el;
+  };
+  const item = (o, text) => row(o, (o.userData.copy ? '• ' : '') + text, 'i', objects.indexOf(o));
+  const fold = (key, text, fill) => {
+    const d = document.createElement('details');
+    d.open = !!q || openGroups.has(key);
+    d.dataset.key = key;
+    d.append(Object.assign(document.createElement('summary'), { textContent: text }));
+    if (d.open) fill(d);                          // closed groups stay empty until opened
+    return d;
+  };
+  const nodes = [];
+  for (const [g, subs] of tree) {
+    const total = [...subs.values()].reduce((n, list) => n + list.length, 0);
+    if (!total) continue;
+    nodes.push(fold(g, `${g} (${total})`, d => {
+      for (const [sub, list] of [...subs].sort(([x], [y]) => x.localeCompare(y))) {
+        if (!sub) d.append(...list.map(o => item(o, label(o))));
+        else d.append(fold(`${g}/${sub}`, `${sub} ×${list.length}`, dd => dd.append(...list.map(o => item(o, where(o))))));
+      }
+    }));
+  }
+  const refs = references.filter(r => $('showRefs').checked && (!q || r.userData.actor.name.toLowerCase().includes(q)));
+  if (refs.length) {
+    nodes.push(fold('Editor only', `Editor only (${refs.length})`, d => d.append(...refs.map(r => row(r, `${r.userData.actor.name} · ${where(r)}`, 'ref', references.indexOf(r))))));
+  }
+  $('outline').replaceChildren(...(nodes.length ? nodes : [Object.assign(document.createElement('div'), { className: 'empty', textContent: q ? 'No matches' : 'Nothing here yet' })]));
+  if (revealing) $('outline').querySelector(`.item[data-i="${objects.indexOf(revealing)}"]`)?.scrollIntoView({ block: 'nearest' });
+  revealing = null;
+}
 function updateDirty() {
   $('dirty').textContent = changeCount();
-  renderOutliner();
-}
-function listed(o) { return !o.userData.deleted && (o.userData.checkpoint || o.userData.copy || /^Shape/.test(o.userData.actor.mesh || '')); }
-function renderOutliner() {                       // checkpoints and everything added; • marks what isn't saved yet
-  const counts = {}, items = objects.filter(listed).map(o => {
-    const a = o.userData.actor, kind = o.userData.checkpoint ? `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} checkpoint` : a.name;
-    counts[kind] = (counts[kind] || 0) + 1;
-    const text = `${o.userData.copy ? '• ' : ''}${kind}${o.userData.checkpoint ? ' ' + counts[kind] : ''}  (${Math.round(a.loc[0])}, ${Math.round(a.loc[1])})`;
-    return Object.assign(document.createElement('option'), { value: objects.indexOf(o), textContent: text });
-  });
-  $('outliner').replaceChildren(...(items.length ? items : [Object.assign(document.createElement('option'), { disabled: true, textContent: 'Nothing added yet' })]));
-  if (selected && listed(selected)) $('outliner').value = objects.indexOf(selected);
+  if (!gizmo.dragging) scheduleOutline();          // positions refresh once a drag ends
 }
 
 function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.className = kind; }
@@ -1233,13 +1308,26 @@ window.addEventListener('keydown', e => {
   if (k === 'escape') sculpting ? setSculpt(false) : select(null);
 });
 document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
-$('filter').addEventListener('input', applyFilter);
+$('filter').addEventListener('input', () => { applyFilter(); scheduleOutline(); });
+$('outline').addEventListener('click', e => {
+  const el = e.target.closest('.item');
+  if (!el) return;
+  if (sculpting) setSculpt(false);
+  select(el.dataset.ref ? references[+el.dataset.ref] : objects[+el.dataset.i]);
+  focus();
+});
+$('outline').addEventListener('toggle', e => {    // remember open groups; an opened one gets its rows
+  const d = e.target, key = d.dataset?.key;
+  if (!key || d.open === openGroups.has(key)) return;
+  if (d.open) { openGroups.add(key); scheduleOutline(); } else openGroups.delete(key);
+}, true);
 $('showVolumes').addEventListener('change', applyFilter);
 $('showMarkers').addEventListener('change', applyFilter);
 $('showHuge').addEventListener('change', applyFilter);
 $('showRefs').addEventListener('change', () => {
   if (references.includes(selected)) select(null);
-  references.forEach(r => { r.visible = $('showRefs').checked && !!mapName; });
+  references.forEach(r => { r.visible = $('showRefs').checked; });
+  scheduleOutline();
 });
 $('save').addEventListener('click', save);
 $('play').addEventListener('click', play);
@@ -1255,14 +1343,6 @@ $('palette').addEventListener('dblclick', addFromPalette);
 $('paletteFilter').addEventListener('input', renderPalette);
 $('delete').addEventListener('click', deleteSelected);
 $('restore').addEventListener('click', restore);
-$('outliner').addEventListener('change', e => {
-  const obj = objects[+e.target.value];
-  e.target.blur();                                // so the keyboard drives the view again
-  if (!obj) return;
-  if (sculpting) setSculpt(false);
-  select(obj);
-  focus();
-});
 // menus close once something in them is picked, or on a click elsewhere
 document.addEventListener('click', e => document.querySelectorAll('details.menu[open]').forEach(menu => {
   if (!menu.contains(e.target) || e.target.closest('.items button')) menu.open = false;
