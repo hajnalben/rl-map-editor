@@ -228,6 +228,26 @@ export class Package {
     return [...used].sort((a, b) => b[1] - a[1]).map(([ref]) => ({ ref, name: this.ref(ref) }));
   }
 
+  // A material instance that only tints its parent (one vector setting, "Color"): [export index, offset of the
+  // colour's 4 floats from the object's start], or null
+  tintable() {
+    for (const [i, e] of this.exports.entries()) {
+      const p = this.classOf(e) === 'MaterialInstanceConstant' ? this.prop(e, 'VectorParameterValues') : null;
+      if (!p || unpackFrom('<i', this.data, p[2])[0] !== 1) continue;
+      let color = false, at = null;
+      for (this.pos = p[2] + 4; this.pos < p[2] + p[3];) {
+        const name = this.fname();
+        if (name === 'None') break;
+        const ptype = this.fname(), [size] = this.unpack('<ii'), struct = ptype === 'StructProperty' ? this.fname() : null;
+        if (name === 'ParameterName') color = this.names[unpackFrom('<i', this.data, this.pos)[0]] === 'Color';
+        if (name === 'ParameterValue' && struct === 'LinearColor' && size === 16) at = this.pos - e.off;
+        this.pos += size;
+      }
+      if (color && at !== null) return [i, at];
+    }
+    return null;
+  }
+
   apply(edits) {                                  // in place; returns {i: values} for properties an object lacks
     const missing = new Map();
     for (const edit of edits) {

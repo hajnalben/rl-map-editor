@@ -1,7 +1,7 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
-import { pack } from './bytes.js';
-import { addCheckpoints, checkpointZones, mainSequence } from './kismet.js';
+import { pack, packInto } from './bytes.js';
+import { addCheckpoints, checkpointZones, lavaZones, mainSequence } from './kismet.js';
 import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain } from './mesh.js';
 import { asMeshInput, boxShape } from './shapes.js';
 import { unpackFrom } from './bytes.js';
@@ -19,8 +19,16 @@ export function describe(pkg) {
     const p = pkg.prop(pkg.exports[meshComponent(pkg, a.i)], 'Materials');
     return { i: a.i, material: p && unpackFrom('<i', pkg.data, p[2])[0] ? unpackFrom('<ii', pkg.data, p[2])[1] : null };
   });
-  return { actors, palette: pkg.palette(actors), zone: pkg.zoneTemplate(), checkpoints: checkpointZones(pkg), materials: pkg.materials(), panels,
-           terrain: { tile: TILE, cell: CELL, sink: SINK, base: ground.base, material: ground.material, tiles } };
+  const tint = pkg.tintable();
+  return { actors, palette: pkg.palette(actors), zone: pkg.zoneTemplate(), checkpoints: checkpointZones(pkg), lava: lavaZones(pkg), materials: pkg.materials(), panels,
+           tintable: tint && pkg.exports[tint[0]].name, terrain: { tile: TILE, cell: CELL, sink: SINK, base: ground.base, material: ground.material, tiles } };
+}
+
+const LAVA_COLOR = [1, 0.12, 0.01, 0];            // linear red-orange
+function lavaSurface(add) {                       // a red copy of the map's tintable surface; its 1-based reference
+  const [i, at] = add.pkg.tintable(), e = add.pkg.exports[i], blob = add.pkg.objectBytes(i).slice();
+  packInto('<4f', blob, at, ...LAVA_COLOR);
+  return add.addObject(e.cls, e.outer, 'Lava_INST', blob, e.flags) + 1;
 }
 
 export function shapes(pkg, meshIndices) {        // Map(mesh export index -> triangle corners), skipping unreadable meshes
@@ -39,6 +47,8 @@ const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its che
 // checkpoints ([{valueVar, zone, marker}]): to a new marker zone at `marker` (transform), or back to the zone itself.
 // `panels` ([{loc, rot, scale3d, scale, material}]) make checkpoints visible in game: an opaque box the size of the
 // zone that nothing collides with; `panelMaterials` ([{i, material}]) change the surface of saved ones.
+// `checkpoints` entries with `lava` are lava zones (see addCheckpoints). A panel material of 'lava' is a red copy
+// of the map's tintable surface (describe().tintable), added once.
 export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false,
                                 shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], panelMaterials = [] }) {
   const pkg = new Package(source.slice());
@@ -56,6 +66,8 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   for (const r of respawns) if (!r.marker) pkg.set(pkg.exports[r.valueVar], 'ObjValue', '<i', r.zone + 1);
   if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || panelMaterials.length) {
     const add = new Additions(pkg);
+    let lava = null;
+    const surface = m => m === 'lava' ? (lava ??= lavaSurface(add)) : m;
     for (const [v, value] of unsetModes) add.setProps(v, { IntValue: add.tag('IntValue', 'IntProperty', pack('<i', value)) });
     if (fresh) add.clearRefs(mainSequence(pkg), 'SequenceObjects');
     for (const [i, values] of missing) add.setValues(i, values);
@@ -68,19 +80,20 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     if (checkpoints.length) {
       const zone = pkg.zoneTemplate();
       if (!zone) throw new Error('this map has no trigger zone to copy for checkpoints');
-      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball, ballOnTop: !!c.ballOnTop,
-                                                                     respawn: c.respawn ? editValues(c.respawn) : null })), fresh);
+      const spawn = pkg.levelActors().find(a => a.cls.startsWith('PlayerStart'))?.i ?? null;
+      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball, ballOnTop: !!c.ballOnTop, lava: !!c.lava,
+                                                                     respawn: c.respawn ? editValues(c.respawn) : null })), fresh, spawn);
     }
     if (ground) [tilesAdded, tilesRemoved] = saveTerrain(add, Number(ground.base), ground.material, ground.tiles);
     if (shapes.length) addShapes(add, shapes.map(s => ({ key: s.key, values: editValues(s) })), shapeGeometry, shapeMaterial);
     if (panels.length) {
       const zone = pkg.zoneTemplate();
       if (!zone) throw new Error('this map has no trigger zone to size checkpoint panels');
-      addShapes(add, panels.map(p => ({ key: 'panel', values: editValues(p), material: p.material ?? null })),
+      addShapes(add, panels.map(p => ({ key: 'panel', values: editValues(p), material: surface(p.material ?? null) })),
                 { panel: asMeshInput(boxShape(zone.bounds)) }, null, { name: 'CheckpointPanel', solid: false });
     }
     for (const { i, material } of panelMaterials) {
-      add.setProps(meshComponent(pkg, i), { Materials: add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(material))) });
+      add.setProps(meshComponent(pkg, i), { Materials: add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(surface(material)))) });
     }
     out = add.save();
   }
@@ -90,10 +103,12 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   const saved = new Package(out), actors = saved.levelActors(), byIndex = new Map(actors.map(a => [a.i, a]));
   const markersAdded = markers.length + checkpoints.filter(c => c.respawn).length;
   check(saved.levelList().length === before + duplicates.length + checkpoints.length + markersAdded + shapes.length + panels.length + tilesAdded - removes.length - tilesRemoved, 'level actor count');
-  const savedZones = new Map(checkpointZones(saved).map(z => [z.i, z]));
+  const savedZones = new Map(checkpointZones(saved).map(z => [z.i, z])), savedLava = new Map(lavaZones(saved).map(z => [z.i, z]));
   triggers.forEach((t, k) => {
-    const z = savedZones.get(t), c = checkpoints[k];
-    check(z && z.ball === !!c.ball && (!c.ball || z.ballOnTop === !!c.ballOnTop) && (z.dest !== t) === !!c.respawn, `checkpoint ${k + 1} wiring`);
+    const c = checkpoints[k], z = (c.lava ? savedLava : savedZones).get(t);
+    if (c.lava) return check(z && z.ball === !!c.ball && !savedZones.has(t), `lava zone ${k + 1} wiring`);
+    // maps made before the ball placement setting always drop the ball on top
+    check(z && z.ball === !!c.ball && (!c.ball || z.modeVar === null || z.ballOnTop === !!c.ballOnTop) && (z.dest !== t) === !!c.respawn, `checkpoint ${k + 1} wiring`);
   });
   for (const edit of edits) {
     if ('ballOnTop' in edit && zones.get(edit.i)?.modeVar != null) check(savedZones.get(edit.i)?.ballOnTop === !!edit.ballOnTop, `${edit.i} ball placement`);
