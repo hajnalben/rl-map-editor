@@ -146,7 +146,7 @@
           <span class="muted">Shape</span>
           <div class="modes two">
             <button data-gate="box" title="A box you drive or dribble into">Box</button>
-            <button data-gate="gate" title="A flat gate you pass through, 100 units thick">Gate</button>
+            <button data-gate="gate" title="A flat gate you pass through, 20 units thick">Gate</button>
           </div>
         </div>
         <div id="cpPanel" hidden>
@@ -813,17 +813,16 @@ function placeNew(obj) {
   applyFilter();
   updateDirty();
 }
-// A gate is a checkpoint squashed flat along the way it faces: you pass through it. Thick enough that a fast ball
-// can't skip it between two physics steps (Lethamyr's dribble gates are about this thick too).
-const GATE = 100;
+// A gate is a checkpoint squashed flat along the way it faces: you pass through it. Thin is safe: the trigger fires
+// on any overlap, and per physics step the ball (182 across) moves at most ~50 units, the car (118 long) ~20.
+const GATE = 20;
 const GATE_PAST = 250;                            // a reset at a gate puts the car this far past it, clear of the trigger
-const GATE_WIDTH = 600;                           // new gates; the ball is 182 across, the car 84 wide
-const isGate = a => 2 * a.bounds[3] * Math.abs(a.scale3d[0] * a.scale) <= 1.5 * GATE;
+const isGate = a => 2 * a.bounds[3] * Math.abs(a.scale3d[0] * a.scale) <= 150;   // also the 100-unit gates saved earlier
 function addCheckpoint(kind, gate = false) {
   if (!zone) return setStatus('This map has no trigger zone to copy for checkpoints.', 'warn');
   const loc = fromThree(orbit.target);             // rest the zone on the point you're looking at
   loc[2] += zone.bounds[5] - 50;
-  makeCheckpoint(kind, loc, [0, 0, 0], false, gate ? [GATE / (2 * zone.bounds[3]), GATE_WIDTH / (2 * zone.bounds[4]), 1] : [1, 1, 1]);
+  makeCheckpoint(kind, loc, [0, 0, 0], false, [gate ? GATE / (2 * zone.bounds[3]) : 1, 1, 1]);
 }
 function respawnValues(o) {                       // the marker a reset at a gate teleports to
   readBack(o);
