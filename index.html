@@ -142,6 +142,13 @@
           <button data-mode="rotate" title="Rotate it in the view (2)">Rotate</button>
           <button data-mode="scale" title="Scale it in the view (3)">Scale</button>
         </div>
+        <div id="cpShape" hidden>
+          <span class="muted">Shape</span>
+          <div class="modes two">
+            <button data-gate="box" title="A box you drive or dribble into">Box</button>
+            <button data-gate="gate" title="A flat gate you pass through, 100 units thick">Gate</button>
+          </div>
+        </div>
         <div id="ballPlace" class="ball-place" hidden>
           <span class="muted">Ball after reset</span>
           <div class="modes two">
@@ -353,17 +360,18 @@ const terrainMat = new THREE.MeshStandardMaterial({ color: 0xa08a64, roughness: 
 const ghostMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false });
 function decorateCheckpoint(obj) {
   const b = obj.userData.actor.bounds;
-  obj.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(b[0], b[2], b[1]), b[3] * 1.4, CHECKPOINT_COLORS[obj.userData.checkpoint], b[3] * 0.4, b[3] * 0.25));
+  const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(b[0], b[2], b[1]), 700, CHECKPOINT_COLORS[obj.userData.checkpoint], 200, 125);
   const car = new THREE.Mesh(references[0].geometry, ghostMat);
   const ball = obj.userData.checkpoint === 'ball' ? new THREE.Mesh(references[1].geometry, ghostMat) : null;
-  obj.add(car, ...(ball ? [ball] : []));
-  obj.userData.ghosts = { car, ball };
+  obj.add(arrow, car, ...(ball ? [ball] : []));
+  obj.userData.ghosts = { arrow, car, ball };
   fitGhosts(obj);
 }
 function fitGhosts(obj) {
   const g = obj.userData.ghosts;
   if (!g) return;
   const inverse = new THREE.Vector3(1 / obj.scale.x, 1 / obj.scale.y, 1 / obj.scale.z);
+  g.arrow.scale.set(inverse.y, inverse.x, inverse.z);   // the arrow's own Y points along the zone's X
   g.car.scale.copy(inverse);
   if (!g.ball) return;
   g.ball.scale.copy(inverse);
@@ -508,7 +516,8 @@ async function buildOnMap(file) {
   }
   const checkpoints = added.filter(o => o.userData.checkpoint).map(o => {
     readBack(o);
-    return { kind: o.userData.checkpoint, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], ballOnTop: o.userData.ballOnTop };
+    return { kind: o.userData.checkpoint, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], ballOnTop: o.userData.ballOnTop,
+             scale3d: [...o.userData.actor.scale3d] };
   });
   const shapes = added.filter(o => o.userData.shape).map(o => {
     readBack(o);
@@ -528,7 +537,7 @@ async function buildOnMap(file) {
   const touched = new Set();
   for (const [gx, gy, h] of heights) setHeight(gx + dx, gy + dy, h, touched);
   for (const t of touched) { refreshTile(t); ter.dirty.add(tileKey(t.tx, t.ty)); }
-  for (const c of zone ? checkpoints : []) makeCheckpoint(c.kind, [c.loc[0] + dx * ter.cell, c.loc[1] + dy * ter.cell, c.loc[2] + floor], c.rot, c.ballOnTop);
+  for (const c of zone ? checkpoints : []) makeCheckpoint(c.kind, [c.loc[0] + dx * ter.cell, c.loc[1] + dy * ter.cell, c.loc[2] + floor], c.rot, c.ballOnTop, c.scale3d);
   for (const sh of shapes) placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
   select(null);
   placeReferences(start);
@@ -682,12 +691,16 @@ function showSelection() {
     : selected.userData.shape
     ? `<div class="kv"><b>${a.name}</b> <span class="muted">(${selected.userData.shape.startsWith('std:') ? 'built-in shape' : 'from ' + library.get(selected.userData.shape.slice(4))?.source})</span></div><div class="kv muted">A new mesh drawn with the Surface chosen under Add object; the car collides with its shape.</div>`
     : selected.userData.checkpoint
-    ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} checkpoint</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
-        ? `Get the ball into it, reset, and you respawn here facing the arrow with a new ball ${selected.userData.ballOnTop ? 'dropped onto your car' : 'in front of you'}.`
-        : 'Drive or fly through it, reset, and you respawn here facing the arrow.'}</div>`
+    ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${isGate(a) ? 'gate' : 'checkpoint'}</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
+        ? `Becomes your respawn point when the ball ${isGate(a) ? 'passes through' : 'gets into'} it.`
+        : `Becomes your respawn point when your car ${isGate(a) ? 'passes through' : 'drives or flies into'} it.`}
+        After a reset the car appears at its center facing the arrow${selected.userData.checkpoint === 'ball'
+        ? `, with the new ball ${selected.userData.ballOnTop ? `${BALL_LIFT} above it, dropping onto the roof` : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
     : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
   $('selEdit').hidden = false;
   $('duplicate').hidden = $('delete').hidden = !!selected.userData.reference;
+  $('cpShape').hidden = !selected.userData.checkpoint;
+  document.querySelectorAll('[data-gate]').forEach(b => b.classList.toggle('active', !!selected.userData.checkpoint && (b.dataset.gate === 'gate') === isGate(a)));
   const ballPlace = selected.userData.checkpoint === 'ball';
   $('ballPlace').hidden = !ballPlace;
   document.querySelectorAll('[data-ball]').forEach(b => {
@@ -756,6 +769,7 @@ function duplicateSelected() {
 }
 function placeNew(obj) {
   applyActor(obj);
+  fitGhosts(obj);
   group.add(obj);
   objects.push(obj);
   added.push(obj);
@@ -764,14 +778,28 @@ function placeNew(obj) {
   applyFilter();
   updateDirty();
 }
-function addCheckpoint(kind) {
+// A gate is a checkpoint squashed flat along the way it faces: you pass through it. Thick enough that a fast ball
+// can't skip it between two physics steps (Lethamyr's dribble gates are about this thick too).
+const GATE = 100;
+const isGate = a => 2 * a.bounds[3] * Math.abs(a.scale3d[0] * a.scale) <= 1.5 * GATE;
+function addCheckpoint(kind, gate = false) {
   if (!zone) return setStatus('This map has no trigger zone to copy for checkpoints.', 'warn');
   const loc = fromThree(orbit.target);             // rest the zone on the point you're looking at
   loc[2] += zone.bounds[5] - 50;
-  makeCheckpoint(kind, loc, [0, 0, 0]);
+  makeCheckpoint(kind, loc, [0, 0, 0], false, [gate ? GATE / (2 * zone.bounds[3]) : 1, 1, 1]);
 }
-function makeCheckpoint(kind, loc, rot, ballOnTop = false) {
-  const a = { i: null, name: 'Checkpoint', cls: 'TriggerVolume', mesh: null, loc, rot, scale3d: [1, 1, 1],
+function setGate(obj, gate) {
+  pushUndo(obj);
+  readBack(obj);
+  const a = obj.userData.actor;
+  a.scale3d[0] = gate ? GATE / (2 * a.bounds[3] * a.scale) : a.scale3d[1];
+  applyActor(obj);
+  if (obj === selected) attachGizmo(obj);
+  markDirty(obj);
+  showSelection();
+}
+function makeCheckpoint(kind, loc, rot, ballOnTop = false, scale3d = [1, 1, 1]) {
+  const a = { i: null, name: 'Checkpoint', cls: 'TriggerVolume', mesh: null, loc, rot, scale3d: [...scale3d],
               scale: 1, bounds: zone.bounds };
   const obj = new THREE.Mesh(geometryFor(zone.bounds), checkpointMats[kind]);
   obj.userData = { actor: a, copy: true, checkpoint: kind, ballOnTop };
@@ -968,7 +996,8 @@ function renderPalette() {
     return g;
   };
   // checkpoints need a trigger zone to copy, which the starter and most maps have
-  const checkpoints = [['cp:car', 'Car checkpoint · flying trials'], ['cp:ball', 'Ball checkpoint · dribbling']];
+  const checkpoints = [['cp:car', 'Car checkpoint · box'], ['cp:car:gate', 'Car checkpoint · gate'],
+                       ['cp:ball', 'Ball checkpoint · box'], ['cp:ball:gate', 'Ball checkpoint · gate']];
   $('palette').replaceChildren(...[
     group('Checkpoints', zone ? checkpoints.filter(([, text]) => hit(text)) : []),
     group('This map', palette.filter(p => hit(p.mesh)).map(p => [`map:${p.template}`, `${p.mesh}  ×${p.count}`])),
@@ -980,7 +1009,7 @@ function renderPalette() {
 function addFromPalette() {
   const value = $('palette').value;
   if (!value) return setStatus('Pick a shape in the list first.', 'warn');
-  if (value.startsWith('cp:')) return addCheckpoint(value.slice(3));
+  if (value.startsWith('cp:')) return addCheckpoint(value.split(':')[1], value.endsWith(':gate'));
   if (!value.startsWith('map:')) return placeShape(value, fromThree(orbit.target));
   const template = objects.find(o => !o.userData.copy && o.userData.actor.i === +value.slice(4));
   if (template) copyObject(template, fromThree(orbit.target));
@@ -1102,7 +1131,7 @@ function renderOutline() {                        // • marks what isn't saved 
   const numbers = {};
   const label = o => {
     if (!o.userData.checkpoint) return `${o.userData.actor.name} · ${where(o)}`;
-    const kind = `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} checkpoint`;
+    const kind = `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${isGate(o.userData.actor) ? 'gate' : 'checkpoint'}`;
     numbers[kind] = (numbers[kind] || 0) + 1;
     return `${kind} ${numbers[kind]} · ${where(o)}`;
   };
@@ -1378,6 +1407,9 @@ $('palette').addEventListener('dblclick', addFromPalette);
 $('paletteFilter').addEventListener('input', renderPalette);
 $('delete').addEventListener('click', deleteSelected);
 $('restore').addEventListener('click', restore);
+document.querySelectorAll('[data-gate]').forEach(b => b.addEventListener('click', () => {
+  if (selected?.userData.checkpoint) setGate(selected, b.dataset.gate === 'gate');
+}));
 document.querySelectorAll('[data-ball]').forEach(b => b.addEventListener('click', () => {
   if (selected?.userData.checkpoint !== 'ball') return;
   selected.userData.ballOnTop = b.dataset.ball === 'top';
