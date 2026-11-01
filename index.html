@@ -48,7 +48,10 @@
     <h1>RL Map Editor</h1>
     <section>
       <h2>Map</h2>
-      <button id="open" class="primary" title="A Rocket League workshop map (.udk); you can also drop it on the view">Open map…</button>
+      <div class="actions" style="margin-top:0">
+        <button id="open" class="primary" title="A Rocket League workshop map (.udk); you can also drop it on the view">Open map…</button>
+        <button id="newMap" title="Start an empty map from the open one (or one you pick): keeps its floor, sky, lights and spawn">New map</button>
+      </div>
       <input type="file" id="file" accept=".udk,.upk" hidden>
       <div id="mapName" class="muted kv" style="margin-top:6px">No map open. Your maps never leave this computer.</div>
     </section>
@@ -298,6 +301,7 @@ function placeReferences(start) {                 // the car on the floor at the
 }
 
 const dirty = new Set(), removed = new Set(), added = [], undo = [];
+let fresh = false;                                // a new map started from the open one: its scripts get emptied on save
 const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0);
 const group = new THREE.Group();
 scene.add(group);
@@ -333,16 +337,48 @@ async function openFile(file) {
   } catch (err) {
     $('loading').hidden = !!mapName;
     $('loading').textContent = 'Open a map to start.';
-    return setStatus(`${file.name}: ${err.message}`, 'warn');
+    setStatus(`${file.name}: ${err.message}`, 'warn');
+    return false;
   }
   loadMap(file.name, bytes, parsed, data);
+  return true;
+}
+
+// What a map needs to play and look right; everything else goes when starting a new map from it.
+const KEEP_FOR_NEW = /^PlayerStart|Light|^Pylon|SceneCapture|Fog|PostProcess/;
+let freshAfterOpen = false;
+async function newMap() {
+  if (!source) {
+    freshAfterOpen = true;
+    setStatus('Pick a workshop map to start from: its floor, sky, lights and spawn are kept.', '');
+    return $('file').click();
+  }
+  if (!confirm(`Start a new map from ${mapName}? It keeps the floor, sky, lights and spawn and removes everything else, including the map's scripts and terrain.${changeCount() ? ' Your unsaved changes are discarded.' : ''}`)) return;
+  loadMap(mapName, source, pkg, describe(pkg));
+  startFresh();
+}
+function startFresh() {
+  const floor = floorHit()?.object;
+  let kept = 0;
+  for (const o of objects) {
+    const a = o.userData.actor, sky = o.userData.huge && !isVolume(a);
+    if (KEEP_FOR_NEW.test(a.cls) || o === floor || sky) { kept += 1; continue; }
+    o.userData.deleted = true;
+    removed.add(o);
+  }
+  for (const [key, t] of [...ter.tiles]) { dropTile(t); ter.dirty.add(key); }
+  fresh = true;
+  $('outName').value = mapName.replace(/\.(udk|upk)$/i, '') + '-new.udk';
+  applyFilter();
+  updateDirty();
+  setStatus(`New map from ${mapName}: kept its spawn, floor, sky and lights (${kept} objects). Every shape is still in Add object.`, 'ok');
 }
 
 function loadMap(name, bytes, parsed, data) {
   select(null);
   setSculpt(false);
   group.clear();
-  dirty.clear(); removed.clear(); added.length = 0; undo.length = 0;
+  dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; fresh = false;
   ({ actors, palette, zone } = data);
   const checkpointZones = new Map(data.checkpoints.map(c => [c.i, c.ball ? 'ball' : 'car']));
   mapName = name;
@@ -593,14 +629,17 @@ function apron(tx, ty) {                          // the tile's heights plus a o
   for (let j = -1; j <= n + 1; j++) for (let i = -1; i <= n + 1; i++) out.push(Math.round(heightAt(tx * n + i, ty * n + j) * 10) / 10);
   return out;
 }
-function floorHeight() {                          // top of whatever the car spawns on
+function floorHit() {                             // what the car spawns on, as a raycast hit (or undefined)
   const start = actors.find(a => a.cls.startsWith('PlayerStart'));
-  if (!start) return orbit.target.y;
+  if (!start) return undefined;
   scene.updateMatrixWorld();                      // objects placed since the last frame are not in their spots yet
   ray.set(toThree(start.loc), new THREE.Vector3(0, -1, 0));
   const solid = objects.filter(o => !o.userData.deleted && o.userData.actor.bounds && !isVolume(o.userData.actor));
-  const hit = ray.intersectObjects(solid, false)[0];
-  return hit ? hit.point.y : start.loc[2];
+  return ray.intersectObjects(solid, false)[0];
+}
+function floorHeight() {
+  const start = actors.find(a => a.cls.startsWith('PlayerStart')), hit = floorHit();
+  return hit ? hit.point.y : start ? start.loc[2] : orbit.target.y;
 }
 
 const brushRing = new THREE.Mesh(new THREE.RingGeometry(0.97, 1, 64).rotateX(-Math.PI / 2),
@@ -777,7 +816,7 @@ function editedMap() {                            // [map bytes with every chang
   const summary = [edits.length && `${edits.length} moved`, duplicates.length && `${duplicates.length} added`,
                    checkpoints.length && `${checkpoints.length} checkpoints`, terrain && `${terrain.tiles.length} terrain tiles`,
                    removes.length && `${removes.length} deleted`].filter(Boolean).join(', ') || 'no changes';
-  return [build(source, { edits, duplicates, checkpoints, terrain, removes }), summary];
+  return [build(source, { edits, duplicates, checkpoints, terrain, removes, fresh }), fresh ? `new map, ${summary}` : summary];
 }
 const failed = err => err.name !== 'AbortError' && setStatus(err.message, 'warn');   // cancelling a dialog is no error
 const nextFrame = () => new Promise(r => setTimeout(r, 30));
@@ -965,8 +1004,15 @@ $('palette').addEventListener('dblclick', addFromPalette);
 $('paletteFilter').addEventListener('input', renderPalette);
 $('delete').addEventListener('click', deleteSelected);
 $('restore').addEventListener('click', restore);
-$('open').addEventListener('click', () => $('file').click());
-$('file').addEventListener('change', e => { openFile(e.target.files[0]); e.target.value = ''; });
+$('open').addEventListener('click', () => { freshAfterOpen = false; $('file').click(); });
+$('file').addEventListener('change', async e => {
+  const file = e.target.files[0], startNew = freshAfterOpen;
+  e.target.value = '';
+  freshAfterOpen = false;
+  if (await openFile(file) && startNew) startFresh();
+});
+$('file').addEventListener('cancel', () => { freshAfterOpen = false; });
+$('newMap').addEventListener('click', newMap);
 view.addEventListener('dragover', e => e.preventDefault());
 view.addEventListener('drop', e => { e.preventDefault(); openFile(e.dataTransfer.files[0]); });
 window.addEventListener('beforeunload', e => { if (changeCount()) e.preventDefault(); });
@@ -975,7 +1021,7 @@ setMode('translate');
 setTool('raise');
 $('loading').textContent = 'Open a map to start: click Open map or drop a .udk file here.';
 window.editor = { objects: () => objects, camera, orbit, gizmo, pivot, select, duplicateSelected, deleteSelected, addFromPalette, addCheckpoint,
-                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, references };
+                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, references, newMap, startFresh };
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
-import { addCheckpoints, checkpointZones } from './kismet.js';
+import { addCheckpoints, checkpointZones, mainSequence } from './kismet.js';
 import { CELL, SINK, TILE, saveTerrain, terrain } from './mesh.js';
 
 export function describe(pkg) {
@@ -25,21 +25,23 @@ export function shapes(pkg, meshIndices) {        // Map(mesh export index -> tr
 
 const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its check: ${what}`); };
 
-// The original map bytes (left untouched) with the editor's changes applied, re-read and checked.
-export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null }) {
+// The original map bytes (left untouched) with the editor's changes applied, re-read and checked. `fresh` empties
+// the map's own Kismet scripts (a new map started from this one).
+export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false }) {
   const pkg = new Package(source.slice());
   const before = pkg.levelList().length;
   let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [];
   const missing = pkg.apply(edits);
-  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground) {
+  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh) {
     const add = new Additions(pkg);
+    if (fresh) add.clearRefs(mainSequence(pkg), 'SequenceObjects');
     for (const [i, values] of missing) add.setValues(i, values);
     for (const dup of duplicates) add.duplicate(dup.src, [0, 0, 0], editValues(dup));
     for (const i of removes) add.remove(i);
     if (checkpoints.length) {
       const zone = pkg.zoneTemplate();
       if (!zone) throw new Error('this map has no trigger zone to copy for checkpoints');
-      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball })));
+      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball })), fresh);
     }
     if (ground) [tilesAdded, tilesRemoved] = saveTerrain(add, Number(ground.base), ground.material, ground.tiles);
     out = add.save();

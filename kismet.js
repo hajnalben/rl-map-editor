@@ -134,18 +134,25 @@ export function mainSequence(pkg) {
 }
 
 
-function namedVar(pkg, name) {                    // export index of the object variable called `name`, or null
-  const i = pkg.exports.findIndex(e => pkg.classOf(e) === 'SeqVar_Object' && nodeProps(pkg, e).VarName === name);
+// Nodes the main sequence runs. Maps keep nodes taken out of it (a fresh start empties it), so lookups skip those.
+function liveNodes(pkg) {
+  const refs = nodeProps(pkg, pkg.exports[mainSequence(pkg)]).SequenceObjects;
+  return new Set(Array.isArray(refs) ? refs.map(r => r - 1) : []);
+}
+
+function namedVar(pkg, name, live = liveNodes(pkg)) {   // export index of the live object variable called `name`, or null
+  const i = pkg.exports.findIndex((e, k) => live.has(k) && pkg.classOf(e) === 'SeqVar_Object' && nodeProps(pkg, e).VarName === name);
   return i >= 0 ? i : null;
 }
 
 // Checkpoint zones as [{i, ball}]: every zone stored into LastCheckpoint when touched; ball checkpoints also go
 // into LastBallCheckpoint.
 export function checkpointZones(pkg) {
-  const last = namedVar(pkg, 'LastCheckpoint'), lastBall = namedVar(pkg, 'LastBallCheckpoint');
+  const live = liveNodes(pkg), last = namedVar(pkg, 'LastCheckpoint', live), lastBall = namedVar(pkg, 'LastBallCheckpoint', live);
   if (last === null) return [];
   const zones = [], ballZones = new Set();
-  for (const e of pkg.exports) {
+  for (const k of live) {
+    const e = pkg.exports[k];
     if (pkg.classOf(e) !== 'SeqAct_SetObject') continue;
     const links = new Map((nodeProps(pkg, e).VariableLinks || []).map(l => [l.LinkDesc, l.LinkedVariables || []]));
     const target = links.get('Target') || [];
@@ -165,8 +172,8 @@ const BALL_LIFT = 200;                            // a respawned ball starts thi
 // Copy trigger zone `template` once per checkpoint ({values: {prop: [fmt, values]}, ball}) and wire Kismet:
 // touching a car checkpoint with the car, or a ball checkpoint with the ball, makes it the respawn point, and a
 // reset teleports the car there (with a fresh ball dropped onto it for ball checkpoints). The respawn logic is
-// created once per map. Returns the new trigger indices.
-export function addCheckpoints(add, template, checkpoints) {
+// created once per map, or again when `fresh` (the main sequence was just emptied). Returns the new trigger indices.
+export function addCheckpoints(add, template, checkpoints, fresh = false) {
   const pkg = add.pkg, enc = new Encoder(add);
   const seq = mainSequence(pkg), parent = seq + 1;
   const classes = new Map();
@@ -186,7 +193,8 @@ export function addCheckpoints(add, template, checkpoints) {
   const vars = (x, y, extra = []) => [...extra, ...layout(1, parent, x, y, 32, 32)];
 
   const x0 = 40000, y0 = 40000;
-  let last = namedVar(pkg, 'LastCheckpoint');
+  const live = fresh ? new Set() : liveNodes(pkg);
+  const last = namedVar(pkg, 'LastCheckpoint', live);
   let lastRef = last === null ? null : last + 1;
   if (last === null) {
     const r = refs(['car', 'last', 'teleport', 'spawned']);
@@ -208,7 +216,7 @@ export function addCheckpoints(add, template, checkpoints) {
     placed(r, 'car respawn');
   }
 
-  const lastBall = namedVar(pkg, 'LastBallCheckpoint');
+  const lastBall = namedVar(pkg, 'LastBallCheckpoint', live);
   let lastBallRef = lastBall === null ? null : lastBall + 1;
   if (lastBallRef === null && checkpoints.some(c => c.ball)) {
     // on reset, if the last checkpoint was a ball one: remove the balls, add one, lift it above the checkpoint
