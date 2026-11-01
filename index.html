@@ -166,12 +166,10 @@
     </section>
     <section class="fill">
       <h2>Add</h2>
-      <input id="paletteFilter" placeholder="Search shapes">
+      <input id="paletteFilter" placeholder="Search shapes and checkpoints">
       <select id="palette" size="10"></select>
       <div class="actions">
-        <button id="add" class="primary" title="Place the picked shape where you're looking (or double-click it in the list)">Place</button>
-        <button id="addCarCheckpoint" title="Flying trials: becomes your respawn point when your car flies or drives through it">Car checkpoint</button>
-        <button id="addBallCheckpoint" title="Dribbling: becomes your respawn point when the ball gets into it; resetting drops a ball onto your car">Ball checkpoint</button>
+        <button id="add" class="primary" title="Place the picked shape or checkpoint where you're looking (or double-click it in the list)">Place</button>
       </div>
       <label class="field">Surface <select id="shapeMat" title="Surface of built-in shapes and shapes from your other maps"></select></label>
     </section>
@@ -454,7 +452,6 @@ function loadStarter() {
   $('shapeMat').innerHTML = '';
   $('shapeMat').parentElement.hidden = true;
   $('sculpt').disabled = false;
-  $('addCarCheckpoint').disabled = $('addBallCheckpoint').disabled = false;
   $('mapName').textContent = 'Starter map';
   $('mapName').title = 'Sculpt the ground and add shapes and checkpoints. Saving builds it on a workshop map you pick.';
   saveName = 'my-map.udk';
@@ -544,7 +541,6 @@ function loadMap(name, bytes, parsed, data) {
   $('mapName').textContent = `${name} · ${(bytes.length / 1e6).toFixed(0)} MB`;
   $('mapName').title = name;
   renderPalette();
-  $('addCarCheckpoint').disabled = $('addBallCheckpoint').disabled = !zone;
   const t = data.terrain;
   ter = { tile: t.tile, cell: t.cell, sink: t.sink, base: t.base, tiles: new Map(), dirty: new Set() };
   for (const { tx, ty, heights } of t.tiles) makeTile(tx, ty, Float32Array.from(heights));
@@ -936,7 +932,10 @@ function renderPalette() {
     g.append(...items.map(([value, textContent]) => Object.assign(document.createElement('option'), { value, textContent })));
     return g;
   };
+  // checkpoints need a trigger zone to copy, which the starter and most maps have
+  const checkpoints = [['cp:car', 'Car checkpoint · flying trials'], ['cp:ball', 'Ball checkpoint · dribbling']];
   $('palette').replaceChildren(...[
+    group('Checkpoints', zone ? checkpoints.filter(([, text]) => hit(text)) : []),
     group('This map', palette.filter(p => hit(p.mesh)).map(p => [`map:${p.template}`, `${p.mesh}  ×${p.count}`])),
     group('Built-in', Object.keys(BUILT_IN).filter(hit).map(k => [`std:${k}`, k])),
     group('From your maps', [...library.values()].filter(s => s.source !== mapName && hit(`${s.name} ${s.source}`))
@@ -946,6 +945,7 @@ function renderPalette() {
 function addFromPalette() {
   const value = $('palette').value;
   if (!value) return setStatus('Pick a shape in the list first.', 'warn');
+  if (value.startsWith('cp:')) return addCheckpoint(value.slice(3));
   if (!value.startsWith('map:')) return placeShape(value, fromThree(orbit.target));
   const template = objects.find(o => !o.userData.copy && o.userData.actor.i === +value.slice(4));
   if (template) copyObject(template, fromThree(orbit.target));
@@ -1334,8 +1334,6 @@ $('play').addEventListener('click', play);
 $('undo').addEventListener('click', popUndo);
 $('duplicate').addEventListener('click', duplicateSelected);
 $('add').addEventListener('click', addFromPalette);
-$('addCarCheckpoint').addEventListener('click', () => addCheckpoint('car'));
-$('addBallCheckpoint').addEventListener('click', () => addCheckpoint('ball'));
 $('sculpt').addEventListener('click', () => setSculpt(!sculpting));
 document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 $('brushSize').addEventListener('input', showBrush);
