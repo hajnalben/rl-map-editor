@@ -275,17 +275,37 @@ function addArrow(obj) {                          // checkpoints respawn the car
   const b = obj.userData.actor.bounds;
   obj.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(b[0], b[2], b[1]), b[3] * 1.4, CHECKPOINT_COLORS[obj.userData.checkpoint], b[3] * 0.4, b[3] * 0.25));
 }
-// Editor-only size references: an Octane (its hitbox, origin 17 units above the floor at rest) and the ball.
-function carGeometry() {
-  const wheels = (x, r) => [-30, 30].map(z => new THREE.CylinderGeometry(r, r, 12, 20).rotateX(Math.PI / 2).translate(x, r - 17, z));
-  return mergeGeometries([new THREE.BoxGeometry(118, 36.2, 84.2).translate(13.9, 20.8, 0),        // hitbox
-                          new THREE.BoxGeometry(46, 15, 64).translate(-10, 46.4, 0),             // cabin, so the front reads
-                          ...wheels(51, 12.5), ...wheels(-34, 15)], true);
+// Editor-only size references: an Octane-like car and the ball. The car is our own model built around the
+// Octane's hitbox (118 x 84.2 x 36.2, wheels where the game puts them, origin 17 units above the floor at rest).
+function carModel() {
+  const mat = (color, more = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.45, ...more });
+  const paint = mat(0x2f6fdb, { metalness: 0.15 }), trim = mat(0x173a78), glass = mat(0x111823, { roughness: 0.15, metalness: 0.4 });
+  const tire = mat(0x1c1c1c, { roughness: 0.85 }), rim = mat(0xb9c0cb, { roughness: 0.3, metalness: 0.7 });
+  const lamp = mat(0xfff1c2, { emissive: 0x6b5a28 }), exhaust = mat(0x3a3f47, { metalness: 0.6 });
+  const side = (points, width, bevel) => {        // a side profile (x forward, y up) pushed out across the car
+    const depth = width - 2 * bevel;
+    return new THREE.ExtrudeGeometry(new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y))),
+      { depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, curveSegments: 1 }).translate(0, 0, -depth / 2);
+  };
+  const parts = [
+    [side([[-45, -4], [67, -4], [72, 4], [68, 12], [27, 22], [-35, 27], [-45, 25]], 74, 4), paint],    // body: low nose, long hood
+    [side([[26, 23], [6, 39], [-23, 39], [-35, 27]], 60, 3), glass],                                      // cabin and windows
+    [side([[18, 39], [8, 42], [-21, 42], [-25, 39]], 50, 2), paint],                                      // roof
+    [new THREE.BoxGeometry(11, 2.5, 70).translate(-47, 37, 0), trim],                                     // spoiler
+    ...[-24, 24].map(z => [new THREE.BoxGeometry(4, 9, 4).translate(-43, 31, z), trim]),
+    ...[-23, 23].map(z => [new THREE.BoxGeometry(2, 4, 13).translate(72.5, 7, z), lamp]),
+    [new THREE.CylinderGeometry(4.5, 5.5, 6, 14).rotateZ(Math.PI / 2).translate(-49, 9, 0), exhaust],     // boost
+  ];
+  for (const [x, r] of [[51, 12.5], [-34, 15]]) {
+    for (const z of [-35, 35]) {
+      parts.push([new THREE.CylinderGeometry(r, r, 12, 28).rotateX(Math.PI / 2).translate(x, r - 17, z), tire],
+                 [new THREE.CylinderGeometry(r * 0.58, r * 0.58, 12.8, 16).rotateX(Math.PI / 2).translate(x, r - 17, z), rim]);
+    }
+  }
+  return new THREE.Mesh(mergeGeometries(parts.map(([g]) => g.index ? g.toNonIndexed() : g), true), parts.map(([, m]) => m));
 }
-const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.8 });
 const references = [
-  new THREE.Mesh(carGeometry(), [new THREE.MeshStandardMaterial({ color: 0x2f6fdb, roughness: 0.5 }),
-                                 new THREE.MeshStandardMaterial({ color: 0x173a78, roughness: 0.3 }), wheelMat, wheelMat, wheelMat, wheelMat]),
+  carModel(),
   new THREE.Mesh(new THREE.SphereGeometry(91.25, 32, 16), new THREE.MeshStandardMaterial({ color: 0xe6e6e6, roughness: 0.45 })),
 ];
 ['Car (Octane)', 'Ball'].forEach((name, k) => {
