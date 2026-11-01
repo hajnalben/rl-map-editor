@@ -5,35 +5,60 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RL Map Editor</title>
 <style>
-  :root { --bg: #111317; --panel: #1a1d23; --text: #e7e9ec; --muted: #969ead; --accent: #4da3ff; --border: #2b3039; --warn: #ffb547; --ok: #5fd38d; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
-  #app { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
-  aside { background: var(--panel); border-right: 1px solid var(--border); padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
-  h1 { font-size: 15px; margin: 0; }
-  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
+  :root { --bg: #111317; --panel: #1a1d23; --panel2: #20242c; --text: #e7e9ec; --muted: #969ead; --accent: #4da3ff; --border: #2b3039; --warn: #ffb547; --ok: #5fd38d; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; overflow: hidden; }
+  #app { display: grid; height: 100%; grid-template: "top top top" 46px "left view right" 1fr "foot foot foot" 26px / 250px 1fr 280px; }
+  header { grid-area: top; display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border); min-width: 0; }
+  .brand { font-size: 14px; white-space: nowrap; }
+  .group { display: flex; gap: 4px; align-items: center; padding-right: 10px; border-right: 1px solid var(--border); }
+  .spacer { flex: 1; }
+  #mapName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+  aside { background: var(--panel); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 18px; }
+  #left { grid-area: left; border-right: 1px solid var(--border); }
+  #right { grid-area: right; border-left: 1px solid var(--border); }
+  #view { grid-area: view; position: relative; overflow: hidden; }
+  footer { grid-area: foot; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 10px; background: var(--panel); border-top: 1px solid var(--border); font-size: 12px; }
+  #status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #status.ok { color: var(--ok); } #status.warn { color: var(--warn); }
+  footer .hint { white-space: nowrap; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
   label { display: flex; gap: 6px; align-items: center; }
-  select, input, button { font: inherit; color: var(--text); background: #0f1114; border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; }
-  input[type=number] { width: 100%; box-sizing: border-box; }
+  label.field { display: grid; grid-template-columns: 64px 1fr; margin-top: 8px; color: var(--muted); }
+  select, input, button, summary { font: inherit; color: var(--text); background: #0f1114; border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+  input[type=number] { width: 100%; box-sizing: border-box; padding: 4px 6px; }
   input[type=checkbox] { padding: 0; }
-  select, #filter, #outName { width: 100%; box-sizing: border-box; }
-  button { cursor: pointer; background: #232832; }
-  button:hover { border-color: var(--accent); }
+  select, #paletteFilter, #filter { width: 100%; box-sizing: border-box; }
+  #palette { min-height: 220px; flex: 1; margin-top: 6px; }
+  #palette optgroup { color: var(--muted); font-style: normal; }
+  #palette option { color: var(--text); padding: 2px 4px; }
+  button, summary { cursor: pointer; background: #232832; white-space: nowrap; }
+  button:hover, summary:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
-  button.active { border-color: var(--accent); color: var(--accent); }
+  button.active { border-color: var(--accent); color: var(--accent); background: rgba(77, 163, 255, .14); }
   button:disabled { opacity: .45; cursor: default; }
-  .row { display: grid; grid-template-columns: 52px 1fr 1fr 1fr; gap: 4px; align-items: center; margin-bottom: 4px; }
+  button[hidden], select[hidden], label[hidden], section[hidden] { display: none; }
+  details.menu { position: relative; }
+  details.menu > summary { list-style: none; }
+  details.menu > summary::-webkit-details-marker { display: none; }
+  details.menu[open] > summary { border-color: var(--accent); }
+  .items { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; min-width: 230px; display: flex; flex-direction: column; gap: 6px;
+           padding: 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .45); }
+  .items button { text-align: left; }
+  #addSection { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .row { display: grid; grid-template-columns: 62px 1fr 1fr 1fr; gap: 4px; align-items: center; margin-bottom: 4px; }
   .row span { color: var(--muted); }
-  .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
-  .modes.tools { grid-template-columns: repeat(3, 1fr); }
+  .tools-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 10px; }
   input[type=range] { flex: 1; }
   .muted { color: var(--muted); }
-  .kv { word-break: break-all; }
-  #status { min-height: 18px; }
-  #status.ok { color: var(--ok); } #status.warn { color: var(--warn); }
-  #view { position: relative; overflow: hidden; }
+  .kv { word-break: break-word; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
   #loading[hidden] { display: none; }
-  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  #help { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0, 0, 0, .5); }
+  #help[hidden] { display: none; }
+  #help .card { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-width: 520px; }
+  #help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
+  #help dt { color: var(--accent); white-space: nowrap; } #help dd { margin: 0; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -44,94 +69,125 @@
 </head>
 <body>
 <div id="app">
-  <aside>
-    <h1>RL Map Editor</h1>
-    <section>
-      <h2>Map</h2>
-      <div class="actions" style="margin-top:0">
-        <button id="open" class="primary" title="A Rocket League workshop map (.udk); you can also drop it on the view. Maps never leave this computer.">Open map…</button>
-        <button id="newMap" title="Start over with flat ground, the car and the ball">New map</button>
+  <header>
+    <b class="brand">RL Map Editor</b>
+    <div class="group">
+      <button id="newMap" title="Start over with flat ground, the car and the ball">New</button>
+      <button id="open" title="Open a Rocket League workshop map (.udk), or drop one on the view. Maps never leave this computer. (⌘O)">Open…</button>
+      <button id="save" class="primary" title="Save the map as a .udk file (⌘S)">Save as…</button>
+      <details class="menu">
+        <summary title="Put the map into Rocket League (Chrome or Edge)">Game ▾</summary>
+        <div class="items">
+          <button id="play" title="Writes the map over Free Play's Underpass. Be on the main menu, not in Underpass.">Load into game</button>
+          <button id="restore" title="Put the game's own Underpass back">Restore the original Underpass</button>
+        </div>
+      </details>
+    </div>
+    <div class="group">
+      <button id="undo" title="Undo (⌘Z)">↶ Undo</button>
+    </div>
+    <div class="group" role="toolbar" aria-label="Tools">
+      <button data-mode="translate" title="Move the selection (1)">Move</button>
+      <button data-mode="rotate" title="Rotate the selection (2)">Rotate</button>
+      <button data-mode="scale" title="Scale the selection (3)">Scale</button>
+      <button id="sculpt" title="Paint hills, mountains and roads onto the ground (T)">Sculpt</button>
+    </div>
+    <details class="menu">
+      <summary>View ▾</summary>
+      <div class="items">
+        <input id="filter" placeholder="Filter: name, class or mesh">
+        <label><input type="checkbox" id="showVolumes"> Trigger zones (volumes)</label>
+        <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
+        <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
+        <label title="Real-size references you can move around; never saved into the map"><input type="checkbox" id="showRefs" checked> Car and ball (editor only)</label>
+        <div id="count" class="muted"></div>
       </div>
-      <input type="file" id="file" accept=".udk,.upk" hidden>
-      <div id="mapName" class="muted kv" style="margin-top:6px"></div>
-    </section>
-    <section>
-      <h2>Show</h2>
-      <input id="filter" placeholder="Filter: name, class or mesh">
-      <label style="margin-top:6px"><input type="checkbox" id="showVolumes"> Trigger zones (volumes)</label>
-      <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
-      <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
-      <label title="Real-size references you can move around; never saved into the map"><input type="checkbox" id="showRefs" checked> Car and ball (editor only)</label>
-      <div id="count" class="muted"></div>
-    </section>
-    <section>
-      <h2>Add object</h2>
-      <input id="paletteFilter" placeholder="Search shapes" style="width:100%;box-sizing:border-box">
-      <select id="palette" size="9" style="margin-top:6px"></select>
-      <select id="shapeMat" title="Surface of built-in shapes and shapes from your other maps" style="margin-top:6px"></select>
+    </details>
+    <div class="spacer"></div>
+    <div id="mapName" class="muted"></div>
+    <div class="muted"><span id="dirty">0</span> changes</div>
+    <button id="helpButton" title="Keyboard and mouse controls (?)">?</button>
+  </header>
+
+  <aside id="left">
+    <section id="addSection">
+      <h2>Add</h2>
+      <input id="paletteFilter" placeholder="Search shapes">
+      <select id="palette" size="14"></select>
       <div class="actions">
-        <button id="add">Add at view center</button>
+        <button id="add" class="primary" title="Place the picked shape where you're looking (or double-click it in the list)">Place</button>
+      </div>
+      <label class="field">Surface <select id="shapeMat" title="Surface of built-in shapes and shapes from your other maps"></select></label>
+    </section>
+    <section>
+      <h2>Checkpoints</h2>
+      <div class="actions" style="margin-top:0">
         <button id="addCarCheckpoint" title="Flying trials: becomes your respawn point when your car flies or drives through it">Car checkpoint</button>
         <button id="addBallCheckpoint" title="Dribbling: becomes your respawn point when the ball gets into it; resetting drops a ball onto your car">Ball checkpoint</button>
       </div>
     </section>
+  </aside>
+
+  <main id="view">
+    <div id="loading">Loading…</div>
+    <input type="file" id="file" accept=".udk,.upk" hidden>
+  </main>
+
+  <aside id="right">
     <section>
-      <h2>Terrain</h2>
-      <button id="sculpt" title="Paint hills and mountains onto the ground">Sculpt terrain (T)</button>
-      <div id="brush" hidden style="margin-top:8px">
-        <div class="modes tools">
-          <button data-tool="raise">Raise</button>
-          <button data-tool="lower">Lower</button>
-          <button data-tool="smooth">Smooth</button>
-          <button data-tool="flatten" title="Level the ground to the height where the stroke started">Flatten</button>
-          <button data-tool="road" title="A drivable road along your drag, flat across its width">Road</button>
-        </div>
-        <label>Size <input type="range" id="brushSize" min="200" max="4000" step="50" value="1200"></label>
-        <label>Strength <input type="range" id="brushStrength" min="1" max="100" value="30"></label>
-        <div class="muted" id="brushHint"></div>
-      </div>
-      <select id="terrainMat" title="Surface of the terrain; set when its first hill is saved" style="margin-top:6px"></select>
+      <h2>Objects</h2>
+      <select id="outliner" size="8" title="Checkpoints and everything you've added; click one to select it"></select>
     </section>
     <section id="selection">
-      <h2>Selected</h2>
-      <div id="selInfo" class="muted">Click an object in the view.</div>
-      <div id="selEdit" hidden>
-        <div class="modes">
-          <button data-mode="translate">Move (1)</button>
-          <button data-mode="rotate">Rotate (2)</button>
-          <button data-mode="scale">Scale (3)</button>
-        </div>
+      <h2>Inspector</h2>
+      <div id="selInfo" class="muted">Nothing selected. Click an object in the view, or place a shape from the list on the left.</div>
+      <div id="selEdit" hidden style="margin-top:10px">
         <div class="row"><span>Location</span><input type="number" data-f="loc" data-k="0"><input type="number" data-f="loc" data-k="1"><input type="number" data-f="loc" data-k="2"></div>
         <div class="row"><span>Rotation°</span><input type="number" data-f="rot" data-k="0" title="Pitch"><input type="number" data-f="rot" data-k="1" title="Yaw"><input type="number" data-f="rot" data-k="2" title="Roll"></div>
         <div class="row"><span>Scale</span><input type="number" step="0.05" data-f="scale" data-k="0"><input type="number" step="0.05" data-f="scale" data-k="1"><input type="number" step="0.05" data-f="scale" data-k="2"></div>
         <div class="actions">
-          <button id="duplicate">Duplicate (⌘D)</button>
-          <button id="delete">Delete (⌫)</button>
+          <button id="duplicate" title="Duplicate (⌘D)">Duplicate</button>
+          <button id="delete" title="Delete (⌫)">Delete</button>
         </div>
       </div>
     </section>
-    <section>
-      <h2>Save</h2>
-      <div><span id="dirty">0</span> changes</div>
-      <input id="outName" style="margin-top:6px">
-      <div class="actions">
-        <button id="save" class="primary">Save as</button>
-        <button id="play" title="Writes the edited map over Free Play's Underpass (Chrome or Edge). Be on the main menu, not in Underpass.">Load into game</button>
-        <button id="undo">Undo</button>
+    <section id="brush" hidden>
+      <h2>Terrain brush</h2>
+      <div class="tools-grid">
+        <button data-tool="raise">Raise</button>
+        <button data-tool="lower">Lower</button>
+        <button data-tool="smooth">Smooth</button>
+        <button data-tool="flatten" title="Level the ground to the height where the stroke started">Flatten</button>
+        <button data-tool="road" title="A drivable road along your drag, flat across its width">Road</button>
       </div>
-      <div class="actions"><button id="restore" title="Put the game's own Underpass back">Restore Underpass</button></div>
-      <div id="status"></div>
-    </section>
-    <section class="muted">
-      <h2>Controls</h2>
-      WASD: move · Q/E: turn · Shift: faster<br>
-      Left-drag: orbit · Right-drag: pan · Wheel: zoom<br>
-      Click: select · 1/2/3: move/rotate/scale · F: focus · Esc: deselect<br>
-      T: sculpt terrain<br>
-      ⌘D: duplicate · ⌫: delete · ⌘Z: undo
+      <label>Size <input type="range" id="brushSize" min="200" max="4000" step="50" value="1200"></label>
+      <label>Strength <input type="range" id="brushStrength" min="1" max="100" value="30"></label>
+      <div class="muted" id="brushHint" style="margin-top:8px"></div>
+      <label class="field">Surface <select id="terrainMat" title="Surface of the terrain; set when its first hill is saved"></select></label>
     </section>
   </aside>
-  <main id="view"><div id="loading">Loading…</div></main>
+
+  <footer>
+    <div id="status"></div>
+    <div class="muted hint">WASD move · Q/E turn · drag to orbit · ? for all controls</div>
+  </footer>
+</div>
+
+<div id="help" hidden>
+  <div class="card">
+    <h2>Controls</h2>
+    <dl>
+      <dt>W A S D</dt><dd>Move the camera (Shift: faster)</dd>
+      <dt>Q / E</dt><dd>Turn the camera</dd>
+      <dt>Left-drag · Right-drag · Wheel</dt><dd>Orbit · pan · zoom</dd>
+      <dt>Click</dt><dd>Select · F focuses it · Esc deselects</dd>
+      <dt>1 / 2 / 3</dt><dd>Move / rotate / scale tool</dd>
+      <dt>T</dt><dd>Sculpt the ground (Shift lowers, ⌥-drag orbits)</dd>
+      <dt>⌘D · ⌫ · ⌘Z</dt><dd>Duplicate · delete · undo</dd>
+      <dt>⌘S · ⌘O</dt><dd>Save as · open a map</dd>
+      <dt>?</dt><dd>Show or hide this</dd>
+    </dl>
+  </div>
 </div>
 <script type="module">
 import * as THREE from 'three';
@@ -268,6 +324,7 @@ function materialFor(a) {
   return matCache.get(key);
 }
 
+let saveName = 'my-map.udk';                      // suggested file name for Save as
 let mapName = null, source = null, pkg = null, actors = [], palette = [], zone = null, objects = [], selected = null;
 const CHECKPOINT_COLORS = { car: 0x3ddc84, ball: 0xff9f43 };
 const checkpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
@@ -382,13 +439,14 @@ function loadStarter() {
   ter = { tile: TILE, cell: CELL, sink: SINK, base: -SINK, tiles: new Map(), dirty: new Set() };
   group.add(starterGround);                       // the floor; unraised terrain stays hidden under it
   renderPalette();
-  $('terrainMat').hidden = true;                  // surfaces come with the map it gets built on
+  $('terrainMat').parentElement.hidden = true;                  // surfaces come with the map it gets built on
   $('shapeMat').innerHTML = '';
-  $('shapeMat').hidden = true;
+  $('shapeMat').parentElement.hidden = true;
   $('sculpt').disabled = false;
   $('addCarCheckpoint').disabled = $('addBallCheckpoint').disabled = false;
-  $('mapName').textContent = 'Starter map: sculpt the ground and add checkpoints. Saving builds it on a workshop map you pick.';
-  $('outName').value = 'my-map.udk';
+  $('mapName').textContent = 'Starter map';
+  $('mapName').title = 'Sculpt the ground and add shapes and checkpoints. Saving builds it on a workshop map you pick.';
+  saveName = 'my-map.udk';
   orbit.target.set(0, 0, 0);
   camera.position.set(-1400, 900, 1100);
   placeReferences({ loc: [0, 0, 0], rot: [0, 0, 0] });
@@ -422,7 +480,7 @@ async function buildOnMap(file) {
     readBack(o);
     return { key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d] };
   });
-  const name = $('outName').value;
+  const name = saveName;
   if (!await openFile(file, false)) return;
   const start = actors.find(a => a.cls.startsWith('PlayerStart'));
   if (!start) return setStatus(`${file.name} has no spawn point to build on; pick another map.`, 'warn');
@@ -440,7 +498,7 @@ async function buildOnMap(file) {
   for (const sh of shapes) placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
   select(null);
   placeReferences(start);
-  $('outName').value = name;
+  saveName = name;
   updateDirty();
   const lost = !zone && checkpoints.length ? ` It has no trigger zone, so your ${checkpoints.length} checkpoints were left out.` : '';
   setStatus(`Built on ${file.name}.${lost} Click Save as or Load into game again to write it.`, lost ? 'warn' : 'ok');
@@ -473,6 +531,7 @@ function loadMap(name, bytes, parsed, data) {
   source = bytes;
   pkg = parsed;
   $('mapName').textContent = `${name} · ${(bytes.length / 1e6).toFixed(0)} MB`;
+  $('mapName').title = name;
   renderPalette();
   $('addCarCheckpoint').disabled = $('addBallCheckpoint').disabled = !zone;
   const t = data.terrain;
@@ -482,10 +541,10 @@ function loadMap(name, bytes, parsed, data) {
   $('terrainMat').innerHTML = data.materials.map(m => `<option value="${m.ref}">${m.name}</option>`).join('');
   if (earthy) $('terrainMat').value = t.material ?? earthy.ref;
   $('terrainMat').disabled = t.material !== null;              // placed tiles keep the surface they were saved with
-  $('terrainMat').hidden = false;
+  $('terrainMat').parentElement.hidden = false;
   $('shapeMat').innerHTML = $('terrainMat').innerHTML;
   if (earthy) $('shapeMat').value = earthy.ref;
-  $('shapeMat').hidden = !data.materials.length;
+  $('shapeMat').parentElement.hidden = !data.materials.length;
   $('sculpt').disabled = !data.materials.length;
   objects = actors.map(a => {
     const obj = new THREE.Mesh(geometryFor(a.bounds), materialFor(a));
@@ -500,7 +559,7 @@ function loadMap(name, bytes, parsed, data) {
     group.add(obj);
     return obj;
   });
-  $('outName').value = name.replace(/\.(udk|upk)$/i, '') + '-edit.udk';
+  saveName = name.replace(/\.(udk|upk)$/i, '') + '-edit.udk';
   applyFilter();
   updateDirty();
   loadMeshes();
@@ -560,15 +619,17 @@ function select(obj) {
   if (obj) { attachGizmo(obj); setMode(gizmo.mode); } else gizmo.detach();
   selBox.visible = !!obj;
   showSelection();
+  renderOutliner();
 }
 function setMode(mode) {
+  if (sculpting) setSculpt(false);
   gizmo.setMode(mode);
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   showSelection();
 }
 function showSelection() {
   if (!selected) {
-    $('selInfo').textContent = 'Click an object in the view.';
+    $('selInfo').textContent = 'Nothing selected. Click an object in the view, or place a shape from the list on the left.';
     $('selEdit').hidden = true;
     return;
   }
@@ -753,7 +814,9 @@ function setSculpt(on) {
     if (ter.base === null) ter.base = floorHeight() - ter.sink;
   }
   $('sculpt').classList.toggle('active', sculpting);
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', !sculpting && b.dataset.mode === gizmo.mode));
   $('brush').hidden = !sculpting;
+  $('selection').hidden = sculpting;
   brushRing.visible = false;
 }
 function setTool(tool) {
@@ -953,7 +1016,21 @@ function markDirty(obj) {
   else Object.keys(changes(obj)).length ? dirty.add(obj) : dirty.delete(obj);
   updateDirty();
 }
-function updateDirty() { $('dirty').textContent = changeCount(); }
+function updateDirty() {
+  $('dirty').textContent = changeCount();
+  renderOutliner();
+}
+function listed(o) { return !o.userData.deleted && (o.userData.checkpoint || o.userData.copy || /^Shape/.test(o.userData.actor.mesh || '')); }
+function renderOutliner() {                       // checkpoints and everything added; • marks what isn't saved yet
+  const counts = {}, items = objects.filter(listed).map(o => {
+    const a = o.userData.actor, kind = o.userData.checkpoint ? `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} checkpoint` : a.name;
+    counts[kind] = (counts[kind] || 0) + 1;
+    const text = `${o.userData.copy ? '• ' : ''}${kind}${o.userData.checkpoint ? ' ' + counts[kind] : ''}  (${Math.round(a.loc[0])}, ${Math.round(a.loc[1])})`;
+    return Object.assign(document.createElement('option'), { value: objects.indexOf(o), textContent: text });
+  });
+  $('outliner').replaceChildren(...(items.length ? items : [Object.assign(document.createElement('option'), { disabled: true, textContent: 'Nothing added yet' })]));
+  if (selected && listed(selected)) $('outliner').value = objects.indexOf(selected);
+}
 
 function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.className = kind; }
 
@@ -984,7 +1061,7 @@ const nextFrame = () => new Promise(r => setTimeout(r, 30));
 
 async function save() {
   if (!source) return pickBaseMap();
-  const name = $('outName').value.trim() || 'edited.udk';
+  const name = saveName;
   try {
     // ask for the file first: the browser only allows the dialog right after the click
     const handle = window.showSaveFilePicker
@@ -1128,7 +1205,7 @@ function flyCamera(dt) {
     camera.position.add(move);
     orbit.target.add(move);
   }
-  const turn = (held.has('q') ? 1 : 0) - (held.has('e') ? 1 : 0);
+  const turn = (held.has('e') ? 1 : 0) - (held.has('q') ? 1 : 0);
   if (turn) {
     const offset = camera.position.clone().sub(orbit.target).applyAxisAngle(new THREE.Vector3(0, 1, 0), turn * fast * dt * Math.PI / 2);
     camera.position.copy(orbit.target).add(offset);
@@ -1140,6 +1217,10 @@ window.addEventListener('blur', () => held.clear());
 window.addEventListener('keydown', e => {
   if (typing(e.target)) return;
   if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); return popUndo(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); return save(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'o') { e.preventDefault(); return $('open').click(); }
+  if (e.key === '?') return toggleHelp();
+  if (e.key === 'Escape' && !$('help').hidden) return toggleHelp(false);
   if ((e.metaKey || e.ctrlKey) && e.key === 'd') { e.preventDefault(); return duplicateSelected(); }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return deleteSelected(); }
   const k = e.key.toLowerCase();
@@ -1174,6 +1255,21 @@ $('palette').addEventListener('dblclick', addFromPalette);
 $('paletteFilter').addEventListener('input', renderPalette);
 $('delete').addEventListener('click', deleteSelected);
 $('restore').addEventListener('click', restore);
+$('outliner').addEventListener('change', e => {
+  const obj = objects[+e.target.value];
+  e.target.blur();                                // so the keyboard drives the view again
+  if (!obj) return;
+  if (sculpting) setSculpt(false);
+  select(obj);
+  focus();
+});
+// menus close once something in them is picked, or on a click elsewhere
+document.addEventListener('click', e => document.querySelectorAll('details.menu[open]').forEach(menu => {
+  if (!menu.contains(e.target) || e.target.closest('.items button')) menu.open = false;
+}));
+function toggleHelp(show = $('help').hidden) { $('help').hidden = !show; }
+$('helpButton').addEventListener('click', () => toggleHelp());
+$('help').addEventListener('click', () => toggleHelp(false));
 $('open').addEventListener('click', () => { buildAfterOpen = false; $('file').click(); });
 $('file').addEventListener('change', e => {
   const file = e.target.files[0], base = buildAfterOpen;
