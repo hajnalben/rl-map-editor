@@ -1,0 +1,860 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RL Map Editor</title>
+<style>
+  :root { --bg: #111317; --panel: #1a1d23; --text: #e7e9ec; --muted: #969ead; --accent: #4da3ff; --border: #2b3039; --warn: #ffb547; --ok: #5fd38d; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  #app { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
+  aside { background: var(--panel); border-right: 1px solid var(--border); padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
+  h1 { font-size: 15px; margin: 0; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
+  label { display: flex; gap: 6px; align-items: center; }
+  select, input, button { font: inherit; color: var(--text); background: #0f1114; border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; }
+  input[type=number] { width: 100%; box-sizing: border-box; }
+  input[type=checkbox] { padding: 0; }
+  select, #filter, #outName { width: 100%; box-sizing: border-box; }
+  button { cursor: pointer; background: #232832; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
+  button.active { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: grid; grid-template-columns: 52px 1fr 1fr 1fr; gap: 4px; align-items: center; margin-bottom: 4px; }
+  .row span { color: var(--muted); }
+  .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
+  .modes.tools { grid-template-columns: repeat(3, 1fr); }
+  input[type=range] { flex: 1; }
+  .muted { color: var(--muted); }
+  .kv { word-break: break-all; }
+  #status { min-height: 18px; }
+  #status.ok { color: var(--ok); } #status.warn { color: var(--warn); }
+  #view { position: relative; overflow: hidden; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+  #loading[hidden] { display: none; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <h1>RL Map Editor</h1>
+    <section>
+      <h2>Map</h2>
+      <select id="map"></select>
+    </section>
+    <section>
+      <h2>Show</h2>
+      <input id="filter" placeholder="Filter: name, class or mesh">
+      <label style="margin-top:6px"><input type="checkbox" id="showVolumes"> Trigger zones (volumes)</label>
+      <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
+      <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
+      <div id="count" class="muted"></div>
+    </section>
+    <section>
+      <h2>Add object</h2>
+      <input id="paletteFilter" placeholder="Search shapes in this map" style="width:100%;box-sizing:border-box">
+      <select id="palette" size="8" style="margin-top:6px"></select>
+      <div class="actions">
+        <button id="add">Add at view center</button>
+        <button id="addCheckpoint" title="A zone that becomes your respawn point when you drive through it">Add checkpoint</button>
+      </div>
+    </section>
+    <section>
+      <h2>Terrain</h2>
+      <button id="sculpt" title="Paint hills and mountains onto the ground">Sculpt terrain (T)</button>
+      <div id="brush" hidden style="margin-top:8px">
+        <div class="modes tools">
+          <button data-tool="raise">Raise</button>
+          <button data-tool="lower">Lower</button>
+          <button data-tool="smooth">Smooth</button>
+          <button data-tool="flatten" title="Level the ground to the height where the stroke started">Flatten</button>
+          <button data-tool="road" title="A drivable road along your drag, flat across its width">Road</button>
+        </div>
+        <label>Size <input type="range" id="brushSize" min="200" max="4000" step="50" value="1200"></label>
+        <label>Strength <input type="range" id="brushStrength" min="1" max="100" value="30"></label>
+        <div class="muted" id="brushHint"></div>
+      </div>
+      <select id="terrainMat" title="Surface of the terrain; set when its first hill is saved" style="margin-top:6px"></select>
+    </section>
+    <section id="selection">
+      <h2>Selected</h2>
+      <div id="selInfo" class="muted">Click an object in the view.</div>
+      <div id="selEdit" hidden>
+        <div class="modes">
+          <button data-mode="translate">Move (1)</button>
+          <button data-mode="rotate">Rotate (2)</button>
+          <button data-mode="scale">Scale (3)</button>
+        </div>
+        <div class="row"><span>Location</span><input type="number" data-f="loc" data-k="0"><input type="number" data-f="loc" data-k="1"><input type="number" data-f="loc" data-k="2"></div>
+        <div class="row"><span>Rotation°</span><input type="number" data-f="rot" data-k="0" title="Pitch"><input type="number" data-f="rot" data-k="1" title="Yaw"><input type="number" data-f="rot" data-k="2" title="Roll"></div>
+        <div class="row"><span>Scale</span><input type="number" step="0.05" data-f="scale" data-k="0"><input type="number" step="0.05" data-f="scale" data-k="1"><input type="number" step="0.05" data-f="scale" data-k="2"></div>
+        <div class="actions">
+          <button id="duplicate">Duplicate (⌘D)</button>
+          <button id="delete">Delete (⌫)</button>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>Save</h2>
+      <div><span id="dirty">0</span> changes</div>
+      <input id="outName" style="margin-top:6px">
+      <div class="actions">
+        <button id="save" class="primary">Save as</button>
+        <button id="play" disabled>Load into game</button>
+        <button id="undo">Undo</button>
+      </div>
+      <div id="status"></div>
+    </section>
+    <section class="muted">
+      <h2>Controls</h2>
+      WASD: move · Q/E: turn · Shift: faster<br>
+      Left-drag: orbit · Right-drag: pan · Wheel: zoom<br>
+      Click: select · 1/2/3: move/rotate/scale · F: focus · Esc: deselect<br>
+      T: sculpt terrain<br>
+      ⌘D: duplicate · ⌫: delete · ⌘Z: undo
+    </section>
+  </aside>
+  <main id="view"><div id="loading">Loading…</div></main>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+// Unreal is left-handed Z-up, Three.js right-handed Y-up: swapping Y and Z converts without mirroring.
+const UU = Math.PI / 32768;                       // rotator units to radians
+const toThree = v => new THREE.Vector3(v[0], v[2], v[1]);
+const fromThree = v => [v.x, v.z, v.y];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+function ueAxes([pitch, yaw, roll]) {             // FRotationMatrix rows: local X, Y, Z in world space
+  const [SP, CP, SY, CY, SR, CR] = [Math.sin(pitch * UU), Math.cos(pitch * UU), Math.sin(yaw * UU), Math.cos(yaw * UU), Math.sin(roll * UU), Math.cos(roll * UU)];
+  return [[CP * CY, CP * SY, SP],
+          [SR * SP * CY - CR * SY, SR * SP * SY + CR * CY, -SR * CP],
+          [-(CR * SP * CY + SR * SY), CY * SR - CR * SP * SY, CR * CP]];
+}
+function ueToQuat(rot) {
+  const [X, Y, Z] = ueAxes(rot);
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(toThree(X), toThree(Z), toThree(Y)));
+}
+function quatToUe(q) {                            // FMatrix::Rotator
+  const c = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  new THREE.Matrix4().makeRotationFromQuaternion(q).extractBasis(...c);
+  const X = fromThree(c[0]), Z = fromThree(c[1]), Y = fromThree(c[2]);
+  const pitch = Math.atan2(X[2], Math.hypot(X[0], X[1]));
+  const yaw = Math.atan2(X[1], X[0]);
+  const sy = [-Math.sin(yaw), Math.cos(yaw), 0];
+  return [pitch, yaw, Math.atan2(dot(Z, sy), dot(Y, sy))].map(a => Math.round(a / UU));
+}
+for (const rot of [[0, 0, 0], [3160, 25980, -4096], [-5728, 64096, -5328], [0, -21504, 16384], [12000, -9000, 30000]]) {
+  const back = ueAxes(quatToUe(ueToQuat(rot))), want = ueAxes(rot);
+  console.assert(back.every((ax, i) => ax.every((v, k) => Math.abs(v - want[i][k]) < 1e-3)), 'rotation round trip failed', rot);
+}
+
+const $ = id => document.getElementById(id);
+const view = $('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+view.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x111317);
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x30343c, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(0.4, 1, 0.3);
+scene.add(sun);
+const grid = new THREE.GridHelper(100000, 100, 0x2a2f38, 0x1d2128);
+scene.add(grid);
+const camera = new THREE.PerspectiveCamera(60, 1, 10, 2e6);
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.enableDamping = true;
+const gizmo = new TransformControls(camera, renderer.domElement);
+gizmo.setSize(0.9);
+scene.add(gizmo);
+gizmo.addEventListener('dragging-changed', e => {
+  orbit.enabled = !e.value;
+  if (e.value) pushUndo(selected);
+});
+// The gizmo drives a helper at the mesh's visible center; Unreal pivots can sit far away from the mesh.
+const pivot = new THREE.Object3D(), pivotOffset = new THREE.Matrix4();
+scene.add(pivot);
+function boxOf(obj) {                             // the object's own shape, leaving out helpers such as arrows
+  if (!obj.geometry.boundingBox) obj.geometry.computeBoundingBox();
+  obj.updateMatrixWorld();
+  return obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld);
+}
+function attachGizmo(obj) {
+  pivot.position.copy(boxOf(obj).getCenter(new THREE.Vector3()));
+  pivot.quaternion.copy(obj.quaternion);
+  pivot.scale.copy(obj.scale);
+  pivot.updateMatrixWorld();
+  obj.updateMatrixWorld();
+  pivotOffset.copy(pivot.matrixWorld).invert().multiply(obj.matrixWorld);
+  gizmo.attach(pivot);
+}
+gizmo.addEventListener('objectChange', () => {
+  pivot.updateMatrixWorld();
+  pivot.matrixWorld.clone().multiply(pivotOffset).decompose(selected.position, selected.quaternion, selected.scale);
+  markDirty(selected);
+  showSelection();
+});
+
+function resize() {
+  const { clientWidth: w, clientHeight: h } = view;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(view);
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  if (stroke) sculptStep(dt);
+  flyCamera(dt);
+  orbit.update();
+  renderer.render(scene, camera);
+});
+
+const colors = new Map();
+function colorFor(key) {
+  if (!colors.has(key)) {
+    let h = 0;
+    for (const ch of String(key)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    colors.set(key, new THREE.Color().setHSL((h % 360) / 360, 0.55, 0.55));
+  }
+  return colors.get(key);
+}
+const isVolume = a => /Volume/.test(a.cls);
+const boxCache = new Map(), matCache = new Map();
+const markerGeo = new THREE.OctahedronGeometry(60);
+function geometryFor(b) {
+  if (!b) return markerGeo;
+  const key = b.map(v => v.toFixed(1)).join(',');
+  if (!boxCache.has(key)) {
+    const g = new THREE.BoxGeometry(Math.max(2 * b[3], 1), Math.max(2 * b[5], 1), Math.max(2 * b[4], 1));
+    g.translate(b[0], b[2], b[1]);
+    boxCache.set(key, g);
+  }
+  return boxCache.get(key);
+}
+function materialFor(a) {
+  const key = isVolume(a) ? 'vol:' + a.cls : a.bounds ? 'mesh:' + (a.mesh || a.cls) : 'marker:' + a.cls;
+  if (!matCache.has(key)) {
+    matCache.set(key, isVolume(a)
+      ? new THREE.MeshBasicMaterial({ color: colorFor(a.cls), transparent: true, opacity: 0.12, depthWrite: false })
+      : new THREE.MeshStandardMaterial({ color: colorFor(a.mesh || a.cls), roughness: 0.7, metalness: 0.05, flatShading: true }));
+  }
+  return matCache.get(key);
+}
+
+let mapName = null, actors = [], palette = [], zone = null, objects = [], selected = null, savedName = null;
+const checkpointMat = new THREE.MeshBasicMaterial({ color: 0x3ddc84, transparent: true, opacity: 0.28, depthWrite: false });
+const terrainMat = new THREE.MeshStandardMaterial({ color: 0xa08a64, roughness: 0.9, flatShading: true });
+function addArrow(obj) {                          // checkpoints respawn the car facing their local +X
+  const b = obj.userData.actor.bounds;
+  obj.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(b[0], b[2], b[1]), b[3] * 1.4, 0x3ddc84, b[3] * 0.4, b[3] * 0.25));
+}
+const dirty = new Set(), removed = new Set(), added = [], undo = [];
+const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0);
+const group = new THREE.Group();
+scene.add(group);
+const selBox = new THREE.BoxHelper(undefined, 0xffd24a);
+selBox.visible = false;
+scene.add(selBox);
+
+function applyActor(obj) {
+  const a = obj.userData.actor;
+  obj.position.copy(toThree(a.loc));
+  obj.quaternion.copy(ueToQuat(a.rot));
+  const s = a.scale;
+  obj.scale.set(a.scale3d[0] * s, a.scale3d[2] * s, a.scale3d[1] * s);
+}
+function readBack(obj) {                          // three object -> actor transform
+  const a = obj.userData.actor;
+  a.loc = fromThree(obj.position);
+  a.rot = quatToUe(obj.quaternion);
+  a.scale3d = [obj.scale.x, obj.scale.z, obj.scale.y].map(v => v / a.scale);
+}
+
+async function loadMap(name) {
+  $('loading').hidden = false;
+  $('loading').textContent = `Loading ${name}…`;
+  select(null);
+  setSculpt(false);
+  group.clear();
+  dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; savedName = null;
+  $('play').disabled = true;
+  const res = await fetch('/api/map?name=' + encodeURIComponent(name));
+  const data = await res.json();
+  ({ actors, palette, zone } = data);
+  const checkpointZones = new Set(data.checkpoints);
+  mapName = name;
+  renderPalette();
+  $('addCheckpoint').disabled = !zone;
+  const t = data.terrain;
+  ter = { tile: t.tile, cell: t.cell, sink: t.sink, base: t.base, tiles: new Map(), dirty: new Set() };
+  for (const { tx, ty, heights } of t.tiles) makeTile(tx, ty, Float32Array.from(heights));
+  const earthy = data.materials.find(m => /sand|grass|dirt|rock|ground|snow|terrain/i.test(m.name)) || data.materials[0];
+  $('terrainMat').innerHTML = data.materials.map(m => `<option value="${m.ref}">${m.name}</option>`).join('');
+  if (earthy) $('terrainMat').value = t.material ?? earthy.ref;
+  $('terrainMat').disabled = t.material !== null;              // placed tiles keep the surface they were saved with
+  $('sculpt').disabled = !data.materials.length;
+  objects = actors.map(a => {
+    const obj = new THREE.Mesh(geometryFor(a.bounds), materialFor(a));
+    obj.userData.actor = a;
+    obj.userData.original = { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale };
+    if (checkpointZones.has(a.i)) { obj.userData.checkpoint = true; obj.material = checkpointMat; addArrow(obj); }
+    applyActor(obj);
+    group.add(obj);
+    return obj;
+  });
+  $('outName').value = name.replace(/\.(udk|upk)$/i, '') + '-edit.udk';
+  applyFilter();
+  updateDirty();
+  await loadMeshes(name);
+  const start = actors.find(a => a.cls.startsWith('PlayerStart')) || actors[0];
+  const target = toThree(start.loc);
+  orbit.target.copy(target);
+  camera.position.copy(target).add(new THREE.Vector3(3000, 2500, 3000));
+  $('loading').hidden = true;
+  setStatus(`${actors.length} objects loaded`, '');
+}
+
+function triangleRecords(buf) {                  // records of int32 id, int32 float count, triangle corners
+  const dv = new DataView(buf), geos = new Map();
+  for (let p = 0; p < buf.byteLength;) {
+    const index = dv.getInt32(p, true), n = dv.getInt32(p + 4, true);
+    p += 8;
+    if (n) {
+      const src = new Float32Array(buf, p, n), pos = new Float32Array(n);
+      for (let v = 0; v < n; v += 3) {               // the Y/Z mirror also turns Unreal's clockwise fronts counter-clockwise
+        pos[v] = src[v]; pos[v + 1] = src[v + 2]; pos[v + 2] = src[v + 1];
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.computeVertexNormals();
+      geos.set(index, g);
+    }
+    p += n * 4;
+  }
+  return geos;
+}
+
+async function loadMeshes(name) {
+  const ids = [...new Set(actors.map(a => a.meshIndex).filter(i => i !== null))];
+  if (!ids.length) return;
+  $('loading').textContent = `Loading ${ids.length} shapes…`;
+  const buf = await (await fetch(`/api/meshes?name=${encodeURIComponent(name)}&i=${ids.join(',')}`)).arrayBuffer();
+  const geos = triangleRecords(buf);
+  for (const obj of objects) {
+    const g = geos.get(obj.userData.actor.meshIndex);
+    if (g) { obj.geometry = g; obj.userData.huge = undefined; }
+  }
+  if (selected) attachGizmo(selected);
+  applyFilter();
+}
+
+function applyFilter() {
+  const q = $('filter').value.trim().toLowerCase();
+  let shown = 0;
+  for (const obj of objects) {
+    const a = obj.userData.actor;
+    if (obj.userData.huge === undefined) {
+      if (!obj.geometry.boundingSphere) obj.geometry.computeBoundingSphere();
+      obj.userData.huge = obj.geometry.boundingSphere.radius * Math.max(obj.scale.x, obj.scale.y, obj.scale.z) > 15000;
+    }
+    obj.visible = !obj.userData.deleted
+      && ($('showHuge').checked || !obj.userData.huge)
+      && (!q || `${a.name} ${a.cls} ${a.mesh || ''}`.toLowerCase().includes(q))
+      && ($('showVolumes').checked || !isVolume(a) || obj.userData.checkpoint)
+      && ($('showMarkers').checked || !!a.bounds);
+    shown += obj.visible;
+  }
+  $('count').textContent = `${shown} of ${objects.length} objects shown`;
+}
+
+function select(obj) {
+  selected = obj;
+  if (obj) { attachGizmo(obj); setMode(gizmo.mode); } else gizmo.detach();
+  selBox.visible = !!obj;
+  showSelection();
+}
+function setMode(mode) {
+  gizmo.setMode(mode);
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  showSelection();
+}
+function showSelection() {
+  if (!selected) {
+    $('selInfo').textContent = 'Click an object in the view.';
+    $('selEdit').hidden = true;
+    return;
+  }
+  readBack(selected);
+  selBox.setFromObject(selected);
+  const a = selected.userData.actor, isNew = a.i === null;
+  $('selInfo').innerHTML = selected.userData.checkpoint
+    ? `<div class="kv"><b>Checkpoint</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">Drive through it, reset, and you respawn here facing the arrow.</div>`
+    : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
+  $('selEdit').hidden = false;
+  const vals = { loc: a.loc.map(v => Math.round(v)), rot: a.rot.map(v => +(v * 360 / 65536).toFixed(1)), scale: a.scale3d.map(v => +(v * a.scale).toFixed(3)) };
+  document.querySelectorAll('#selEdit input').forEach(inp => {
+    if (document.activeElement !== inp) inp.value = vals[inp.dataset.f][+inp.dataset.k];
+  });
+}
+document.querySelectorAll('#selEdit input').forEach(inp => inp.addEventListener('change', () => {
+  if (!selected) return;
+  pushUndo(selected);
+  const a = selected.userData.actor, k = +inp.dataset.k, v = parseFloat(inp.value);
+  if (Number.isNaN(v)) return;
+  if (inp.dataset.f === 'loc') a.loc[k] = v;
+  if (inp.dataset.f === 'rot') a.rot[k] = Math.round(v * 65536 / 360);
+  if (inp.dataset.f === 'scale') a.scale3d[k] = v / a.scale;
+  applyActor(selected);
+  attachGizmo(selected);
+  markDirty(selected);
+  showSelection();
+}));
+
+function pushUndo(obj) {
+  if (!obj) return;
+  undo.push({ kind: 'move', obj, state: { pos: obj.position.clone(), quat: obj.quaternion.clone(), scale: obj.scale.clone() } });
+}
+function popUndo() {
+  const u = undo.pop();
+  if (!u) return;
+  if (u.kind === 'add') {
+    if (selected === u.obj) select(null);
+    group.remove(u.obj);
+    objects.splice(objects.indexOf(u.obj), 1);
+    added.splice(added.indexOf(u.obj), 1);
+  } else if (u.kind === 'delete') {
+    u.obj.userData.deleted = false;
+    u.obj.userData.copy ? added.push(u.obj) : removed.delete(u.obj);
+    select(u.obj);
+  } else if (u.kind === 'sculpt') {
+    for (const [key, heights] of u.before) {
+      const t = ter.tiles.get(key);
+      if (!heights) t && dropTile(t);
+      else if (t) { t.heights.set(heights); refreshTile(t); }
+      else makeTile(...key.split(',').map(Number), heights);
+      ter.dirty.add(key);
+    }
+  } else {
+    u.obj.position.copy(u.state.pos); u.obj.quaternion.copy(u.state.quat); u.obj.scale.copy(u.state.scale);
+    markDirty(u.obj);
+    if (u.obj === selected) { attachGizmo(selected); showSelection(); }
+  }
+  applyFilter();
+  updateDirty();
+}
+
+function duplicateSelected() {
+  if (!selected) return;
+  readBack(selected);
+  const width = boxOf(selected).getSize(new THREE.Vector3()).x;
+  const loc = selected.userData.actor.loc;
+  copyObject(selected, [loc[0] + Math.max(width * 1.2, 300), loc[1], loc[2]]);
+}
+function placeNew(obj) {
+  applyActor(obj);
+  group.add(obj);
+  objects.push(obj);
+  added.push(obj);
+  undo.push({ kind: 'add', obj });
+  select(obj);
+  applyFilter();
+  updateDirty();
+}
+function addCheckpoint() {
+  if (!zone) return setStatus('This map has no trigger zone to copy for checkpoints.', 'warn');
+  const loc = fromThree(orbit.target);             // rest the zone on the point you're looking at
+  loc[2] += zone.bounds[5] - 50;
+  const a = { i: null, name: 'Checkpoint', cls: 'TriggerVolume', mesh: null, loc, rot: [0, 0, 0], scale3d: [1, 1, 1],
+              scale: 1, bounds: zone.bounds };
+  const obj = new THREE.Mesh(geometryFor(zone.bounds), checkpointMat);
+  obj.userData = { actor: a, copy: true, checkpoint: true };
+  addArrow(obj);
+  placeNew(obj);
+}
+// Terrain: one heightfield under the whole map, kept as tiles of TILE x TILE cells. Only tiles with raised
+// ground exist; heights are relative to the terrain base, which sits just under the floor.
+let ter = null, sculpting = false, stroke = null, brushTool = 'raise';
+const tileKey = (tx, ty) => tx + ',' + ty;
+const owners = g => g % ter.tile === 0 ? [g / ter.tile - 1, g / ter.tile] : [Math.floor(g / ter.tile)];
+const vertexOf = (t, gx, gy) => (gy - t.ty * ter.tile) * (ter.tile + 1) + gx - t.tx * ter.tile;
+function heightAt(gx, gy) {
+  const t = ter.tiles.get(tileKey(Math.floor(gx / ter.tile), Math.floor(gy / ter.tile)));
+  return t ? t.heights[vertexOf(t, gx, gy)] : 0;
+}
+function setHeight(gx, gy, h, touched) {          // a vertex on a tile edge is stored in every tile sharing it
+  for (const tx of owners(gx)) for (const ty of owners(gy)) {
+    const key = tileKey(tx, ty);
+    let t = ter.tiles.get(key);
+    if (!t && h <= 0) continue;
+    if (stroke && !stroke.before.has(key)) stroke.before.set(key, t ? t.heights.slice() : null);
+    t ??= makeTile(tx, ty, new Float32Array((ter.tile + 1) ** 2));
+    t.heights[vertexOf(t, gx, gy)] = h;
+    touched.add(t);
+  }
+}
+function makeTile(tx, ty, heights) {
+  const n = ter.tile, pos = new Float32Array(3 * (n + 1) ** 2), index = [];
+  for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) {
+    const v = j * (n + 1) + i;
+    pos[3 * v] = (tx * n + i) * ter.cell;
+    pos[3 * v + 2] = (ty * n + j) * ter.cell;
+  }
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const a = j * (n + 1) + i, b = a + 1, c = a + n + 1, d = c + 1;
+    index.push(a, d, b, a, c, d);                 // Unreal's winding, which the Y/Z swap turns into Three's front faces
+  }
+  const g = new THREE.BufferGeometry();
+  g.setIndex(index);
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const t = { tx, ty, heights, mesh: new THREE.Mesh(g, terrainMat) };
+  ter.tiles.set(tileKey(tx, ty), t);
+  group.add(t.mesh);
+  refreshTile(t);
+  return t;
+}
+function refreshTile(t) {
+  const pos = t.mesh.geometry.attributes.position;
+  t.heights.forEach((h, v) => pos.setY(v, ter.base + h));
+  pos.needsUpdate = true;
+  t.mesh.geometry.computeBoundingSphere();
+  t.mesh.geometry.computeBoundingBox();
+}
+function dropTile(t) {
+  group.remove(t.mesh);
+  t.mesh.geometry.dispose();
+  ter.tiles.delete(tileKey(t.tx, t.ty));
+}
+function apron(tx, ty) {                          // the tile's heights plus a one-vertex border, as the server wants them
+  const n = ter.tile, out = [];
+  for (let j = -1; j <= n + 1; j++) for (let i = -1; i <= n + 1; i++) out.push(Math.round(heightAt(tx * n + i, ty * n + j) * 10) / 10);
+  return out;
+}
+function floorHeight() {                          // top of whatever the car spawns on
+  const start = actors.find(a => a.cls.startsWith('PlayerStart'));
+  if (!start) return orbit.target.y;
+  ray.set(toThree(start.loc), new THREE.Vector3(0, -1, 0));
+  const solid = objects.filter(o => !o.userData.deleted && o.userData.actor.bounds && !isVolume(o.userData.actor));
+  const hit = ray.intersectObjects(solid, false)[0];
+  return hit ? hit.point.y : start.loc[2];
+}
+
+const brushRing = new THREE.Mesh(new THREE.RingGeometry(0.97, 1, 64).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xffd24a, side: THREE.DoubleSide, depthTest: false, transparent: true }));
+brushRing.renderOrder = 10;
+brushRing.visible = false;
+scene.add(brushRing);
+let brushPoint = null;
+function setSculpt(on) {
+  sculpting = on && !!ter;
+  if (sculpting) {
+    select(null);
+    if (ter.base === null) ter.base = floorHeight() - ter.sink;
+  }
+  $('sculpt').classList.toggle('active', sculpting);
+  $('brush').hidden = !sculpting;
+  brushRing.visible = false;
+}
+function setTool(tool) {
+  brushTool = tool;
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
+  $('brushHint').textContent = (tool === 'road'
+    ? 'Drag along the road. The circle is its width; it climbs evenly from where you press to where you let go'
+    : 'Drag on the ground to paint · Shift: lower') + ' · ⌥-drag: orbit';
+}
+function brushHit() {
+  ray.setFromCamera(pointer, camera);
+  const hit = ray.intersectObjects([...ter.tiles.values()].map(t => t.mesh), false)[0];
+  return hit ? hit.point : ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -ter.base), new THREE.Vector3());
+}
+function showBrush() {
+  brushRing.visible = sculpting && !!brushPoint;
+  if (!brushPoint) return;
+  brushRing.position.copy(brushPoint).setY(brushPoint.y + 5);
+  brushRing.scale.setScalar(+$('brushSize').value);
+}
+function sculptStep(dt) {
+  const p = brushPoint;
+  if (!p) return;
+  if (stroke.path) {                              // roads are laid on release; meanwhile record where the drag went
+    if (Math.hypot(p.x - stroke.path.at(-1).x, p.z - stroke.path.at(-1).z) > ter.cell) stroke.path.push(p.clone());
+    roadLine.geometry.setFromPoints([...stroke.path, p].map(q => q.clone().setY(q.y + 10)));
+    roadLine.visible = true;
+    return;
+  }
+  const r = +$('brushSize').value, s = +$('brushStrength').value, c = ter.cell;
+  const tool = stroke.invert && brushTool === 'raise' ? 'lower' : stroke.invert && brushTool === 'lower' ? 'raise' : brushTool;
+  const next = [];
+  for (let gy = Math.ceil((p.z - r) / c); gy <= Math.floor((p.z + r) / c); gy++) {
+    for (let gx = Math.ceil((p.x - r) / c); gx <= Math.floor((p.x + r) / c); gx++) {
+      const d = Math.hypot(gx * c - p.x, gy * c - p.z) / r;
+      if (d >= 1) continue;
+      const f = (1 - d * d) ** 2, h = heightAt(gx, gy);
+      const target = tool === 'smooth' ? (heightAt(gx - 1, gy) + heightAt(gx + 1, gy) + heightAt(gx, gy - 1) + heightAt(gx, gy + 1)) / 4
+                   : tool === 'flatten' ? stroke.level : null;
+      const h2 = target === null ? h + (tool === 'lower' ? -1 : 1) * f * s * 25 * dt : h + (target - h) * Math.min(1, f * s * dt / 10);
+      next.push([gx, gy, Math.max(0, h2)]);    // the floor covers anything lower
+    }
+  }
+  if (writeHeights(next)) { brushPoint = brushHit() || p; showBrush(); }
+}
+function writeHeights(next) {                     // [[gx, gy, height]] -> number of tiles changed
+  const touched = new Set();
+  for (const [gx, gy, h] of next) setHeight(gx, gy, h, touched);
+  for (const t of touched) { refreshTile(t); ter.dirty.add(tileKey(t.tx, t.ty)); }
+  if (touched.size) updateDirty();
+  return touched.size;
+}
+const roadLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffd24a, depthTest: false, transparent: true }));
+roadLine.renderOrder = 10;
+roadLine.frustumCulled = false;
+roadLine.visible = false;
+scene.add(roadLine);
+function paveRoad(path) {
+  // Flat across: inside the brush radius of the path the ground takes the road height, which climbs evenly
+  // along the path from start to end; the next half radius blends back into the terrain.
+  const r = +$('brushSize').value, reach = 1.5 * r, c = ter.cell;
+  const lengths = [0];
+  for (let k = 1; k < path.length; k++) lengths.push(lengths[k - 1] + Math.hypot(path[k].x - path[k - 1].x, path[k].z - path[k - 1].z));
+  const total = lengths.at(-1) || 1, h0 = Math.max(0, path[0].y - ter.base), h1 = Math.max(0, path.at(-1).y - ter.base);
+  const xs = path.map(p => p.x), zs = path.map(p => p.z), next = [];
+  for (let gy = Math.ceil((Math.min(...zs) - reach) / c); gy <= Math.floor((Math.max(...zs) + reach) / c); gy++) {
+    for (let gx = Math.ceil((Math.min(...xs) - reach) / c); gx <= Math.floor((Math.max(...xs) + reach) / c); gx++) {
+      const x = gx * c, z = gy * c;
+      let best = Infinity, along = 0;
+      for (let k = 0; k < Math.max(1, path.length - 1); k++) {
+        const a = path[k], b = path[Math.min(k + 1, path.length - 1)], dx = b.x - a.x, dz = b.z - a.z, len2 = dx * dx + dz * dz;
+        const t = len2 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / len2)) : 0;
+        const d = Math.hypot(x - a.x - t * dx, z - a.z - t * dz);
+        if (d < best) { best = d; along = lengths[k] + t * Math.sqrt(len2); }
+      }
+      if (best >= reach) continue;
+      const s = Math.max(0, (best - r) / (reach - r)), weight = 1 - s * s * (3 - 2 * s);
+      const h = heightAt(gx, gy), target = h0 + (h1 - h0) * along / total;
+      next.push([gx, gy, Math.max(0, h + (target - h) * weight)]);
+    }
+  }
+  writeHeights(next);
+}
+function endStroke() {
+  if (stroke.path) {
+    if (brushPoint) stroke.path.push(brushPoint.clone());
+    paveRoad(stroke.path);
+    roadLine.visible = false;
+  }
+  if (stroke.before.size) undo.push({ kind: 'sculpt', before: stroke.before });
+  stroke = null;
+  orbit.enabled = true;
+}
+
+function renderPalette() {
+  const q = $('paletteFilter').value.trim().toLowerCase();
+  $('palette').replaceChildren(...palette.filter(p => p.mesh.toLowerCase().includes(q)).map(p => {
+    const opt = document.createElement('option');
+    opt.value = p.template;
+    opt.textContent = `${p.mesh}  ×${p.count}`;
+    return opt;
+  }));
+}
+function addFromPalette() {
+  const template = objects.find(o => !o.userData.copy && o.userData.actor.i === +$('palette').value);
+  if (!template) return setStatus('Pick a shape in the list first.', 'warn');
+  copyObject(template, fromThree(orbit.target));
+}
+function copyObject(source, loc) {
+  readBack(source);
+  const src = source.userData.actor, { checkpoint } = source.userData;
+  const a = { ...src, i: null, src: src.src ?? src.i, name: (src.mesh || src.name) + ' copy',
+              loc: [...loc], rot: [...src.rot], scale3d: [...src.scale3d] };
+  const obj = new THREE.Mesh(source.geometry, source.material);
+  obj.userData = { actor: a, copy: true, checkpoint };
+  if (checkpoint) addArrow(obj);
+  placeNew(obj);
+}
+function deleteSelected() {
+  if (!selected) return;
+  const obj = selected;
+  select(null);
+  obj.userData.deleted = true;
+  obj.userData.copy ? added.splice(added.indexOf(obj), 1) : removed.add(obj);
+  undo.push({ kind: 'delete', obj });
+  applyFilter();
+  updateDirty();
+}
+
+const same = (x, y, eps) => x.every((v, i) => Math.abs(v - y[i]) < eps);
+function changes(obj) {                           // transform fields that differ from the file; all of them for new objects
+  readBack(obj);
+  const a = obj.userData.actor, o = obj.userData.original, e = {};
+  if (!o || !same(a.loc, o.loc, 0.01)) e.loc = a.loc;
+  if (!o || !ueAxes(a.rot).every((ax, i) => same(ax, ueAxes(o.rot)[i], 1e-4))) e.rot = a.rot;
+  if (!o || !same(a.scale3d, o.scale3d, 1e-4)) e.scale3d = a.scale3d;
+  return e;
+}
+function markDirty(obj) {
+  if (!obj) return;
+  if (obj.userData.copy) readBack(obj);
+  else Object.keys(changes(obj)).length ? dirty.add(obj) : dirty.delete(obj);
+  updateDirty();
+}
+function updateDirty() { $('dirty').textContent = changeCount(); }
+
+function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.className = kind; }
+
+async function save() {
+  const edits = [...dirty].filter(o => !removed.has(o)).map(o => ({ i: o.userData.actor.i, ...changes(o) }));
+  const duplicates = added.filter(o => !o.userData.checkpoint).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
+  const checkpoints = added.filter(o => o.userData.checkpoint).map(changes);
+  const removes = [...removed].map(o => o.userData.actor.i);
+  const terrain = ter.dirty.size ? { base: ter.base, material: +$('terrainMat').value, tiles: [...ter.dirty].map(key => {
+    const [tx, ty] = key.split(',').map(Number);
+    return { tx, ty, heights: apron(tx, ty) };
+  }) } : null;
+  setStatus('Saving…', '');
+  const res = await fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source: mapName, out: $('outName').value.trim(), edits, duplicates, checkpoints, terrain, removes }) });
+  const out = await res.json();
+  if (!res.ok) return setStatus(out.error, 'warn');
+  savedName = out.saved;
+  $('play').disabled = false;
+  const summary = [edits.length && `${edits.length} moved`, duplicates.length && `${duplicates.length} added`,
+                   checkpoints.length && `${checkpoints.length} checkpoints`, terrain && `${terrain.tiles.length} terrain tiles`,
+                   removes.length && `${removes.length} deleted`].filter(Boolean).join(', ');
+  setStatus(`Saved ${out.saved} (${summary || 'no changes'})`, 'ok');
+  refreshMaps(mapName);
+}
+async function play() {
+  const res = await fetch('/api/play', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: savedName }) });
+  const out = await res.json();
+  setStatus(res.ok ? `${savedName} is in the Underpass slot: Free Play → Underpass` : out.error, res.ok ? 'ok' : 'warn');
+}
+
+const pointer = new THREE.Vector2(), ray = new THREE.Raycaster();
+function setPointer(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+}
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', e => {
+  downAt = [e.clientX, e.clientY];
+  if (!sculpting || e.button !== 0 || e.altKey) return;
+  setPointer(e);
+  brushPoint = brushHit();
+  if (!brushPoint) return;
+  orbit.enabled = false;                          // capture phase: OrbitControls sees the press disabled
+  const c = ter.cell;
+  stroke = { before: new Map(), invert: e.shiftKey, level: heightAt(Math.round(brushPoint.x / c), Math.round(brushPoint.z / c)),
+             path: brushTool === 'road' ? [brushPoint.clone()] : null };
+}, true);
+renderer.domElement.addEventListener('pointermove', e => {
+  if (!sculpting) return;
+  setPointer(e);
+  brushPoint = brushHit();
+  showBrush();
+});
+renderer.domElement.addEventListener('pointerleave', () => { if (!stroke) brushRing.visible = false; });
+window.addEventListener('pointerup', () => { if (stroke) endStroke(); });
+renderer.domElement.addEventListener('pointerup', e => {
+  if (sculpting || !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4 || gizmo.dragging) return;
+  setPointer(e);
+  ray.setFromCamera(pointer, camera);
+  const hits = ray.intersectObjects(objects.filter(o => o.visible), false);
+  const solid = hits.find(h => !isVolume(h.object.userData.actor)) || hits[0];
+  select(solid ? solid.object : null);
+});
+function focus() {
+  if (!selected) return;
+  const box = boxOf(selected), c = box.getCenter(new THREE.Vector3());
+  const d = Math.max(box.getSize(new THREE.Vector3()).length() * 1.6, 800);
+  camera.position.copy(c).add(camera.position.clone().sub(orbit.target).normalize().multiplyScalar(d));
+  orbit.target.copy(c);
+}
+const held = new Set();                           // keys down right now, read every frame by flyCamera
+function flyCamera(dt) {
+  const forward = camera.getWorldDirection(new THREE.Vector3()).setY(0);
+  if (forward.lengthSq() < 1e-4) forward.set(0, 1, 0).applyQuaternion(camera.quaternion).setY(0);   // looking straight down
+  forward.normalize();
+  const right = new THREE.Vector3(-forward.z, 0, forward.x);
+  const move = new THREE.Vector3();
+  if (held.has('w')) move.add(forward);
+  if (held.has('s')) move.sub(forward);
+  if (held.has('d')) move.add(right);
+  if (held.has('a')) move.sub(right);
+  const fast = held.has('shift') ? 3 : 1;
+  if (move.lengthSq()) {                          // speed follows zoom: about one view-distance per second
+    move.normalize().multiplyScalar(Math.max(camera.position.distanceTo(orbit.target), 500) * dt * fast);
+    camera.position.add(move);
+    orbit.target.add(move);
+  }
+  const turn = (held.has('q') ? 1 : 0) - (held.has('e') ? 1 : 0);
+  if (turn) {
+    const offset = camera.position.clone().sub(orbit.target).applyAxisAngle(new THREE.Vector3(0, 1, 0), turn * fast * dt * Math.PI / 2);
+    camera.position.copy(orbit.target).add(offset);
+  }
+}
+const typing = el => el.tagName === 'SELECT' || (el.tagName === 'INPUT' && !['range', 'checkbox'].includes(el.type));
+window.addEventListener('keyup', e => held.delete(e.key.toLowerCase()));
+window.addEventListener('blur', () => held.clear());
+window.addEventListener('keydown', e => {
+  if (typing(e.target)) return;
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); return popUndo(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'd') { e.preventDefault(); return duplicateSelected(); }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return deleteSelected(); }
+  const k = e.key.toLowerCase();
+  if (!e.metaKey && !e.ctrlKey) held.add(k);
+  if (k === '1') setMode('translate');
+  if (k === '2') setMode('rotate');
+  if (k === '3') setMode('scale');
+  if (k === 'f') focus();
+  if (k === 't') setSculpt(!sculpting);
+  if (k === 'escape') sculpting ? setSculpt(false) : select(null);
+});
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+$('filter').addEventListener('input', applyFilter);
+$('showVolumes').addEventListener('change', applyFilter);
+$('showMarkers').addEventListener('change', applyFilter);
+$('showHuge').addEventListener('change', applyFilter);
+$('save').addEventListener('click', save);
+$('play').addEventListener('click', play);
+$('undo').addEventListener('click', popUndo);
+$('duplicate').addEventListener('click', duplicateSelected);
+$('add').addEventListener('click', addFromPalette);
+$('addCheckpoint').addEventListener('click', addCheckpoint);
+$('sculpt').addEventListener('click', () => setSculpt(!sculpting));
+document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+$('brushSize').addEventListener('input', showBrush);
+$('palette').addEventListener('dblclick', addFromPalette);
+$('paletteFilter').addEventListener('input', renderPalette);
+$('delete').addEventListener('click', deleteSelected);
+$('map').addEventListener('change', e => {
+  if (changeCount() && !confirm(`Discard ${changeCount()} unsaved changes?`)) { e.target.value = mapName; return; }
+  loadMap(e.target.value);
+});
+window.addEventListener('beforeunload', e => { if (changeCount()) e.preventDefault(); });
+
+async function refreshMaps(current) {
+  const maps = await (await fetch('/api/maps')).json();
+  $('map').innerHTML = maps.map(m => `<option>${m}</option>`).join('');
+  $('map').value = current || maps.find(m => /Spiral/i.test(m)) || maps[0];
+  return $('map').value;
+}
+setMode('translate');
+setTool('raise');
+window.editor = { objects: () => objects, camera, orbit, gizmo, pivot, select, duplicateSelected, deleteSelected, addFromPalette, addCheckpoint,
+                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool };
+loadMap(await refreshMaps());
+</script>
+</body>
+</html>
