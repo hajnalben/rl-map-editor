@@ -149,7 +149,7 @@ function toHalf(x) {                              // CPython's PyFloat_Pack2: ro
   return sign << 15 | e << 10 | bits;
 }
 
-function fromHalf(h) {
+export function fromHalf(h) {
   const s = h & 0x8000 ? -1 : 1, e = h >> 10 & 31, f = h & 1023;
   if (e === 0) return s * f * 2 ** -24;
   if (e === 31) return f ? NaN : s * Infinity;

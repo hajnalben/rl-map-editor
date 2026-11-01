@@ -66,8 +66,9 @@
     </section>
     <section>
       <h2>Add object</h2>
-      <input id="paletteFilter" placeholder="Search shapes in this map" style="width:100%;box-sizing:border-box">
-      <select id="palette" size="8" style="margin-top:6px"></select>
+      <input id="paletteFilter" placeholder="Search shapes" style="width:100%;box-sizing:border-box">
+      <select id="palette" size="9" style="margin-top:6px"></select>
+      <select id="shapeMat" title="Surface of built-in shapes and shapes from your other maps" style="margin-top:6px"></select>
       <div class="actions">
         <button id="add">Add at view center</button>
         <button id="addCarCheckpoint" title="Flying trials: becomes your respawn point when your car flies or drives through it">Car checkpoint</button>
@@ -140,6 +141,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Package } from './ue3.js';
 import { build, describe, isOriginalGameMap, shapes } from './map.js';
 import { CELL, SINK, TILE } from './mesh.js';
+import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
 
 // Unreal is left-handed Z-up, Three.js right-handed Y-up: swapping Y and Z converts without mirroring.
 const UU = Math.PI / 32768;                       // rotator units to radians
@@ -381,6 +383,8 @@ function loadStarter() {
   group.add(starterGround);                       // the floor; unraised terrain stays hidden under it
   renderPalette();
   $('terrainMat').hidden = true;                  // surfaces come with the map it gets built on
+  $('shapeMat').innerHTML = '';
+  $('shapeMat').hidden = true;
   $('sculpt').disabled = false;
   $('addCarCheckpoint').disabled = $('addBallCheckpoint').disabled = false;
   $('mapName').textContent = 'Starter map: sculpt the ground and add checkpoints. Saving builds it on a workshop map you pick.';
@@ -414,6 +418,10 @@ async function buildOnMap(file) {
     readBack(o);
     return { kind: o.userData.checkpoint, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot] };
   });
+  const shapes = added.filter(o => o.userData.shape).map(o => {
+    readBack(o);
+    return { key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d] };
+  });
   const name = $('outName').value;
   if (!await openFile(file, false)) return;
   const start = actors.find(a => a.cls.startsWith('PlayerStart'));
@@ -429,6 +437,7 @@ async function buildOnMap(file) {
   for (const [gx, gy, h] of heights) setHeight(gx + dx, gy + dy, h, touched);
   for (const t of touched) { refreshTile(t); ter.dirty.add(tileKey(t.tx, t.ty)); }
   for (const c of zone ? checkpoints : []) makeCheckpoint(c.kind, [c.loc[0] + dx * ter.cell, c.loc[1] + dy * ter.cell, c.loc[2] + floor], c.rot);
+  for (const sh of shapes) placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
   select(null);
   placeReferences(start);
   $('outName').value = name;
@@ -474,6 +483,9 @@ function loadMap(name, bytes, parsed, data) {
   if (earthy) $('terrainMat').value = t.material ?? earthy.ref;
   $('terrainMat').disabled = t.material !== null;              // placed tiles keep the surface they were saved with
   $('terrainMat').hidden = false;
+  $('shapeMat').innerHTML = $('terrainMat').innerHTML;
+  if (earthy) $('shapeMat').value = earthy.ref;
+  $('shapeMat').hidden = !data.materials.length;
   $('sculpt').disabled = !data.materials.length;
   objects = actors.map(a => {
     const obj = new THREE.Mesh(geometryFor(a.bounds), materialFor(a));
@@ -492,6 +504,7 @@ function loadMap(name, bytes, parsed, data) {
   applyFilter();
   updateDirty();
   loadMeshes();
+  setTimeout(collectShapes, 0);                   // after the map shows: its shapes join your library
   const start = actors.find(a => a.cls.startsWith('PlayerStart')) || actors[0];
   const target = toThree(start.loc);
   orbit.target.copy(target);
@@ -564,6 +577,8 @@ function showSelection() {
   const a = selected.userData.actor, isNew = a.i === null;
   $('selInfo').innerHTML = selected.userData.reference
     ? `<div class="kv"><b>${a.name}</b> <span class="muted">(editor only)</span></div><div class="kv muted">A real-size reference to check what fits; it is never saved into the map.</div>`
+    : selected.userData.shape
+    ? `<div class="kv"><b>${a.name}</b> <span class="muted">(${selected.userData.shape.startsWith('std:') ? 'built-in shape' : 'from ' + library.get(selected.userData.shape.slice(4))?.source})</span></div><div class="kv muted">A new mesh drawn with the Surface chosen under Add object; the car collides with its shape.</div>`
     : selected.userData.checkpoint
     ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} checkpoint</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
         ? 'Get the ball into it, reset, and you respawn here facing the arrow with a ball dropped onto your car.'
@@ -834,28 +849,81 @@ function endStroke() {
 }
 
 function renderPalette() {
-  const q = $('paletteFilter').value.trim().toLowerCase();
-  $('palette').replaceChildren(...palette.filter(p => p.mesh.toLowerCase().includes(q)).map(p => {
-    const opt = document.createElement('option');
-    opt.value = p.template;
-    opt.textContent = `${p.mesh}  ×${p.count}`;
-    return opt;
-  }));
-  if (!source) $('palette').replaceChildren(Object.assign(document.createElement('option'),
-    { disabled: true, textContent: 'Shapes come with the map you build on' }));
+  const q = $('paletteFilter').value.trim().toLowerCase(), hit = text => text.toLowerCase().includes(q);
+  const group = (label, items) => {
+    if (!items.length) return null;
+    const g = Object.assign(document.createElement('optgroup'), { label });
+    g.append(...items.map(([value, textContent]) => Object.assign(document.createElement('option'), { value, textContent })));
+    return g;
+  };
+  $('palette').replaceChildren(...[
+    group('This map', palette.filter(p => hit(p.mesh)).map(p => [`map:${p.template}`, `${p.mesh}  ×${p.count}`])),
+    group('Built-in', Object.keys(BUILT_IN).filter(hit).map(k => [`std:${k}`, k])),
+    group('From your maps', [...library.values()].filter(s => s.source !== mapName && hit(`${s.name} ${s.source}`))
+      .map(s => [`lib:${s.id}`, `${s.name} · ${s.source.replace(/\.(udk|upk)$/i, '')}`])),
+  ].filter(Boolean));
 }
 function addFromPalette() {
-  const template = objects.find(o => !o.userData.copy && o.userData.actor.i === +$('palette').value);
-  if (!template) return setStatus('Pick a shape in the list first.', 'warn');
-  copyObject(template, fromThree(orbit.target));
+  const value = $('palette').value;
+  if (!value) return setStatus('Pick a shape in the list first.', 'warn');
+  if (!value.startsWith('map:')) return placeShape(value, fromThree(orbit.target));
+  const template = objects.find(o => !o.userData.copy && o.userData.actor.i === +value.slice(4));
+  if (template) copyObject(template, fromThree(orbit.target));
+}
+
+// Built-in shapes and your shape library: geometry of every shape in the maps you open, kept in this browser
+// (IndexedDB) and never uploaded. Placed in a map they become new meshes drawn with the chosen Surface.
+const library = new Map();                        // id -> {id, name, source, geometry}
+const shapeMat = new THREE.MeshStandardMaterial({ color: 0x9fb1c9, roughness: 0.6, flatShading: true });
+const shapeGeos = new Map();
+const shapeData = key => key.startsWith('std:') ? BUILT_IN[key.slice(4)]?.() : library.get(key.slice(4))?.geometry;
+function placeShape(key, loc, rot = [0, 0, 0], scale3d = [1, 1, 1], rest = true) {
+  const g = shapeData(key);
+  if (!g) return setStatus('That shape is no longer in your library.', 'warn');
+  if (!shapeGeos.has(key)) {
+    const geo = cornerGeometry(corners(g));
+    geo.computeBoundingBox();
+    shapeGeos.set(key, geo);
+  }
+  const geo = shapeGeos.get(key), box = geo.boundingBox, c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
+  const name = key.startsWith('std:') ? key.slice(4) : library.get(key.slice(4)).name;
+  if (rest) loc = [loc[0], loc[1], loc[2] - box.min.y];         // rests on the point you're looking at
+  const a = { i: null, name, cls: 'Shape', mesh: name, loc, rot: [...rot], scale3d: [...scale3d], scale: 1,
+              bounds: [c.x, c.z, c.y, size.x / 2, size.z / 2, size.y / 2], meshIndex: null };
+  const obj = new THREE.Mesh(geo, shapeMat);
+  obj.userData = { actor: a, copy: true, shape: key };
+  placeNew(obj);
+}
+async function loadLibrary() {
+  try {
+    const db = await database();
+    const items = await new Promise((resolve, reject) => {
+      const req = db.transaction('shapes').objectStore('shapes').getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    for (const item of items) library.set(item.id, item);
+  } catch { /* storage blocked (private window): the library stays empty */ }
+  renderPalette();
+}
+function collectShapes() {                        // the open map's shapes join the library
+  const map = mapName, reader = pkg, found = palette.filter(p => !library.has(`${map}:${p.mesh}`));
+  for (const p of found) {
+    try {
+      const item = { id: `${map}:${p.mesh}`, name: p.mesh, source: map, geometry: meshGeometry(reader, p.meshIndex) };
+      library.set(item.id, item);
+      stored('shapes', item.id, item).catch(() => {});
+    } catch { /* a mesh this editor can't read stays out */ }
+  }
+  if (found.length) renderPalette();
 }
 function copyObject(source, loc) {
   readBack(source);
-  const src = source.userData.actor, { checkpoint } = source.userData;
+  const src = source.userData.actor, { checkpoint, shape } = source.userData;
   const a = { ...src, i: null, src: src.src ?? src.i, name: (src.mesh || src.name) + ' copy',
               loc: [...loc], rot: [...src.rot], scale3d: [...src.scale3d] };
   const obj = new THREE.Mesh(source.geometry, source.material);
-  obj.userData = { actor: a, copy: true, checkpoint };
+  obj.userData = { actor: a, copy: true, checkpoint, shape };
   if (checkpoint) addArrow(obj);
   placeNew(obj);
 }
@@ -891,7 +959,10 @@ function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.
 
 function changeSet() {                            // [what build() applies, summary]
   const edits = [...dirty].filter(o => !removed.has(o)).map(o => ({ i: o.userData.actor.i, ...changes(o) }));
-  const duplicates = added.filter(o => !o.userData.checkpoint).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
+  const duplicates = added.filter(o => !o.userData.checkpoint && !o.userData.shape).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
+  const shapes = added.filter(o => o.userData.shape).map(o => ({ key: o.userData.shape, ...changes(o) }));
+  const shapeGeometry = Object.fromEntries([...new Set(shapes.map(s => s.key))].map(k => [k, asMeshInput(shapeData(k))]));
+  const shapeMaterial = $('shapeMat').options.length ? +$('shapeMat').value : null;
   const checkpoints = added.filter(o => o.userData.checkpoint).map(o => ({ ...changes(o), ball: o.userData.checkpoint === 'ball' }));
   const removes = [...removed].map(o => o.userData.actor.i);
   const terrain = ter.dirty.size ? { base: ter.base, material: +$('terrainMat').value, tiles: [...ter.dirty].map(key => {
@@ -899,9 +970,10 @@ function changeSet() {                            // [what build() applies, summ
     return { tx, ty, heights: apron(tx, ty) };
   }) } : null;
   const summary = [edits.length && `${edits.length} moved`, duplicates.length && `${duplicates.length} added`,
-                   checkpoints.length && `${checkpoints.length} checkpoints`, terrain && `${terrain.tiles.length} terrain tiles`,
+                   shapes.length && `${shapes.length} shapes`, checkpoints.length && `${checkpoints.length} checkpoints`,
+                   terrain && `${terrain.tiles.length} terrain tiles`,
                    removes.length && `${removes.length} deleted`].filter(Boolean).join(', ') || 'no changes';
-  return [{ edits, duplicates, checkpoints, terrain, removes, fresh }, fresh ? `new map, ${summary}` : summary];
+  return [{ edits, duplicates, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial }, fresh ? `new map, ${summary}` : summary];
 }
 function editedMap() {                            // [map bytes with every change applied, summary]
   const [changes, summary] = changeSet();
@@ -935,19 +1007,28 @@ async function save() {
 }
 
 // The game folder (TAGame/CookedPCConsole) is asked for once and remembered in IndexedDB.
-function remembered(key, value) {
-  return new Promise((resolve, reject) => {
-    const open = indexedDB.open('rl-map-editor', 1);
-    open.onupgradeneeded = () => open.result.createObjectStore('handles');
-    open.onerror = () => reject(open.error);
-    open.onsuccess = () => {
-      const store = open.result.transaction('handles', 'readwrite').objectStore('handles');
-      const req = value === undefined ? store.get(key) : store.put(value, key);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+let dbOpen = null;
+function database() {
+  dbOpen ??= new Promise((resolve, reject) => {
+    const open = indexedDB.open('rl-map-editor', 2);
+    open.onupgradeneeded = () => {
+      for (const name of ['handles', 'shapes']) if (!open.result.objectStoreNames.contains(name)) open.result.createObjectStore(name);
     };
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error);
+  });
+  return dbOpen;
+}
+async function stored(store, key, value) {        // read a value (value undefined) or store one
+  const db = await database();
+  return new Promise((resolve, reject) => {
+    const s = db.transaction(store, 'readwrite').objectStore(store);
+    const req = value === undefined ? s.get(key) : s.put(value, key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
   });
 }
+const remembered = (key, value) => stored('handles', key, value);
 const SLOT = 'Labs_Underpass_P.upk', BACKUP = 'Labs_Underpass_P.upk.original';
 async function gameFolder() {
   if (!window.showDirectoryPicker) throw new Error('Loading into the game needs Chrome or Edge. Use Save as, then copy the file over Labs_Underpass_P.upk in the game folder.');
@@ -1109,8 +1190,9 @@ window.addEventListener('beforeunload', e => { if (changeCount()) e.preventDefau
 setMode('translate');
 setTool('raise');
 loadStarter();
+loadLibrary();
 window.editor = { objects: () => objects, camera, orbit, gizmo, pivot, select, duplicateSelected, deleteSelected, addFromPalette, addCheckpoint,
-                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, changeSet, references, newMap, buildOnMap };
+                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, changeSet, references, newMap, buildOnMap, placeShape, library };
 </script>
 </body>
 </html>

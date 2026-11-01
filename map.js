@@ -1,7 +1,7 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
 import { addCheckpoints, checkpointZones, mainSequence } from './kismet.js';
-import { CELL, SINK, TILE, saveTerrain, terrain } from './mesh.js';
+import { CELL, SINK, TILE, addShapes, saveTerrain, terrain } from './mesh.js';
 import { compact } from './compact.js';
 
 export function describe(pkg) {
@@ -27,13 +27,15 @@ export function shapes(pkg, meshIndices) {        // Map(mesh export index -> tr
 const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its check: ${what}`); };
 
 // The original map bytes (left untouched) with the editor's changes applied, re-read and checked. `fresh` empties
-// the map's own Kismet scripts (a new map started from this one).
-export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false }) {
+// the map's own Kismet scripts (a new map started from this one). `shapes` are new meshes ([{key, loc, rot, scale3d}])
+// built from `shapeGeometry` ({key: geometryMesh arguments}) and drawn with `shapeMaterial`.
+export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false,
+                                shapes = [], shapeGeometry = {}, shapeMaterial = null }) {
   const pkg = new Package(source.slice());
   const before = pkg.levelList().length;
   let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [];
   const missing = pkg.apply(edits);
-  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh) {
+  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length) {
     const add = new Additions(pkg);
     if (fresh) add.clearRefs(mainSequence(pkg), 'SequenceObjects');
     for (const [i, values] of missing) add.setValues(i, values);
@@ -45,13 +47,14 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
       triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball })), fresh);
     }
     if (ground) [tilesAdded, tilesRemoved] = saveTerrain(add, Number(ground.base), ground.material, ground.tiles);
+    if (shapes.length) addShapes(add, shapes.map(s => ({ key: s.key, values: editValues(s) })), shapeGeometry, shapeMaterial);
     out = add.save();
   }
   const packed = compact(out).bytes;              // unused meshes and textures shrunk, superseded copies gone
   if (packed.length < out.length) out = packed;
 
   const saved = new Package(out), actors = saved.levelActors(), byIndex = new Map(actors.map(a => [a.i, a]));
-  check(saved.levelList().length === before + duplicates.length + checkpoints.length + tilesAdded - removes.length - tilesRemoved, 'level actor count');
+  check(saved.levelList().length === before + duplicates.length + checkpoints.length + shapes.length + tilesAdded - removes.length - tilesRemoved, 'level actor count');
   if (triggers.length) {
     const zones = new Map(checkpointZones(saved).map(z => [z.i, z.ball]));
     triggers.forEach((t, k) => check(zones.get(t) === !!checkpoints[k].ball, `checkpoint ${k + 1} wiring`));

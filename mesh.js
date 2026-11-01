@@ -282,17 +282,40 @@ export function terrain(pkg, actors) {            // {base, material, tiles: Map
   return found;
 }
 
+// What new mesh actors are made from: a solid StaticMeshActor to copy and its mesh's record as the template, set
+// up so the car collides with the triangles themselves, never a simplified hull.
+function newMeshSetup(add) {
+  const pkg = add.pkg, [actor, comp, templateMesh] = meshActorTemplate(pkg);
+  const template = read(pkg, templateMesh), meshExport = pkg.exports[templateMesh];
+  const perPoly = Object.fromEntries(['UseSimpleRigidBodyCollision', 'UseSimpleBoxCollision', 'UseSimpleLineCollision']
+    .map(n => [n, add.tag(n, 'BoolProperty', new Uint8Array(1))]));
+  template.head = add.withProps(meshExport, pkg.objectBytes(templateMesh), perPoly, new Uint8Array(0));
+  return { actor, comp, template, meshExport };
+}
+
+// Place shapes ([{key, values}], values as editValues returns) whose geometry is {key: [geometryMesh arguments]};
+// each distinct shape becomes one mesh, drawn with `material` when given. Returns the new actor indices.
+export function addShapes(add, shapes, geometry, material = null) {
+  const { actor, comp, template, meshExport } = newMeshSetup(add), meshes = new Map();
+  return shapes.map(({ key, values }) => {
+    if (!meshes.has(key)) {
+      if (!geometry[key]) throw new Error(`no geometry for shape ${key}`);
+      const [blob, rawAt] = write(geometryMesh(template, ...geometry[key]));
+      meshes.set(key, add.addObject(meshExport.cls, meshExport.outer, 'Shape', blob, meshExport.flags, [rawAt]) + 1);
+    }
+    const tags = { StaticMesh: add.tag('StaticMesh', 'ObjectProperty', pack('<i', meshes.get(key))) };
+    if (material !== null) tags.Materials = add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(material)));
+    // no baked lighting (LODData): the engine lights the new mesh dynamically
+    return add.duplicate(actor, [0, 0, 0], values, { [comp]: [tags, pack('<i', 0)] });
+  });
+}
+
 // Write sculpted terrain tiles ([{tx, ty, heights}], heights with the one-vertex border tileGeometry takes): new
 // tiles become mesh actors, placed ones get the new shape, flat ones leave the level. Returns [added, removed].
 export function saveTerrain(add, base, material, tiles) {
   const pkg = add.pkg;
   const placed = new Map([...terrain(pkg, pkg.levelActors()).tiles].map(([k, [i]]) => [k, i]));
-  const [actor, comp, templateMesh] = meshActorTemplate(pkg);
-  const template = read(pkg, templateMesh), meshExport = pkg.exports[templateMesh];
-  // the car collides with the triangles themselves, never a simplified hull
-  const perPoly = Object.fromEntries(['UseSimpleRigidBodyCollision', 'UseSimpleBoxCollision', 'UseSimpleLineCollision']
-    .map(n => [n, add.tag(n, 'BoolProperty', new Uint8Array(1))]));
-  template.head = add.withProps(meshExport, pkg.objectBytes(templateMesh), perPoly, new Uint8Array(0));
+  const { actor, comp, template, meshExport } = newMeshSetup(add);
   const w = TILE + 3;
   let added = 0, removed = 0;
   for (const t of tiles) {
