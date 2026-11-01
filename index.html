@@ -361,6 +361,10 @@ const checkpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(
 const shownCheckpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
   [k, new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.8, roughness: 0.6 })]));
 const lookOf = obj => (obj.userData.panel ? shownCheckpointMats : checkpointMats)[obj.userData.checkpoint];
+function panelSurface() {                         // see-through glass when the map has some, so a gate shows without hiding the view
+  const options = [...$('panelMat').options], glass = options.find(o => /glass/i.test(o.text));
+  return glass ? +glass.value : options.length ? +$('shapeMat').value : null;
+}
 const terrainMat = new THREE.MeshStandardMaterial({ color: 0xa08a64, roughness: 0.9, flatShading: true });
 // A checkpoint shows where a reset puts you: the car at its pivot facing the arrow (its local +X), and for ball
 // checkpoints the new ball ahead of the car or above it. The ghosts keep their real size however the zone is scaled.
@@ -730,7 +734,7 @@ function showSelection() {
   $('cpShape').hidden = $('cpPanel').hidden = !selected.userData.checkpoint;
   $('panelOn').checked = !!selected.userData.panel;
   $('panelMat').parentElement.hidden = !selected.userData.panel || !$('panelMat').options.length;
-  if (selected.userData.panel) $('panelMat').value = selected.userData.panel.material ?? $('shapeMat').value;
+  if (selected.userData.panel) $('panelMat').value = selected.userData.panel.material ?? panelSurface();
   document.querySelectorAll('[data-gate]').forEach(b => b.classList.toggle('active', !!selected.userData.checkpoint && (b.dataset.gate === 'gate') === isGate(a)));
   const ballPlace = selected.userData.checkpoint === 'ball';
   $('ballPlace').hidden = !ballPlace;
@@ -1226,8 +1230,7 @@ function changeSet() {                            // [what build() applies, summ
   const checkpoints = added.filter(o => o.userData.checkpoint)
     .map(o => ({ ...changes(o), ball: o.userData.checkpoint === 'ball', respawn: isGate(o.userData.actor) ? respawnValues(o) : null }));
   const removes = [...removed].map(o => o.userData.actor.i), moved = edits.length, respawns = [], panels = [], panelMaterials = [];
-  const surface = $('shapeMat').options.length ? +$('shapeMat').value : null;
-  const panelAt = (o, material) => { readBack(o); const a = o.userData.actor; return { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale, material: material ?? surface }; };
+  const panelAt = (o, material) => { readBack(o); const a = o.userData.actor; return { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale, material: material ?? panelSurface() }; };
   for (const o of added) if (o.userData.checkpoint && o.userData.panel) panels.push(panelAt(o, o.userData.panel.material));
   for (const o of objects) {                      // saved checkpoints: their panel follows them, or appears or goes
     if (!o.userData.checkpoint || o.userData.copy) continue;
@@ -1478,7 +1481,7 @@ $('delete').addEventListener('click', deleteSelected);
 $('restore').addEventListener('click', restore);
 $('panelOn').addEventListener('change', e => {
   if (!selected?.userData.checkpoint) return;
-  selected.userData.panel = e.target.checked ? { material: selected.userData.savedPanel?.material ?? ($('panelMat').options.length ? +$('shapeMat').value : null) } : null;
+  selected.userData.panel = e.target.checked ? { material: selected.userData.savedPanel?.material ?? panelSurface() } : null;
   selected.material = lookOf(selected);
   markDirty(selected);
   showSelection();
