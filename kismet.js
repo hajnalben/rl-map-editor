@@ -225,8 +225,11 @@ function ballChainEntries(pkg, live, lastBall) {  // the respawn chain's first c
 }
 
 const PACKAGES = { SeqEvent_CarSpawned_TA: 'TAGame', SeqAct_AddGameBall_TA: 'TAGame' };   // the others live in Engine
-export const BALL_LIFT = 200;                     // a respawned ball on top starts this far above the checkpoint, over the car
-export const BALL_AHEAD = 250;                    // one in front starts this far ahead of it, the way the checkpoint faces
+// Where a respawned ball starts, from the spot the car is teleported to (30 above the ground when there is ground):
+// on top, just over the roof; in front, this far ahead the way the checkpoint faces, just over the ground.
+export const BALL_LIFT = 130;
+export const BALL_AHEAD = 250;
+export const BALL_FRONT_LIFT = 65;
 
 // Copy trigger zone `template` once per checkpoint ({values: {prop: [fmt, values]}, ball, ballOnTop, respawn}) and
 // wire Kismet; `respawn` (transform values) puts a reset at a marker zone there instead of the checkpoint itself:
@@ -293,7 +296,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
     // (on the car) or ahead of it along the way it faces
     const r = refs(['lastBall', 'onTop', 'one', 'none', 'player', 'ball', 'at', 'dir', 'x', 'y', 'z', 'fx', 'fy', 'fz', 'lift', 'ahead',
                     'z2', 'dx', 'dy', 'x2', 'y2', 'above', 'front', 'spawned', 'hasBall', 'isBall', 'clear', 'addBall', 'where', 'split',
-                    'which', 'raise', 'join', 'place', 'splitDir', 'mulX', 'mulY', 'subX', 'subY', 'joinFront', 'placeFront']);
+                    'which', 'raise', 'join', 'place', 'splitDir', 'mulX', 'mulY', 'subX', 'subY', 'joinFront', 'placeFront', 'frontLift', 'z3', 'raiseFront']);
     lastBallRef = r.lastBall;
     onTopRef = r.onTop;
     [hasBallRef, clearRef] = [r.hasBall, r.clear];
@@ -373,9 +376,12 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
     node('SeqAct_MultiplyFloat', step([r.mulY], math(r.fx, r.ahead, r.dx, x + 2150), x + 2150, y2, 196));
     node('SeqAct_MultiplyFloat', step([r.subX], math(r.fy, r.ahead, r.dy, x + 2380), x + 2380, y2, 196));
     node('SeqAct_SubtractFloat', step([r.subY], math(r.x, r.dx, r.x2, x + 2610), x + 2610, y2, 196));
-    node('SeqAct_SubtractFloat', step([r.joinFront], math(r.y, r.dy, r.y2, x + 2840), x + 2840, y2, 196));
-    node('SeqAct_SetVectorComponents', step([r.placeFront], xyz('Output Vector', 'OutVector', r.front, [r.x2, r.y2, r.z], x + 3070, true), x + 3070, y2, 168));
+    node('SeqAct_SubtractFloat', step([r.raiseFront], math(r.y, r.dy, r.y2, x + 2840), x + 2840, y2, 196));
+    node('SeqAct_SetVectorComponents', step([r.placeFront], xyz('Output Vector', 'OutVector', r.front, [r.x2, r.y2, r.z3], x + 3070, true), x + 3070, y2, 168));
     node('SeqAct_SetLocation', setLocation(r.front, x + 3270, y2));
+    node('SeqVar_Float', vars(vx + 1380, vy, [['FloatValue', F, -BALL_FRONT_LIFT]]));
+    node('SeqVar_Float', vars(vx + 1440, vy));
+    node('SeqAct_SubtractFloat', step([r.joinFront], math(r.z, r.frontLift, r.z3, x + 2840), x + 2840, y2 + 120, 196));
     placed(r, 'ball respawn');
   }
 

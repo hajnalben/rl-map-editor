@@ -223,7 +223,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Package } from './ue3.js';
 import { build, describe, isOriginalGameMap, shapes } from './map.js';
-import { BALL_AHEAD, BALL_LIFT } from './kismet.js';
+import { BALL_AHEAD, BALL_FRONT_LIFT, BALL_LIFT } from './kismet.js';
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
 
@@ -370,8 +370,8 @@ function panelSurface(lava = false) {
   return look ? surfaceValue(look.value) : options.length ? +$('shapeMat').value : null;
 }
 const terrainMat = new THREE.MeshStandardMaterial({ color: 0xa08a64, roughness: 0.9, flatShading: true });
-// A checkpoint shows where a reset puts you: the car at its pivot facing the arrow (its local +X), and for ball
-// checkpoints the new ball ahead of the car or above it. The ghosts keep their real size however the zone is scaled.
+// A checkpoint shows where a reset puts you: the car at its respawn spot facing the arrow (its local +X), and for
+// ball checkpoints the new ball ahead of the car or above it. The ghosts keep their real size however the zone is scaled.
 const ghostMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false });
 function decorateCheckpoint(obj) {
   if (obj.userData.lava) return;
@@ -380,20 +380,19 @@ function decorateCheckpoint(obj) {
   const car = new THREE.Mesh(references[0].geometry, ghostMat);
   const ball = obj.userData.checkpoint === 'ball' ? new THREE.Mesh(references[1].geometry, ghostMat) : null;
   obj.add(arrow, car, ...(ball ? [ball] : []));
-  obj.userData.ghosts = { arrow, car, ball };
-  fitGhosts(obj);
+  obj.userData.ghosts = { arrow, car, ball };   // fitted once the checkpoint is in place
 }
 function fitGhosts(obj) {
   const g = obj.userData.ghosts;
   if (!g) return;
   const inverse = new THREE.Vector3(1 / obj.scale.x, 1 / obj.scale.y, 1 / obj.scale.z);
   g.arrow.scale.set(inverse.y, inverse.x, inverse.z);   // the arrow's own Y points along the zone's X
-  const past = isGate(obj.userData.actor) ? GATE_PAST : 0;
+  const past = isGate(obj.userData.actor) ? GATE_PAST : 0, spot = respawnValues(obj), dz = spot ? spot.loc[2] - obj.userData.actor.loc[2] : 0;
   g.car.scale.copy(inverse);
-  g.car.position.set(past, 0, 0).multiply(inverse);
+  g.car.position.set(past, dz, 0).multiply(inverse);
   if (!g.ball) return;
   g.ball.scale.copy(inverse);
-  g.ball.position.set(past + (obj.userData.ballOnTop ? 0 : BALL_AHEAD), obj.userData.ballOnTop ? BALL_LIFT : 0, 0).multiply(inverse);
+  g.ball.position.set(past + (obj.userData.ballOnTop ? 0 : BALL_AHEAD), dz + (obj.userData.ballOnTop ? BALL_LIFT : BALL_FRONT_LIFT), 0).multiply(inverse);
 }
 // Editor-only size references: an Octane-like car and the ball. The car is our own model built around the
 // Octane's hitbox (118 x 84.2 x 36.2, wheels where the game puts them, origin 17 units above the floor at rest).
@@ -655,6 +654,7 @@ function loadMap(name, bytes, parsed, data) {
   applyFilter();
   updateDirty();
   loadMeshes();
+  objects.forEach(fitGhosts);                     // now that the ground under the checkpoints has its real shape
   setTimeout(collectShapes, 0);                   // after the map shows: its shapes join your library
   const start = actors.find(a => a.cls.startsWith('PlayerStart')) || actors[0];
   const target = toThree(start.loc);
@@ -746,8 +746,8 @@ function showSelection() {
     ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${isGate(a) ? 'gate' : 'checkpoint'}</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
         ? `Becomes your respawn point when the ball ${isGate(a) ? 'passes through' : 'gets into'} it.`
         : `Becomes your respawn point when your car ${isGate(a) ? 'passes through' : 'drives or flies into'} it.`}
-        After a reset the car appears ${isGate(a) ? `just past the gate (${GATE_PAST} units)` : 'at its center'} facing the arrow${selected.userData.checkpoint === 'ball'
-        ? `, with the new ball ${selected.userData.ballOnTop ? `${BALL_LIFT} above it, dropping onto the roof` : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
+        After a reset the car appears ${isGate(a) ? `just past the gate (${GATE_PAST} units)` : 'inside it'}, on the ground when it reaches some, facing the arrow${selected.userData.checkpoint === 'ball'
+        ? `, with the new ball ${selected.userData.ballOnTop ? 'just over the roof' : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
     : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
   $('selEdit').hidden = false;
   $('duplicate').hidden = $('delete').hidden = !!selected.userData.reference;
@@ -845,10 +845,25 @@ function addCheckpoint(kind, gate = false) {
   loc[2] += zone.bounds[5] - 50;
   makeCheckpoint(kind, loc, [0, 0, 0], false, [gate ? GATE / (2 * zone.bounds[3]) : 1, 1, 1]);
 }
-function respawnValues(o) {                       // the marker a reset at a gate teleports to
+const RESPAWN_CLEARANCE = 30;                     // a reset puts the car this far above the ground (it rests at 17)
+function groundUnder(at, depth) {                 // height of the first solid surface within `depth` below `at`, or null
+  scene.updateMatrixWorld();
+  const solid = objects.filter(o => !o.userData.deleted && !o.userData.respawnFor && o.userData.actor.bounds && !isVolume(o.userData.actor));
+  const tiles = ter ? [...ter.tiles.values()].map(t => t.mesh) : [];
+  const hit = new THREE.Raycaster(toThree(at), new THREE.Vector3(0, -1, 0), 0, depth)
+    .intersectObjects([...solid, ...tiles, ...(pkg ? [] : [starterGround])], false)[0];
+  return hit ? hit.point.y : null;
+}
+// Where a reset at checkpoint `o` puts the car: past a gate, and down on the ground when the zone reaches some.
+// The marker transform for that spot, or null when it is the zone's own pivot (a box in the air).
+function respawnValues(o) {
   readBack(o);
-  const a = o.userData.actor, forward = ueAxes(a.rot)[0];
-  return { loc: a.loc.map((v, k) => v + forward[k] * GATE_PAST), rot: [...a.rot], scale3d: [0.1, 0.1, 0.1] };
+  const a = o.userData.actor, forward = ueAxes(a.rot)[0], past = isGate(a) ? GATE_PAST : 0;
+  const at = a.loc.map((v, k) => v + forward[k] * past);
+  const ground = groundUnder(at, a.bounds[5] * Math.abs(a.scale3d[2] * a.scale) + 100);
+  if (ground === null && !past) return null;
+  if (ground !== null) at[2] = ground + RESPAWN_CLEARANCE;
+  return { loc: at, rot: [...a.rot], scale3d: [0.1, 0.1, 0.1] };
 }
 function setGate(obj, gate) {
   pushUndo(obj);
@@ -1294,7 +1309,7 @@ function changeSet() {                            // [what build() applies, summ
   const shapeMaterial = $('shapeMat').options.length ? +$('shapeMat').value : null;
   const checkpoints = added.filter(o => o.userData.checkpoint)
     .map(o => ({ ...changes(o), ball: o.userData.checkpoint === 'ball', lava: !!o.userData.lava,
-                 respawn: !o.userData.lava && isGate(o.userData.actor) ? respawnValues(o) : null }));
+                 respawn: o.userData.lava ? null : respawnValues(o) }));
   const removes = [...removed].map(o => o.userData.actor.i), moved = edits.length, respawns = [], panels = [], panelMaterials = [];
   const panelAt = (o, material) => {
     readBack(o);
@@ -1315,9 +1330,9 @@ function changeSet() {                            // [what build() applies, summ
     const r = o.userData.respawn;
     if (!r) continue;
     if (o.userData.deleted) { if (r.marker) removes.push(r.marker.userData.actor.i); continue; }
-    const gate = isGate(o.userData.actor), { loc, rot } = respawnValues(o);
-    if (gate && r.marker) edits.push({ i: r.marker.userData.actor.i, loc, rot });
-    else if (gate) respawns.push({ valueVar: r.valueVar, zone: o.userData.actor.i, marker: respawnValues(o) });
+    const want = respawnValues(o);
+    if (want && r.marker) edits.push({ i: r.marker.userData.actor.i, loc: want.loc, rot: want.rot });
+    else if (want) respawns.push({ valueVar: r.valueVar, zone: o.userData.actor.i, marker: want });
     else if (r.marker) {
       respawns.push({ valueVar: r.valueVar, zone: o.userData.actor.i, marker: null });
       removes.push(r.marker.userData.actor.i);
