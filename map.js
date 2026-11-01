@@ -42,7 +42,7 @@ export function shapes(pkg, meshIndices) {        // Map(mesh export index -> tr
 const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its check: ${what}`); };
 
 // The original map bytes (left untouched) with the editor's changes applied, re-read and checked. `fresh` empties
-// the map's own Kismet scripts (a new map started from this one). `shapes` are new meshes ([{key, loc, rot, scale3d}])
+// the map's own Kismet scripts (a new map started from this one). `shapes` are new meshes ([{key, loc, rot, scale3d, material?}])
 // built from `shapeGeometry` ({key: geometryMesh arguments}) and drawn with `shapeMaterial`. `respawns` re-point saved
 // checkpoints ([{valueVar, zone, marker}]): to a new marker zone at `marker` (transform), or back to the zone itself.
 // `panels` ([{loc, rot, scale3d, scale, material}]) make checkpoints visible in game: an opaque box the size of the
@@ -85,7 +85,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
                                                                      respawn: c.respawn ? editValues(c.respawn) : null })), fresh, spawn);
     }
     if (ground) [tilesAdded, tilesRemoved] = saveTerrain(add, Number(ground.base), ground.material, ground.tiles);
-    if (shapes.length) addShapes(add, shapes.map(s => ({ key: s.key, values: editValues(s) })), shapeGeometry, shapeMaterial);
+    if (shapes.length) addShapes(add, shapes.map(s => ({ key: s.key, values: editValues(s), material: s.material })), shapeGeometry, shapeMaterial);
     if (panels.length) {
       const zone = pkg.zoneTemplate();
       if (!zone) throw new Error('this map has no trigger zone to size checkpoint panels');
