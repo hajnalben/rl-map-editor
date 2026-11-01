@@ -76,6 +76,8 @@ function quarterPipe(R = 800, w = 500, back = 60, steps = 14) {   // curves up f
   return solid(polys);
 }
 
+export const boxShape = ([ox, oy, oz, ex, ey, ez]) => solid(box(ox - ex, ox + ex, oy - ey, oy + ey, oz - ez, oz + ez));   // bounds: center, half sizes
+
 export const BUILT_IN = {
   Ramp: ramp, Platform: () => solid(box(-500, 500, -500, 500, 0, 100)), Pillar: () => pillar(), Ring: () => ring(), 'Quarter pipe': () => quarterPipe(),
 };

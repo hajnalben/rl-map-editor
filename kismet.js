@@ -148,37 +148,57 @@ function namedVar(pkg, name, live = liveNodes(pkg), cls = 'SeqVar_Object') {
 
 // Checkpoint zones as [{i, ball}]: every zone stored into LastCheckpoint when touched; ball checkpoints also go
 // into LastBallCheckpoint.
-// Ball checkpoints also store whether the respawned ball goes on top of the car: modeVar is the SeqVar_Int their
-// SetInt writes into BallOnTop (null in maps made before the setting existed, where it always goes on top).
+// Checkpoints as [{i, dest, valueVar, ball, ballOnTop, modeVar}]: i is the trigger zone (the Touch event's
+// originator), dest what a reset teleports to (the zone itself, or a marker just past a gate) and valueVar the
+// SeqVar_Object holding dest. Ball checkpoints also store whether the respawned ball goes on top of the car:
+// modeVar is the SeqVar_Int their SetInt writes into BallOnTop (null in maps made before that setting existed,
+// where it always goes on top).
 export function checkpointZones(pkg) {
   const live = liveNodes(pkg), last = namedVar(pkg, 'LastCheckpoint', live), lastBall = namedVar(pkg, 'LastBallCheckpoint', live);
   if (last === null) return [];
   const onTop = namedVar(pkg, 'BallOnTop', live, 'SeqVar_Int');
-  const links = e => new Map((nodeProps(pkg, e).VariableLinks || []).map(l => [l.LinkDesc, l.LinkedVariables || []]));
-  const zones = [], balls = new Map();
-  for (const k of live) {
-    const e = pkg.exports[k];
-    if (pkg.classOf(e) !== 'SeqAct_SetObject') continue;
-    const target = links(e).get('Target') || [];
-    for (const v of links(e).get('Value') || []) {
-      const zone = v > 0 ? nodeProps(pkg, pkg.exports[v - 1]).ObjValue : null;
-      if (!zone) continue;
-      if (target.includes(last + 1)) zones.push(zone - 1);
-      if (lastBall === null || !target.includes(lastBall + 1)) continue;
-      const next = (nodeProps(pkg, e).OutputLinks?.[0]?.Links || [])[0]?.LinkedOp;
-      const setInt = next > 0 && pkg.classOf(pkg.exports[next - 1]) === 'SeqAct_SetInt' ? links(pkg.exports[next - 1]) : null;
-      const modeVar = onTop !== null && setInt && (setInt.get('Target') || []).includes(onTop + 1) ? (setInt.get('Value') || [])[0] - 1 : null;
-      balls.set(zone - 1, { ballOnTop: modeVar === null || nodeProps(pkg, pkg.exports[modeVar]).IntValue === 1, modeVar });
+  const props = new Map([...live].map(k => [k, nodeProps(pkg, pkg.exports[k])]));
+  const links = k => new Map((props.get(k)?.VariableLinks || []).map(l => [l.LinkDesc, l.LinkedVariables || []]));
+  const callers = new Map();                      // node -> nodes whose outputs lead into it
+  for (const [k, p] of props) {
+    for (const out of Array.isArray(p.OutputLinks) ? p.OutputLinks : []) {
+      for (const l of out.Links || []) if (l.LinkedOp > 0) callers.set(l.LinkedOp - 1, [...(callers.get(l.LinkedOp - 1) || []), k]);
     }
   }
-  return zones.map(i => ({ i, ball: balls.has(i), ballOnTop: balls.get(i)?.ballOnTop ?? false, modeVar: balls.get(i)?.modeVar ?? null }));
+  const touchedZone = k => {                      // walk back from a SetObject to the Touch event that starts it
+    for (let hops = 0; hops < 4 && k !== undefined; hops++, k = callers.get(k)?.[0]) {
+      if (pkg.classOf(pkg.exports[k]) === 'SeqEvent_Touch') return (props.get(k).Originator || 0) - 1;
+    }
+    return -1;
+  };
+  const found = [], balls = new Map();
+  for (const k of live) {
+    if (pkg.classOf(pkg.exports[k]) !== 'SeqAct_SetObject') continue;
+    const target = links(k).get('Target') || [];
+    for (const v of links(k).get('Value') || []) {
+      const dest = v > 0 ? (props.get(v - 1) ?? nodeProps(pkg, pkg.exports[v - 1])).ObjValue - 1 : -1;
+      if (dest < 0) continue;
+      if (target.includes(last + 1)) {
+        const zone = touchedZone(k);
+        found.push({ i: zone >= 0 ? zone : dest, dest, valueVar: v - 1 });
+      }
+      if (lastBall === null || !target.includes(lastBall + 1)) continue;
+      const next = (props.get(k).OutputLinks?.[0]?.Links || [])[0]?.LinkedOp;
+      const setInt = next > 0 && pkg.classOf(pkg.exports[next - 1]) === 'SeqAct_SetInt' ? links(next - 1) : null;
+      const modeVar = onTop !== null && setInt && (setInt.get('Target') || []).includes(onTop + 1) ? (setInt.get('Value') || [])[0] - 1 : null;
+      const value = modeVar === null ? null : (props.get(modeVar) ?? nodeProps(pkg, pkg.exports[modeVar])).IntValue;
+      balls.set(dest, { ballOnTop: modeVar === null || value === 1, modeVar });
+    }
+  }
+  return found.map(c => ({ ...c, ball: balls.has(c.dest), ballOnTop: balls.get(c.dest)?.ballOnTop ?? false, modeVar: balls.get(c.dest)?.modeVar ?? null }));
 }
 
 const PACKAGES = { SeqEvent_CarSpawned_TA: 'TAGame', SeqAct_AddGameBall_TA: 'TAGame' };   // the others live in Engine
 export const BALL_LIFT = 200;                     // a respawned ball on top starts this far above the checkpoint, over the car
 export const BALL_AHEAD = 250;                    // one in front starts this far ahead of it, the way the checkpoint faces
 
-// Copy trigger zone `template` once per checkpoint ({values: {prop: [fmt, values]}, ball}) and wire Kismet:
+// Copy trigger zone `template` once per checkpoint ({values: {prop: [fmt, values]}, ball, ballOnTop, respawn}) and
+// wire Kismet; `respawn` (transform values) puts a reset at a marker zone there instead of the checkpoint itself:
 // touching a car checkpoint with the car, or a ball checkpoint with the ball, makes it the respawn point, and a
 // reset teleports the car there (with a fresh ball dropped onto it for ball checkpoints). The respawn logic is
 // created once per map, or again when `fresh` (the main sequence was just emptied). Returns the new trigger indices.
@@ -320,8 +340,9 @@ export function addCheckpoints(add, template, checkpoints, fresh = false) {
   }
 
   const triggers = [];
-  checkpoints.forEach(({ values, ball, ballOnTop = false }, k) => {
+  checkpoints.forEach(({ values, ball, ballOnTop = false, respawn = null }, k) => {
     const trig = add.duplicate(template, [0, 0, 0], values);
+    const dest = respawn ? add.duplicate(template, [0, 0, 0], respawn) : trig;   // the marker has no Touch event
     triggers.push(trig);
     const x = x0 + 600 * (k + 1), y = y0 + 600;
     const setObject = (value, target, next, px, py) => [
@@ -338,7 +359,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false) {
       ...layout(2, parent, x, y, 131, 176, `${ball ? 'Ball' : 'Car'} checkpoint ${k + 1} Touch`)];
     if (!ball) {
       const r = refs(['value', 'setLast', 'touch']);
-      node('SeqVar_Object', vars(x + 30, y + 220, [['ObjValue', O, trig + 1]]));
+      node('SeqVar_Object', vars(x + 30, y + 220, [['ObjValue', O, dest + 1]]));
       node('SeqAct_SetObject', setObject(r.value, lastRef, [], x + 200, y));
       node('SeqEvent_Touch', touch(true, [r.setLast], []));
       placed(r, 'car checkpoint');
@@ -346,7 +367,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false) {
     }
     // the zone fires for anything; only when what touched it is not the player's car was it the ball
     const r = refs(['value', 'instigator', 'player', 'notCar', 'setLast', 'setBall', 'touch', ...(onTopRef ? ['mode', 'setMode'] : [])]);
-    node('SeqVar_Object', vars(x + 30, y + 220, [['ObjValue', O, trig + 1]]));
+    node('SeqVar_Object', vars(x + 30, y + 220, [['ObjValue', O, dest + 1]]));
     node('SeqVar_Object', vars(x + 80, y + 220));
     node('SeqVar_Player', vars(x + 130, y + 220));
     node('SeqCond_CompareObject', [

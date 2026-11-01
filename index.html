@@ -149,6 +149,10 @@
             <button data-gate="gate" title="A flat gate you pass through, 100 units thick">Gate</button>
           </div>
         </div>
+        <div id="cpPanel" hidden>
+          <label title="Adds an opaque panel the size of the checkpoint, so players see it; nothing collides with it"><input type="checkbox" id="panelOn"> Visible in game</label>
+          <label class="field">Surface <select id="panelMat" title="Surface of the visible panel"></select></label>
+        </div>
         <div id="ballPlace" class="ball-place" hidden>
           <span class="muted">Ball after reset</span>
           <div class="modes two">
@@ -354,6 +358,9 @@ let mapName = null, source = null, pkg = null, actors = [], palette = [], zone =
 const CHECKPOINT_COLORS = { car: 0x3ddc84, ball: 0xff9f43 };
 const checkpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
   [k, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.28, depthWrite: false })]));
+const shownCheckpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
+  [k, new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.8, roughness: 0.6 })]));
+const lookOf = obj => (obj.userData.panel ? shownCheckpointMats : checkpointMats)[obj.userData.checkpoint];
 const terrainMat = new THREE.MeshStandardMaterial({ color: 0xa08a64, roughness: 0.9, flatShading: true });
 // A checkpoint shows where a reset puts you: the car at its pivot facing the arrow (its local +X), and for ball
 // checkpoints the new ball ahead of the car or above it. The ghosts keep their real size however the zone is scaled.
@@ -372,10 +379,12 @@ function fitGhosts(obj) {
   if (!g) return;
   const inverse = new THREE.Vector3(1 / obj.scale.x, 1 / obj.scale.y, 1 / obj.scale.z);
   g.arrow.scale.set(inverse.y, inverse.x, inverse.z);   // the arrow's own Y points along the zone's X
+  const past = isGate(obj.userData.actor) ? GATE_PAST : 0;
   g.car.scale.copy(inverse);
+  g.car.position.set(past, 0, 0).multiply(inverse);
   if (!g.ball) return;
   g.ball.scale.copy(inverse);
-  g.ball.position.set(obj.userData.ballOnTop ? 0 : BALL_AHEAD, obj.userData.ballOnTop ? BALL_LIFT : 0, 0).multiply(inverse);
+  g.ball.position.set(past + (obj.userData.ballOnTop ? 0 : BALL_AHEAD), obj.userData.ballOnTop ? BALL_LIFT : 0, 0).multiply(inverse);
 }
 // Editor-only size references: an Octane-like car and the ball. The car is our own model built around the
 // Octane's hitbox (118 x 84.2 x 36.2, wheels where the game puts them, origin 17 units above the floor at rest).
@@ -483,7 +492,7 @@ function loadStarter() {
   group.add(starterGround);                       // the floor; unraised terrain stays hidden under it
   renderPalette();
   $('terrainMat').parentElement.hidden = true;                  // surfaces come with the map it gets built on
-  $('shapeMat').innerHTML = '';
+  $('shapeMat').innerHTML = $('panelMat').innerHTML = '';
   $('shapeMat').parentElement.hidden = true;
   $('sculpt').disabled = false;
   $('mapName').textContent = 'Starter map';
@@ -517,7 +526,7 @@ async function buildOnMap(file) {
   const checkpoints = added.filter(o => o.userData.checkpoint).map(o => {
     readBack(o);
     return { kind: o.userData.checkpoint, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], ballOnTop: o.userData.ballOnTop,
-             scale3d: [...o.userData.actor.scale3d] };
+             scale3d: [...o.userData.actor.scale3d], panel: !!o.userData.panel };
   });
   const shapes = added.filter(o => o.userData.shape).map(o => {
     readBack(o);
@@ -537,7 +546,10 @@ async function buildOnMap(file) {
   const touched = new Set();
   for (const [gx, gy, h] of heights) setHeight(gx + dx, gy + dy, h, touched);
   for (const t of touched) { refreshTile(t); ter.dirty.add(tileKey(t.tx, t.ty)); }
-  for (const c of zone ? checkpoints : []) makeCheckpoint(c.kind, [c.loc[0] + dx * ter.cell, c.loc[1] + dy * ter.cell, c.loc[2] + floor], c.rot, c.ballOnTop, c.scale3d);
+  for (const c of zone ? checkpoints : []) {
+    const obj = makeCheckpoint(c.kind, [c.loc[0] + dx * ter.cell, c.loc[1] + dy * ter.cell, c.loc[2] + floor], c.rot, c.ballOnTop, c.scale3d);
+    if (c.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
+  }
   for (const sh of shapes) placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
   select(null);
   placeReferences(start);
@@ -584,7 +596,7 @@ function loadMap(name, bytes, parsed, data) {
   if (earthy) $('terrainMat').value = t.material ?? earthy.ref;
   $('terrainMat').disabled = t.material !== null;              // placed tiles keep the surface they were saved with
   $('terrainMat').parentElement.hidden = false;
-  $('shapeMat').innerHTML = $('terrainMat').innerHTML;
+  $('shapeMat').innerHTML = $('panelMat').innerHTML = $('terrainMat').innerHTML;
   if (earthy) $('shapeMat').value = earthy.ref;
   $('shapeMat').parentElement.hidden = !data.materials.length;
   $('sculpt').disabled = !data.materials.length;
@@ -603,6 +615,22 @@ function loadMap(name, bytes, parsed, data) {
     group.add(obj);
     return obj;
   });
+  for (const obj of objects) {                    // where a reset puts you: the zone itself, or a marker past a gate
+    const cp = checkpointZones.get(obj.userData.actor.i);
+    if (!cp) continue;
+    const marker = cp.dest !== cp.i ? objects.find(o => o.userData.actor.i === cp.dest) : null;
+    obj.userData.respawn = { valueVar: cp.valueVar, marker };
+    if (marker) marker.userData.respawnFor = obj;  // follows its gate, never shown on its own
+  }
+  for (const { i, material } of data.panels) {    // a checkpoint's visible panel sits exactly on it
+    const panel = objects.find(o => o.userData.actor.i === i), at = panel?.userData.actor;
+    const owner = at && objects.find(o => o.userData.checkpoint && same(o.userData.actor.loc, at.loc, 1) && same(o.userData.actor.rot, at.rot, 1));
+    if (!owner) continue;
+    owner.userData.panel = { material };
+    owner.userData.savedPanel = { obj: panel, material };
+    owner.material = lookOf(owner);
+    panel.userData.respawnFor = owner;
+  }
   saveName = name.replace(/\.(udk|upk)$/i, '') + '-edit.udk';
   applyFilter();
   updateDirty();
@@ -648,7 +676,7 @@ function applyFilter() {
       if (!obj.geometry.boundingSphere) obj.geometry.computeBoundingSphere();
       obj.userData.huge = obj.geometry.boundingSphere.radius * Math.max(obj.scale.x, obj.scale.y, obj.scale.z) > 15000;
     }
-    obj.visible = !obj.userData.deleted
+    obj.visible = !obj.userData.deleted && !obj.userData.respawnFor
       && ($('showHuge').checked || !obj.userData.huge)
       && (!q || `${a.name} ${a.cls} ${a.mesh || ''}`.toLowerCase().includes(q))
       && ($('showVolumes').checked || !isVolume(a) || !!obj.userData.checkpoint)
@@ -694,12 +722,15 @@ function showSelection() {
     ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${isGate(a) ? 'gate' : 'checkpoint'}</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
         ? `Becomes your respawn point when the ball ${isGate(a) ? 'passes through' : 'gets into'} it.`
         : `Becomes your respawn point when your car ${isGate(a) ? 'passes through' : 'drives or flies into'} it.`}
-        After a reset the car appears at its center facing the arrow${selected.userData.checkpoint === 'ball'
+        After a reset the car appears ${isGate(a) ? `just past the gate (${GATE_PAST} units)` : 'at its center'} facing the arrow${selected.userData.checkpoint === 'ball'
         ? `, with the new ball ${selected.userData.ballOnTop ? `${BALL_LIFT} above it, dropping onto the roof` : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
     : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
   $('selEdit').hidden = false;
   $('duplicate').hidden = $('delete').hidden = !!selected.userData.reference;
-  $('cpShape').hidden = !selected.userData.checkpoint;
+  $('cpShape').hidden = $('cpPanel').hidden = !selected.userData.checkpoint;
+  $('panelOn').checked = !!selected.userData.panel;
+  $('panelMat').parentElement.hidden = !selected.userData.panel || !$('panelMat').options.length;
+  if (selected.userData.panel) $('panelMat').value = selected.userData.panel.material ?? $('shapeMat').value;
   document.querySelectorAll('[data-gate]').forEach(b => b.classList.toggle('active', !!selected.userData.checkpoint && (b.dataset.gate === 'gate') === isGate(a)));
   const ballPlace = selected.userData.checkpoint === 'ball';
   $('ballPlace').hidden = !ballPlace;
@@ -709,11 +740,11 @@ function showSelection() {
     b.title = selected.userData.oldBallCheckpoint ? 'Made by an older version of the editor: its ball always drops onto the car' : b.title;
   });
   const vals = { loc: a.loc.map(v => Math.round(v)), rot: a.rot.map(v => +(v * 360 / 65536).toFixed(1)), scale: a.scale3d.map(v => +(v * a.scale).toFixed(3)) };
-  document.querySelectorAll('#selEdit input').forEach(inp => {
+  document.querySelectorAll('#selEdit input[data-f]').forEach(inp => {
     if (document.activeElement !== inp) inp.value = vals[inp.dataset.f][+inp.dataset.k];
   });
 }
-document.querySelectorAll('#selEdit input').forEach(inp => inp.addEventListener('change', () => {
+document.querySelectorAll('#selEdit input[data-f]').forEach(inp => inp.addEventListener('change', () => {
   if (!selected) return;
   pushUndo(selected);
   const a = selected.userData.actor, k = +inp.dataset.k, v = parseFloat(inp.value);
@@ -781,12 +812,18 @@ function placeNew(obj) {
 // A gate is a checkpoint squashed flat along the way it faces: you pass through it. Thick enough that a fast ball
 // can't skip it between two physics steps (Lethamyr's dribble gates are about this thick too).
 const GATE = 100;
+const GATE_PAST = 150;                            // a reset at a gate puts the car this far past it, clear of the trigger
 const isGate = a => 2 * a.bounds[3] * Math.abs(a.scale3d[0] * a.scale) <= 1.5 * GATE;
 function addCheckpoint(kind, gate = false) {
   if (!zone) return setStatus('This map has no trigger zone to copy for checkpoints.', 'warn');
   const loc = fromThree(orbit.target);             // rest the zone on the point you're looking at
   loc[2] += zone.bounds[5] - 50;
   makeCheckpoint(kind, loc, [0, 0, 0], false, [gate ? GATE / (2 * zone.bounds[3]) : 1, 1, 1]);
+}
+function respawnValues(o) {                       // the marker a reset at a gate teleports to
+  readBack(o);
+  const a = o.userData.actor, forward = ueAxes(a.rot)[0];
+  return { loc: a.loc.map((v, k) => v + forward[k] * GATE_PAST), rot: [...a.rot], scale3d: [0.1, 0.1, 0.1] };
 }
 function setGate(obj, gate) {
   pushUndo(obj);
@@ -802,9 +839,10 @@ function makeCheckpoint(kind, loc, rot, ballOnTop = false, scale3d = [1, 1, 1]) 
   const a = { i: null, name: 'Checkpoint', cls: 'TriggerVolume', mesh: null, loc, rot, scale3d: [...scale3d],
               scale: 1, bounds: zone.bounds };
   const obj = new THREE.Mesh(geometryFor(zone.bounds), checkpointMats[kind]);
-  obj.userData = { actor: a, copy: true, checkpoint: kind, ballOnTop };
+  obj.userData = { actor: a, copy: true, checkpoint: kind, ballOnTop, panel: null };
   decorateCheckpoint(obj);
   placeNew(obj);
+  return obj;
 }
 // Terrain: one heightfield under the whole map, kept as tiles of TILE x TILE cells. Only tiles with raised
 // ground exist; heights are relative to the terrain base, which sits just under the floor.
@@ -1064,10 +1102,12 @@ function collectShapes() {                        // the open map's shapes join 
 function copyObject(source, loc) {
   readBack(source);
   const src = source.userData.actor, { checkpoint, shape, ballOnTop } = source.userData;
+  const panel = source.userData.panel ? { material: source.userData.panel.material } : null;
   const a = { ...src, i: null, src: src.src ?? src.i, name: (src.mesh || src.name) + ' copy',
               loc: [...loc], rot: [...src.rot], scale3d: [...src.scale3d] };
   const obj = new THREE.Mesh(source.geometry, source.material);
-  obj.userData = { actor: a, copy: true, checkpoint, shape, ballOnTop };
+  obj.userData = { actor: a, copy: true, checkpoint, shape, ballOnTop, panel };
+  if (checkpoint) obj.material = lookOf(obj);
   if (checkpoint) decorateCheckpoint(obj);
   placeNew(obj);
 }
@@ -1090,6 +1130,8 @@ function changes(obj) {                           // transform fields that diffe
   if (!o || !ueAxes(a.rot).every((ax, i) => same(ax, ueAxes(o.rot)[i], 1e-4))) e.rot = a.rot;
   if (!o || !same(a.scale3d, o.scale3d, 1e-4)) e.scale3d = a.scale3d;
   if (obj.userData.checkpoint === 'ball' && (!o || obj.userData.ballOnTop !== o.ballOnTop)) e.ballOnTop = obj.userData.ballOnTop;
+  const want = obj.userData.panel, had = obj.userData.savedPanel;
+  if (o && obj.userData.checkpoint && (!!want !== !!had || (want && had && want.material !== had.material))) e.panel = true;
   return e;
 }
 function markDirty(obj) {
@@ -1120,7 +1162,7 @@ function scheduleOutline() {
 function renderOutline() {                        // • marks what isn't saved yet
   const q = $('filter').value.trim().toLowerCase(), tree = new Map(GROUPS.map(g => [g, new Map()]));
   for (const o of objects) {
-    if (o.userData.deleted) continue;
+    if (o.userData.deleted || o.userData.respawnFor) continue;
     const a = o.userData.actor, [g, sub] = groupOf(o);
     if (q && !`${a.name} ${a.cls} ${a.mesh || ''} ${g}`.toLowerCase().includes(q)) continue;
     const subs = tree.get(g);
@@ -1181,17 +1223,44 @@ function changeSet() {                            // [what build() applies, summ
   const shapes = added.filter(o => o.userData.shape).map(o => ({ key: o.userData.shape, ...changes(o) }));
   const shapeGeometry = Object.fromEntries([...new Set(shapes.map(s => s.key))].map(k => [k, asMeshInput(shapeData(k))]));
   const shapeMaterial = $('shapeMat').options.length ? +$('shapeMat').value : null;
-  const checkpoints = added.filter(o => o.userData.checkpoint).map(o => ({ ...changes(o), ball: o.userData.checkpoint === 'ball' }));
-  const removes = [...removed].map(o => o.userData.actor.i);
+  const checkpoints = added.filter(o => o.userData.checkpoint)
+    .map(o => ({ ...changes(o), ball: o.userData.checkpoint === 'ball', respawn: isGate(o.userData.actor) ? respawnValues(o) : null }));
+  const removes = [...removed].map(o => o.userData.actor.i), moved = edits.length, respawns = [], panels = [], panelMaterials = [];
+  const surface = $('shapeMat').options.length ? +$('shapeMat').value : null;
+  const panelAt = (o, material) => { readBack(o); const a = o.userData.actor; return { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale, material: material ?? surface }; };
+  for (const o of added) if (o.userData.checkpoint && o.userData.panel) panels.push(panelAt(o, o.userData.panel.material));
+  for (const o of objects) {                      // saved checkpoints: their panel follows them, or appears or goes
+    if (!o.userData.checkpoint || o.userData.copy) continue;
+    const want = o.userData.panel, had = o.userData.savedPanel;
+    if (o.userData.deleted || !want) { if (had) removes.push(had.obj.userData.actor.i); continue; }
+    if (!had) { panels.push(panelAt(o, want.material)); continue; }
+    const { loc, rot, scale3d } = panelAt(o);
+    edits.push({ i: had.obj.userData.actor.i, loc, rot, scale3d });
+    if (want.material !== null && want.material !== had.material) panelMaterials.push({ i: had.obj.userData.actor.i, material: want.material });
+  }
+  for (const o of objects) {                      // saved checkpoints: keep their respawn point in step with them
+    const r = o.userData.respawn;
+    if (!r) continue;
+    if (o.userData.deleted) { if (r.marker) removes.push(r.marker.userData.actor.i); continue; }
+    const gate = isGate(o.userData.actor), { loc, rot } = respawnValues(o);
+    if (gate && r.marker) edits.push({ i: r.marker.userData.actor.i, loc, rot });
+    else if (gate) respawns.push({ valueVar: r.valueVar, zone: o.userData.actor.i, marker: respawnValues(o) });
+    else if (r.marker) {
+      respawns.push({ valueVar: r.valueVar, zone: o.userData.actor.i, marker: null });
+      removes.push(r.marker.userData.actor.i);
+    }
+  }
   const terrain = ter.dirty.size ? { base: ter.base, material: +$('terrainMat').value, tiles: [...ter.dirty].map(key => {
     const [tx, ty] = key.split(',').map(Number);
     return { tx, ty, heights: apron(tx, ty) };
   }) } : null;
-  const summary = [edits.length && `${edits.length} moved`, duplicates.length && `${duplicates.length} added`,
+  const summary = [moved && `${moved} moved`, duplicates.length && `${duplicates.length} added`,
                    shapes.length && `${shapes.length} shapes`, checkpoints.length && `${checkpoints.length} checkpoints`,
                    terrain && `${terrain.tiles.length} terrain tiles`,
-                   removes.length && `${removes.length} deleted`].filter(Boolean).join(', ') || 'no changes';
-  return [{ edits, duplicates, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial }, fresh ? `new map, ${summary}` : summary];
+                   removed.size && `${removed.size} deleted`, respawns.length && `${respawns.length} respawn points`,
+                   panels.length && `${panels.length} checkpoint panels`].filter(Boolean).join(', ') || 'no changes';
+  return [{ edits, duplicates, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, panelMaterials },
+          fresh ? `new map, ${summary}` : summary];
 }
 function editedMap() {                            // [map bytes with every change applied, summary]
   const [changes, summary] = changeSet();
@@ -1407,6 +1476,18 @@ $('palette').addEventListener('dblclick', addFromPalette);
 $('paletteFilter').addEventListener('input', renderPalette);
 $('delete').addEventListener('click', deleteSelected);
 $('restore').addEventListener('click', restore);
+$('panelOn').addEventListener('change', e => {
+  if (!selected?.userData.checkpoint) return;
+  selected.userData.panel = e.target.checked ? { material: selected.userData.savedPanel?.material ?? ($('panelMat').options.length ? +$('shapeMat').value : null) } : null;
+  selected.material = lookOf(selected);
+  markDirty(selected);
+  showSelection();
+});
+$('panelMat').addEventListener('change', e => {
+  if (!selected?.userData.panel) return;
+  selected.userData.panel.material = +e.target.value;
+  markDirty(selected);
+});
 document.querySelectorAll('[data-gate]').forEach(b => b.addEventListener('click', () => {
   if (selected?.userData.checkpoint) setGate(selected, b.dataset.gate === 'gate');
 }));

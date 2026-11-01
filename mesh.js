@@ -293,18 +293,21 @@ function newMeshSetup(add) {
   return { actor, comp, template, meshExport };
 }
 
-// Place shapes ([{key, values}], values as editValues returns) whose geometry is {key: [geometryMesh arguments]};
-// each distinct shape becomes one mesh, drawn with `material` when given. Returns the new actor indices.
-export function addShapes(add, shapes, geometry, material = null) {
+// Place shapes ([{key, values, material?}], values as editValues returns) whose geometry is {key: [geometryMesh
+// arguments]}; each distinct shape becomes one mesh named `name`, drawn with its own or the shared `material`.
+// Shapes that aren't `solid` are only seen: nothing collides with them. Returns the new actor indices.
+export function addShapes(add, shapes, geometry, material = null, { name = 'Shape', solid = true } = {}) {
   const { actor, comp, template, meshExport } = newMeshSetup(add), meshes = new Map();
-  return shapes.map(({ key, values }) => {
+  const ghost = solid ? {} : Object.fromEntries(['CollideActors', 'BlockActors', 'BlockRigidBody', 'BlockZeroExtent', 'BlockNonZeroExtent']
+    .map(n => [n, add.tag(n, 'BoolProperty', new Uint8Array(1))]));
+  return shapes.map(({ key, values, material: own = material }) => {
     if (!meshes.has(key)) {
       if (!geometry[key]) throw new Error(`no geometry for shape ${key}`);
       const [blob, rawAt] = write(geometryMesh(template, ...geometry[key]));
-      meshes.set(key, add.addObject(meshExport.cls, meshExport.outer, 'Shape', blob, meshExport.flags, [rawAt]) + 1);
+      meshes.set(key, add.addObject(meshExport.cls, meshExport.outer, name, blob, meshExport.flags, [rawAt]) + 1);
     }
-    const tags = { StaticMesh: add.tag('StaticMesh', 'ObjectProperty', pack('<i', meshes.get(key))) };
-    if (material !== null) tags.Materials = add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(material)));
+    const tags = { ...ghost, StaticMesh: add.tag('StaticMesh', 'ObjectProperty', pack('<i', meshes.get(key))) };
+    if (own !== null) tags.Materials = add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(own)));
     // no baked lighting (LODData): the engine lights the new mesh dynamically
     return add.duplicate(actor, [0, 0, 0], values, { [comp]: [tags, pack('<i', 0)] });
   });
