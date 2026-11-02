@@ -106,7 +106,6 @@
           <label><input type="checkbox" id="showVolumes"> Trigger zones (volumes)</label>
           <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
           <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
-          <label title="Real-size references you can move around; never saved into the map"><input type="checkbox" id="showRefs" checked> Car and ball (editor only)</label>
         </div>
       </details>
     </div>
@@ -280,7 +279,10 @@ scene.add(gizmo);
 gizmo.addEventListener('dragging-changed', e => {
   orbit.enabled = !e.value;
   if (e.value) pushUndo(selected);
-  else scheduleOutline();
+  else {
+    if (selected?.userData.spawn) settleSpawn(selected);
+    scheduleOutline();
+  }
 });
 // The gizmo drives a helper at the mesh's visible center; Unreal pivots can sit far away from the mesh.
 const pivot = new THREE.Object3D(), pivotOffset = new THREE.Matrix4();
@@ -378,10 +380,10 @@ function decorateCheckpoint(obj) {
   if (obj.userData.lava) return;
   const b = obj.userData.actor.bounds;
   const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(b[0], b[2], b[1]), 700, CHECKPOINT_COLORS[obj.userData.checkpoint], 200, 125);
-  const car = new THREE.Mesh(references[0].geometry, ghostMat);
-  const ball = obj.userData.checkpoint === 'ball' ? new THREE.Mesh(references[1].geometry, ghostMat) : null;
-  obj.add(arrow, car, ...(ball ? [ball] : []));
-  obj.userData.ghosts = { arrow, car, ball };   // fitted once the checkpoint is in place
+  const carGhost = new THREE.Mesh(car.geometry, ghostMat);
+  const ball = obj.userData.checkpoint === 'ball' ? new THREE.Mesh(ballStart.geometry, ghostMat) : null;
+  obj.add(arrow, carGhost, ...(ball ? [ball] : []));
+  obj.userData.ghosts = { arrow, car: carGhost, ball };   // fitted once the checkpoint is in place
 }
 function fitGhosts(obj) {
   const g = obj.userData.ghosts;
@@ -395,8 +397,8 @@ function fitGhosts(obj) {
   g.ball.scale.copy(inverse);
   g.ball.position.set(past + (obj.userData.ballOnTop ? 0 : BALL_AHEAD), dz + (obj.userData.ballOnTop ? BALL_LIFT : BALL_FRONT_LIFT), 0).multiply(inverse);
 }
-// Editor-only size references: an Octane-like car and the ball. The car is our own model built around the
-// Octane's hitbox (118 x 84.2 x 36.2, wheels where the game puts them, origin 17 units above the floor at rest).
+// The spawn is drawn as the car you start in: our own Octane-like model built around the Octane's hitbox
+// (118 x 84.2 x 36.2, wheels where the game puts them, origin 17 units above the floor at rest).
 function carModel() {
   const mat = (color, more = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.45, ...more });
   const paint = mat(0x2f6fdb, { metalness: 0.15 }), trim = mat(0x173a78), glass = mat(0x111823, { roughness: 0.15, metalness: 0.4 });
@@ -424,21 +426,39 @@ function carModel() {
   }
   return new THREE.Mesh(mergeGeometries(parts.map(([g]) => g.index ? g.toNonIndexed() : g), true), parts.map(([, m]) => m));
 }
-const references = [
-  carModel(),
-  new THREE.Mesh(new THREE.SphereGeometry(91.25, 32, 16), new THREE.MeshStandardMaterial({ color: 0xe6e6e6, roughness: 0.45 })),
-];
-['Car (Octane)', 'Ball'].forEach((name, k) => {
-  references[k].userData = { reference: true, actor: { i: null, name, cls: 'Reference', mesh: null, loc: [0, 0, 0], rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null } };
-  references[k].visible = false;
-  scene.add(references[k]);
-});
-function placeReferences(start) {                 // the car on the floor at the spawn, facing its way, the ball ahead
-  const floor = floorHeight(), yaw = start.rot[1] * UU, [car, ball] = references;
-  car.userData.actor.loc = [start.loc[0], start.loc[1], floor + 17];
-  car.userData.actor.rot = [0, start.rot[1], 0];
-  ball.userData.actor.loc = [start.loc[0] + 600 * Math.cos(yaw), start.loc[1] + 600 * Math.sin(yaw), floor + 91.25];
-  references.forEach(r => { applyActor(r); r.visible = $('showRefs').checked; });
+const car = carModel();
+const ballStart = new THREE.Mesh(new THREE.SphereGeometry(91.25, 32, 16), new THREE.MeshStandardMaterial({ color: 0xe6e6e6, roughness: 0.45 }));
+scene.add(ballStart);
+function spawnObject(a) {                         // the PlayerStart actor `a`, drawn as the car
+  const obj = new THREE.Mesh(car.geometry, car.material);
+  obj.userData = { actor: a, original: { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale }, spawn: true };
+  applyActor(obj);
+  return obj;
+}
+function settleSpawn(obj) {                       // a moved spawn rests on what is under it, like a respawn spot
+  readBack(obj);
+  const a = obj.userData.actor, ground = groundUnder([a.loc[0], a.loc[1], a.loc[2] + 150], 5000);
+  if (ground === null) return;
+  a.loc[2] = ground + RESPAWN_CLEARANCE;
+  applyActor(obj);
+  if (obj === selected) attachGizmo(obj);
+  markDirty(obj);
+}
+// Where the game puts the ball at the start: dropped at the spawn in maps that hand you one there (ball lava),
+// else at the field centre, Free Play's kick-off spot. The starter's centre is only known once it is built on a
+// map; it shows where TestGround's would be, 500 ahead of its spawn.
+let spawnBall = null;                             // the open map's saved spawn ball, {onTop}
+const STARTER_CENTRE = [500, 0];
+function placeBallStart() {
+  const start = spawnActor(), ballLava = objects.some(o => o.userData.lava && o.userData.checkpoint === 'ball' && !o.userData.deleted);
+  if (start && (spawnBall || ballLava)) {
+    const onTop = !!spawnBall?.onTop, forward = ueAxes(start.rot)[0];
+    ballStart.position.copy(toThree([start.loc[0] + forward[0] * (onTop ? 0 : BALL_AHEAD), start.loc[1] + forward[1] * (onTop ? 0 : BALL_AHEAD),
+                                     start.loc[2] + (onTop ? BALL_LIFT : BALL_FRONT_LIFT)]));
+  } else {
+    const [x, y] = pkg ? [0, 0] : STARTER_CENTRE;
+    ballStart.position.copy(toThree([x, y, (groundUnder([x, y, (start?.loc[2] ?? 0) + 2000], 50000) ?? 0) + 91.25]));
+  }
 }
 
 const dirty = new Set(), removed = new Set(), added = [], undo = [];
@@ -496,10 +516,12 @@ function loadStarter() {
   forgetSurfaces();
   dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; fresh = false;
   mapName = source = pkg = null;
-  actors = []; palette = []; objects = [];
+  actors = [{ i: null, name: 'PlayerStart', cls: 'PlayerStart', mesh: null, loc: [0, 0, RESPAWN_CLEARANCE], rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null, meshIndex: null }];
+  palette = []; objects = [spawnObject(actors[0])];
+  spawnBall = null;
   zone = { i: null, bounds: STARTER_ZONE };
   ter = { tile: TILE, cell: CELL, sink: SINK, base: -SINK, tiles: new Map(), dirty: new Set() };
-  group.add(starterGround);                       // the floor; unraised terrain stays hidden under it
+  group.add(starterGround, objects[0]);           // the floor (unraised terrain stays hidden under it) and the spawn
   renderPalette();
   $('terrainMat').parentElement.hidden = true;                  // surfaces come with the map it gets built on
   $('shapeMat').innerHTML = $('panelMat').innerHTML = '';
@@ -510,7 +532,6 @@ function loadStarter() {
   saveName = 'my-map.udk';
   orbit.target.set(0, 0, 0);
   camera.position.set(-1400, 900, 1100);
-  placeReferences({ loc: [0, 0, 0], rot: [0, 0, 0] });
   applyFilter();
   updateDirty();
   $('loading').hidden = true;
@@ -544,15 +565,13 @@ async function buildOnMap(file) {
     readBack(o);
     return { key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d] };
   });
-  const name = saveName;
+  readBack(objects.find(o => o.userData.spawn));
+  const name = saveName, starterSpawn = structuredClone(spawnActor());
   if (!await openFile(file, false)) return;
-  const start = actors.find(a => a.cls.startsWith('PlayerStart'));
+  const start = spawnActor();
   if (!start) return setStatus(`${file.name} has no spawn point to build on; pick another map.`, 'warn');
   startFresh();
   const spawn = objects.find(o => o.userData.actor === start);
-  start.rot = [0, 0, 0];                          // face +X like the starter car
-  applyActor(spawn);
-  markDirty(spawn);
   const floor = floorHeight(), dx = Math.round(start.loc[0] / ter.cell), dy = Math.round(start.loc[1] / ter.cell);
   ter.base = floor - ter.sink;
   const touched = new Set();
@@ -565,13 +584,11 @@ async function buildOnMap(file) {
     if (c.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
   }
   for (const sh of shapes) placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
-  if (zone && checkpoints.some(c => c.lava)) {    // onto the start platform placed with the lava
-    start.loc[2] += PLATFORM_TOP;
-    applyActor(spawn);
-    markDirty(spawn);
-  }
+  start.loc = [starterSpawn.loc[0] + dx * ter.cell, starterSpawn.loc[1] + dy * ter.cell, starterSpawn.loc[2] + floor];
+  start.rot = starterSpawn.rot;
+  applyActor(spawn);
+  settleSpawn(spawn);
   select(null);
-  placeReferences(start);
   saveName = name;
   updateDirty();
   const lost = !zone && checkpoints.length ? ` It has no trigger zone, so your ${checkpoints.length} checkpoints were left out.` : '';
@@ -600,7 +617,7 @@ function loadMap(name, bytes, parsed, data) {
   group.clear();
   forgetSurfaces();
   dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; fresh = false;
-  ({ actors, palette, zone } = data);
+  ({ actors, palette, zone, spawnBall } = data);
   const checkpointZones = new Map(data.checkpoints.map(c => [c.i, c])), lavaZones = new Map(data.lava.map(z => [z.i, z]));
   mapName = name;
   source = bytes;
@@ -623,6 +640,7 @@ function loadMap(name, bytes, parsed, data) {
   refreshSurfaces();
   $('sculpt').disabled = !data.materials.length;
   objects = actors.map(a => {
+    if (a.cls.startsWith('PlayerStart')) return group.add(spawnObject(a)).children.at(-1);
     const obj = new THREE.Mesh(geometryFor(a.bounds), materialFor(a));
     obj.userData.actor = a;
     obj.userData.original = { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale };
@@ -664,7 +682,6 @@ function loadMap(name, bytes, parsed, data) {
   const target = toThree(start.loc);
   orbit.target.copy(target);
   camera.position.copy(target).add(new THREE.Vector3(3000, 2500, 3000));
-  placeReferences(start);
   $('loading').hidden = true;
   setStatus(`${actors.length} objects loaded`, '');
 }
@@ -749,7 +766,7 @@ function applyFilter() {
       && ($('showHuge').checked || !obj.userData.huge)
       && (!q || `${a.name} ${a.cls} ${a.mesh || ''}`.toLowerCase().includes(q))
       && ($('showVolumes').checked || !isVolume(a) || !!obj.userData.checkpoint)
-      && ($('showMarkers').checked || !!a.bounds);
+      && ($('showMarkers').checked || !!a.bounds || !!obj.userData.spawn);
     shown += obj.visible;
   }
   $('count').textContent = objects.length ? `${shown} of ${objects.length} objects shown` : '';
@@ -783,8 +800,8 @@ function showSelection() {
   readBack(selected);
   selBox.setFromObject(selected);
   const a = selected.userData.actor, isNew = a.i === null;
-  $('selInfo').innerHTML = selected.userData.reference
-    ? `<div class="kv"><b>${a.name}</b> <span class="muted">(editor only)</span></div><div class="kv muted">A real-size reference to check what fits; it is never saved into the map.</div>`
+  $('selInfo').innerHTML = selected.userData.spawn
+    ? `<div class="kv"><b>Spawn</b> <span class="muted">${a.name}</span></div><div class="kv muted">Where your car starts, facing the way it points; in lava maps also the first checkpoint. Drag it anywhere: it settles just above the ground under it. The white ball shows where the ball starts.</div>`
     : selected.userData.shape
     ? `<div class="kv"><b>${a.name}</b> <span class="muted">(${selected.userData.shape.startsWith('std:') ? 'built-in shape' : 'from ' + library.get(selected.userData.shape.slice(4))?.source})</span></div><div class="kv muted">A new mesh drawn with the Surface chosen under Add object; the car collides with its shape.</div>`
     : selected.userData.lava
@@ -799,7 +816,7 @@ function showSelection() {
         ? `, with the new ball ${selected.userData.ballOnTop ? 'just over the roof' : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
     : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
   $('selEdit').hidden = false;
-  $('duplicate').hidden = $('delete').hidden = !!selected.userData.reference;
+  $('duplicate').hidden = $('delete').hidden = !!selected.userData.spawn;   // a map has one spawn
   $('cpPanel').hidden = !selected.userData.checkpoint;
   $('cpShape').hidden = !selected.userData.checkpoint || !!selected.userData.lava;
   $('panelOn').checked = !!selected.userData.panel;
@@ -866,7 +883,7 @@ function popUndo() {
 }
 
 function duplicateSelected() {
-  if (!selected || selected.userData.reference) return;
+  if (!selected || selected.userData.spawn) return;
   readBack(selected);
   const width = boxOf(selected).getSize(new THREE.Vector3()).x;
   const loc = selected.userData.actor.loc;
@@ -937,7 +954,7 @@ function makeCheckpoint(kind, loc, rot, ballOnTop = false, scale3d = [1, 1, 1], 
 // Lava: a flat zone over the whole floor that resets you when touched, by the car or (ball lava) the ball. It reaches
 // from just under the floor to above the car's body, which rides about 13 units over it. The spawn gets a platform to
 // start on (the spawn counts as the first checkpoint); a ball reset in front of the car lands on it too.
-const LAVA_BELOW = 20, LAVA_ABOVE = 40, PLATFORM_TOP = 100;   // the built-in Platform's height
+const LAVA_BELOW = 20, LAVA_ABOVE = 40;
 function lavaValues(floor, top) {                 // [loc, scale3d] of a lava zone covering the floor object, top its height
   const box = boxOf(floor), b = zone.bounds;
   const s = [(box.max.x - box.min.x) / (2 * b[3]), (box.max.z - box.min.z) / (2 * b[4]), (LAVA_BELOW + LAVA_ABOVE) / (2 * b[5])];
@@ -953,18 +970,12 @@ function addLava(kind) {
     ({ loc, scale3d } = other.userData.actor);
   } else {
     const hit = floorHit(), start = spawnActor();
-    if (!hit) return setStatus('Found no floor under the spawn to cover with lava.', 'warn');
+    if (!hit || !start) return setStatus('Found no floor under the spawn to cover with lava.', 'warn');
     [loc, scale3d] = lavaValues(hit.object, hit.point.y);
-    const at = start ? start.loc : [0, 0, 0];
-    placeShape('std:Platform', [at[0], at[1], hit.point.y], [0, 0, 0], [1, 1, 1], false);
-    if (start) {
-      const spawn = objects.find(o => o.userData.actor === start);
-      pushUndo(spawn);
-      start.loc[2] += PLATFORM_TOP;
-      applyActor(spawn);
-      markDirty(spawn);
-    }
-    placeReferences(start || { loc: [0, 0, 0], rot: [0, 0, 0] });
+    placeShape('std:Platform', [start.loc[0], start.loc[1], hit.point.y], [0, 0, 0], [1, 1, 1], false);
+    const spawn = objects.find(o => o.userData.actor === start);
+    pushUndo(spawn);
+    settleSpawn(spawn);                           // onto the platform
   }
   const obj = makeCheckpoint(kind, [...loc], [0, 0, 0], false, [...scale3d], true);
   obj.userData.panel = other ? null : { material: null };   // shown in game in a fiery surface; the other kind's panel already shows this spot
@@ -1032,8 +1043,8 @@ function apron(tx, ty) {                          // the tile's heights plus a o
   return out;
 }
 const spawnActor = () => actors.find(a => a.cls.startsWith('PlayerStart'));
-function floorHit() {                             // what the car spawns on, as a raycast hit (or undefined); the starter's spawn is the origin
-  const start = spawnActor()?.loc ?? (pkg ? null : [0, 0, 1000]);
+function floorHit() {                             // what the car spawns on, as a raycast hit (or undefined)
+  const start = spawnActor()?.loc;
   if (!start) return undefined;
   scene.updateMatrixWorld();                      // objects placed since the last frame are not in their spots yet
   ray.set(toThree(start), new THREE.Vector3(0, -1, 0));
@@ -1245,7 +1256,7 @@ function copyObject(source, loc) {
   placeNew(obj);
 }
 function deleteSelected() {
-  if (!selected || selected.userData.reference) return;
+  if (!selected || selected.userData.spawn) return;
   const obj = selected;
   select(null);
   obj.userData.deleted = true;
@@ -1270,13 +1281,13 @@ function changes(obj) {                           // transform fields that diffe
 function markDirty(obj) {
   if (!obj) return;
   fitGhosts(obj);
-  if (obj.userData.copy || obj.userData.reference) readBack(obj);
+  if (obj.userData.copy) readBack(obj);
   else Object.keys(changes(obj)).length ? dirty.add(obj) : dirty.delete(obj);
   updateDirty();
 }
 // The Map list: every object grouped by kind, shapes by their mesh; it follows the selection.
 const GROUPS = ['Checkpoints', 'Lava', 'Shapes', 'Spawn & game', 'Lights & atmosphere', 'Volumes', 'Other'];
-const openGroups = new Set(['Checkpoints', 'Lava', 'Shapes', 'Editor only']);
+const openGroups = new Set(['Checkpoints', 'Lava', 'Shapes', 'Spawn & game']);
 let outlinePending = false, revealing = null;
 function groupOf(o) {                             // [group, sub-group or null]
   const a = o.userData.actor;
@@ -1306,6 +1317,7 @@ function renderOutline() {                        // • marks what isn't saved 
   const where = o => o.userData.actor.loc.slice(0, 2).map(v => Math.round(v)).join(', ');
   const numbers = {};
   const label = o => {
+    if (o.userData.spawn) return `Spawn (car) · ${where(o)}`;
     if (!o.userData.checkpoint) return `${o.userData.actor.name} · ${where(o)}`;
     const kind = `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${o.userData.lava ? 'lava' : isGate(o.userData.actor) ? 'gate' : 'checkpoint'}`;
     numbers[kind] = (numbers[kind] || 0) + 1;
@@ -1336,16 +1348,13 @@ function renderOutline() {                        // • marks what isn't saved 
       }
     }));
   }
-  const refs = references.filter(r => $('showRefs').checked && (!q || r.userData.actor.name.toLowerCase().includes(q)));
-  if (refs.length) {
-    nodes.push(fold('Editor only', `Editor only (${refs.length})`, d => d.append(...refs.map(r => row(r, `${r.userData.actor.name} · ${where(r)}`, 'ref', references.indexOf(r))))));
-  }
   $('outline').replaceChildren(...(nodes.length ? nodes : [Object.assign(document.createElement('div'), { className: 'empty', textContent: q ? 'No matches' : 'Nothing here yet' })]));
   if (revealing) $('outline').querySelector(`.item[data-i="${objects.indexOf(revealing)}"]`)?.scrollIntoView({ block: 'nearest' });
   revealing = null;
 }
 function updateDirty() {
   $('dirty').textContent = changeCount();
+  placeBallStart();
   if (!gizmo.dragging) scheduleOutline();          // positions refresh once a drag ends
 }
 
@@ -1527,7 +1536,7 @@ renderer.domElement.addEventListener('pointerup', e => {
   if (sculpting || !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4 || gizmo.dragging) return;
   setPointer(e);
   ray.setFromCamera(pointer, camera);
-  const hits = ray.intersectObjects([...objects, ...references].filter(o => o.visible), false);
+  const hits = ray.intersectObjects(objects.filter(o => o.visible), false);
   const solid = hits.find(h => !isVolume(h.object.userData.actor)) || hits[0];
   select(solid ? solid.object : null);
 });
@@ -1588,7 +1597,7 @@ $('outline').addEventListener('click', e => {
   const el = e.target.closest('.item');
   if (!el) return;
   if (sculpting) setSculpt(false);
-  select(el.dataset.ref ? references[+el.dataset.ref] : objects[+el.dataset.i]);
+  select(objects[+el.dataset.i]);
   focus();
 });
 $('outline').addEventListener('toggle', e => {    // remember open groups; an opened one gets its rows
@@ -1599,11 +1608,6 @@ $('outline').addEventListener('toggle', e => {    // remember open groups; an op
 $('showVolumes').addEventListener('change', applyFilter);
 $('showMarkers').addEventListener('change', applyFilter);
 $('showHuge').addEventListener('change', applyFilter);
-$('showRefs').addEventListener('change', () => {
-  if (references.includes(selected)) select(null);
-  references.forEach(r => { r.visible = $('showRefs').checked; });
-  scheduleOutline();
-});
 $('save').addEventListener('click', save);
 $('play').addEventListener('click', play);
 $('undo').addEventListener('click', popUndo);
@@ -1665,7 +1669,7 @@ setTool('raise');
 loadStarter();
 loadLibrary();
 window.editor = { objects: () => objects, camera, orbit, gizmo, pivot, select, duplicateSelected, deleteSelected, addFromPalette, addCheckpoint, addLava,
-                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, changeSet, references, newMap, buildOnMap, placeShape, library };
+                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, changeSet, ballStart, newMap, buildOnMap, placeShape, library };
 </script>
 </body>
 </html>

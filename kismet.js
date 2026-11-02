@@ -213,6 +213,15 @@ export function lavaZones(pkg) {
   return found;
 }
 
+// The ball a map hands you at the spawn `spawn` (an actor index), when the spawn counts as a ball checkpoint (ball
+// lava): {onTop}; else null
+export function spawnBall(pkg, spawn) {
+  const live = liveNodes(pkg), lastBall = namedVar(pkg, 'LastBallCheckpoint', live);
+  if (spawn === null || lastBall === null || nodeProps(pkg, pkg.exports[lastBall]).ObjValue !== spawn + 1) return null;
+  const onTop = namedVar(pkg, 'BallOnTop', live, 'SeqVar_Int');
+  return { onTop: onTop === null || nodeProps(pkg, pkg.exports[onTop]).IntValue === 1 };
+}
+
 function ballChainEntries(pkg, live, lastBall) {  // the respawn chain's first check (is there a ball checkpoint?) and its ball remover
   let hasBall = null, clear = null;
   for (const k of live) {
