@@ -136,7 +136,9 @@ export function mainSequence(pkg) {
 
 // Nodes the main sequence runs. Maps keep nodes taken out of it (a fresh start empties it), so lookups skip those.
 function liveNodes(pkg) {
-  const refs = nodeProps(pkg, pkg.exports[mainSequence(pkg)]).SequenceObjects;
+  const seq = mainSequence(pkg);
+  if (seq < 0) return new Set();                  // a map without Kismet
+  const refs = nodeProps(pkg, pkg.exports[seq]).SequenceObjects;
   return new Set(Array.isArray(refs) ? refs.map(r => r - 1) : []);
 }
 
@@ -258,6 +260,7 @@ export const BALL_FRONT_LIFT = 65;
 export function addCheckpoints(add, template, checkpoints, fresh = false, spawn = null, ballSpawn = null) {
   const pkg = add.pkg, enc = new Encoder(add);
   const seq = mainSequence(pkg), parent = seq + 1;
+  if (seq < 0) throw new Error('this map has no Kismet sequence to hold checkpoints');
   const classes = new Map();
   const cls = name => {
     if (!classes.has(name)) classes.set(name, add.classRef(name, PACKAGES[name] || 'Engine'));
