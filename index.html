@@ -54,6 +54,7 @@
   #outline summary:hover { color: var(--text); }
   #outline details details > summary { padding-left: 20px; }
   #outline .item { padding: 2px 8px 2px 26px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #outline .item.top { padding-left: 8px; }
   #outline details details .item { padding-left: 40px; }
   #outline .item:hover { background: #1c2129; }
   #outline .item.sel { background: rgba(77, 163, 255, .18); color: var(--accent); }
@@ -639,7 +640,7 @@ function loadMap(name, bytes, parsed, data) {
   $('shapeMat').parentElement.hidden = !data.materials.length;
   refreshSurfaces();
   $('sculpt').disabled = !data.materials.length;
-  objects = actors.map(a => {
+  objects = actors.filter(a => !/^Pylon/.test(a.cls)).map(a => {   // the Pylon (game setup with the spawn) stays as it is
     if (a.cls.startsWith('PlayerStart')) return group.add(spawnObject(a)).children.at(-1);
     const obj = new THREE.Mesh(geometryFor(a.bounds), materialFor(a));
     obj.userData.actor = a;
@@ -1286,14 +1287,14 @@ function markDirty(obj) {
   updateDirty();
 }
 // The Map list: every object grouped by kind, shapes by their mesh; it follows the selection.
-const GROUPS = ['Checkpoints', 'Lava', 'Shapes', 'Spawn & game', 'Lights & atmosphere', 'Volumes', 'Other'];
-const openGroups = new Set(['Checkpoints', 'Lava', 'Shapes', 'Spawn & game']);
+const GROUPS = ['Spawn', 'Checkpoints', 'Lava', 'Shapes', 'Lights & atmosphere', 'Volumes', 'Other'];   // the spawn: a row of its own
+const openGroups = new Set(['Checkpoints', 'Lava', 'Shapes']);
 let outlinePending = false, revealing = null;
 function groupOf(o) {                             // [group, sub-group or null]
   const a = o.userData.actor;
   if (o.userData.lava) return ['Lava', null];
   if (o.userData.checkpoint) return ['Checkpoints', null];
-  if (/^PlayerStart|^Pylon/.test(a.cls)) return ['Spawn & game', null];
+  if (o.userData.spawn) return ['Spawn', null];
   if (/Light|Fog|PostProcess|SceneCapture/.test(a.cls)) return ['Lights & atmosphere', null];   // scene captures make reflections
   if (isVolume(a)) return ['Volumes', null];
   if (a.mesh) return ['Shapes', a.mesh];
@@ -1317,7 +1318,7 @@ function renderOutline() {                        // • marks what isn't saved 
   const where = o => o.userData.actor.loc.slice(0, 2).map(v => Math.round(v)).join(', ');
   const numbers = {};
   const label = o => {
-    if (o.userData.spawn) return `Spawn (car) · ${where(o)}`;
+    if (o.userData.spawn) return `Spawn · ${where(o)}`;
     if (!o.userData.checkpoint) return `${o.userData.actor.name} · ${where(o)}`;
     const kind = `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${o.userData.lava ? 'lava' : isGate(o.userData.actor) ? 'gate' : 'checkpoint'}`;
     numbers[kind] = (numbers[kind] || 0) + 1;
@@ -1341,6 +1342,10 @@ function renderOutline() {                        // • marks what isn't saved 
   for (const [g, subs] of tree) {
     const total = [...subs.values()].reduce((n, list) => n + list.length, 0);
     if (!total) continue;
+    if (g === 'Spawn') {
+      nodes.push(...subs.get('').map(o => { const el = item(o, label(o)); el.classList.add('top'); return el; }));
+      continue;
+    }
     nodes.push(fold(g, `${g} (${total})`, d => {
       for (const [sub, list] of [...subs].sort(([x], [y]) => x.localeCompare(y))) {
         if (!sub) d.append(...list.map(o => item(o, label(o))));
