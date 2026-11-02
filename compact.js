@@ -122,7 +122,7 @@ function tinyMesh(pkg, i) {
   return [blob, [rawAt]];
 }
 
-const bulkAt = (pkg, q) => {                      // an inline bulk header at q: its data starts right after it
+export const bulkAt = (pkg, q) => {                      // an inline bulk header at q: its data starts right after it
   const [flags, count, size, off] = unpackFrom('<Iiii', pkg.data, q);
   return off === q + 16 && flags < 0x1000 && count >= 0 && size >= 0 ? size : null;
 };

@@ -78,7 +78,7 @@ function looksTagged(pkg, p) {                    // bytes at p start a property
   return tidx >= 0 && tidx < pkg.names.length && pkg.names[tidx].endsWith('Property');
 }
 
-const nodeProps = (pkg, e) => decode(pkg, pkg.netIndexAt(e) + 4, e.off + e.size)[0];
+export const nodeProps = (pkg, e) => decode(pkg, pkg.netIndexAt(e) + 4, e.off + e.size)[0];   // any object's tagged properties
 
 const [I, F, B, O, N, S, A] = ['IntProperty', 'FloatProperty', 'BoolProperty', 'ObjectProperty', 'NameProperty', 'StrProperty', 'ArrayProperty'];
 

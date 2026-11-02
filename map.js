@@ -3,7 +3,7 @@ import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
 import { addCheckpoints, checkpointZones, lavaZones, mainSequence } from './kismet.js';
 import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain } from './mesh.js';
-import { asMeshInput, boxShape } from './shapes.js';
+import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
 import { compact } from './compact.js';
 
@@ -15,10 +15,11 @@ export function describe(pkg) {
     const [tx, ty] = key.split(',').map(Number);
     return { tx, ty, heights };
   });
-  const panels = actors.filter(a => /^CheckpointPanel/.test(a.mesh || '')).map(a => {
-    const p = pkg.prop(pkg.exports[meshComponent(pkg, a.i)], 'Materials');
-    return { i: a.i, material: p && unpackFrom('<i', pkg.data, p[2])[0] ? unpackFrom('<ii', pkg.data, p[2])[1] : null };
-  });
+  for (const a of actors) {                       // surfaces the mesh component puts on the mesh's parts (0: the mesh's own)
+    const c = meshComponent(pkg, a.i), p = c === null ? null : pkg.prop(pkg.exports[c], 'Materials');
+    a.materials = p ? [...unpackFrom(`<${unpackFrom('<i', pkg.data, p[2])[0]}i`, pkg.data, p[2] + 4)] : [];
+  }
+  const panels = actors.filter(a => /^CheckpointPanel/.test(a.mesh || '')).map(a => ({ i: a.i, material: a.materials[0] || null }));
   const tint = pkg.tintable();
   return { actors, palette: pkg.palette(actors), zone: pkg.zoneTemplate(), checkpoints: checkpointZones(pkg), lava: lavaZones(pkg), materials: pkg.materials(), panels,
            tintable: tint && pkg.exports[tint[0]].name, terrain: { tile: TILE, cell: CELL, sink: SINK, base: ground.base, material: ground.material, tiles } };
@@ -31,10 +32,17 @@ function lavaSurface(add) {                       // a red copy of the map's tin
   return add.addObject(e.cls, e.outer, 'Lava_INST', blob, e.flags) + 1;
 }
 
-export function shapes(pkg, meshIndices) {        // Map(mesh export index -> triangle corners), skipping unreadable meshes
+// Map(mesh export index -> {corners, uvs, groups}) for drawing: triangle corners, their UVs and the mesh's parts
+// (see meshGeometry); only corners for meshes whose render data can't be read, and none for unreadable meshes.
+export function shapes(pkg, meshIndices) {
   const out = new Map();
   for (const i of meshIndices) {
-    try { out.set(i, pkg.meshTriangles(i)); } catch { /* drawn as its bounding box */ }
+    try {
+      const g = meshGeometry(pkg, i);
+      out.set(i, { corners: corners(g), uvs: corners(g, 'uvs', 2), groups: g.groups });
+    } catch {
+      try { out.set(i, { corners: pkg.meshTriangles(i), uvs: null, groups: [] }); } catch { /* drawn as its bounding box */ }
+    }
   }
   return out;
 }

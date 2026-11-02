@@ -82,7 +82,9 @@ export const BUILT_IN = {
   Ramp: ramp, Platform: () => solid(box(-500, 500, -500, 500, 0, 100)), Pillar: () => pillar(), Ring: () => ring(), 'Quarter pipe': () => quarterPipe(),
 };
 
-export function meshGeometry(pkg, i) {            // a map's StaticMesh as shape geometry (UV channel 0)
+// A map's StaticMesh as shape geometry (UV channel 0), plus its parts: groups of triangles [{start, count,
+// material}] (start and count in triangle corners) drawn with their own surface.
+export function meshGeometry(pkg, i) {
   const m = read(pkg, i), nv = m.positions.length / 12, stride = m.uvStride;
   const pos = new DataView(m.positions.buffer, m.positions.byteOffset, m.positions.byteLength);
   const uv = new DataView(m.uvs.buffer, m.uvs.byteOffset, m.uvs.byteLength), byte = q => uv.getUint8(q) / 127.5 - 1;
@@ -97,7 +99,8 @@ export function meshGeometry(pkg, i) {            // a map's StaticMesh as shape
   }
   const idx = new DataView(m.indices.buffer, m.indices.byteOffset, m.indices.byteLength);
   const tris = Uint32Array.from({ length: m.indices.length / 2 }, (_, k) => idx.getUint16(2 * k, true));
-  return { positions, uvs, normals, tangents, tris };
+  const groups = m.sections.map(({ fields: [material, , , , first, count] }) => ({ start: first, count: 3 * count, material }));
+  return { positions, uvs, normals, tangents, tris, groups };
 }
 
 export function asMeshInput(g) {                  // geometryMesh's arguments
@@ -108,8 +111,8 @@ export function asMeshInput(g) {                  // geometryMesh's arguments
           Array.from({ length: g.tris.length / 3 }, (_, t) => at(g.tris, t, 3))];
 }
 
-export function corners(g) {                      // triangle corners, 9 floats per triangle, for drawing
-  const out = new Float32Array(3 * g.tris.length);
-  g.tris.forEach((v, k) => out.set(g.positions.subarray(3 * v, 3 * v + 3), 3 * k));
+export function corners(g, attribute = 'positions', n = 3) {   // per triangle corner, for drawing: 9 position or 6 UV floats a triangle
+  const out = new Float32Array(n * g.tris.length);
+  g.tris.forEach((v, k) => out.set(g[attribute].subarray(n * v, n * v + n), n * k));
   return out;
 }

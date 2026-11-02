@@ -226,6 +226,7 @@ import { build, describe, isOriginalGameMap, shapes } from './map.js';
 import { BALL_AHEAD, BALL_FRONT_LIFT, BALL_LIFT } from './kismet.js';
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
+import { surfaceLook, textureImage } from './looks.js';
 
 // Unreal is left-handed Z-up, Three.js right-handed Y-up: swapping Y and Z converts without mirroring.
 const UU = Math.PI / 32768;                       // rotator units to radians
@@ -492,6 +493,7 @@ function loadStarter() {
   select(null);
   setSculpt(false);
   group.clear();
+  forgetSurfaces();
   dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; fresh = false;
   mapName = source = pkg = null;
   actors = []; palette = []; objects = [];
@@ -596,6 +598,7 @@ function loadMap(name, bytes, parsed, data) {
   select(null);
   setSculpt(false);
   group.clear();
+  forgetSurfaces();
   dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; fresh = false;
   ({ actors, palette, zone } = data);
   const checkpointZones = new Map(data.checkpoints.map(c => [c.i, c])), lavaZones = new Map(data.lava.map(z => [z.i, z]));
@@ -617,6 +620,7 @@ function loadMap(name, bytes, parsed, data) {
   if (data.tintable && !data.materials.some(m => fiery(m.name))) $('panelMat').add(new Option(`Lava red (a red copy of ${data.tintable})`, 'lava'));
   if (earthy) $('shapeMat').value = earthy.ref;
   $('shapeMat').parentElement.hidden = !data.materials.length;
+  refreshSurfaces();
   $('sculpt').disabled = !data.materials.length;
   objects = actors.map(a => {
     const obj = new THREE.Mesh(geometryFor(a.bounds), materialFor(a));
@@ -665,26 +669,71 @@ function loadMap(name, bytes, parsed, data) {
   setStatus(`${actors.length} objects loaded`, '');
 }
 
-function cornerGeometry(src) {                    // triangle corners in Unreal axes
+function cornerGeometry(src, uvs = null, groups = []) {   // triangle corners in Unreal axes, their UVs, and parts
   const pos = new Float32Array(src.length);
   for (let v = 0; v < src.length; v += 3) {      // the Y/Z mirror also turns Unreal's clockwise fronts counter-clockwise
     pos[v] = src[v]; pos[v + 1] = src[v + 2]; pos[v + 2] = src[v + 1];
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  if (uvs) g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  groups.forEach((part, k) => g.addGroup(part.start, part.count, k));
   g.computeVertexNormals();
   return g;
 }
 
 function loadMeshes() {
   const ids = [...new Set(actors.map(a => a.meshIndex).filter(i => i !== null))];
-  const geos = new Map([...shapes(pkg, ids)].map(([i, corners]) => [i, cornerGeometry(corners)]));
+  const meshes = new Map([...shapes(pkg, ids)].map(([i, s]) => [i, { geo: cornerGeometry(s.corners, s.uvs, s.groups), groups: s.groups }]));
   for (const obj of objects) {
-    const g = geos.get(obj.userData.actor.meshIndex);
-    if (g) { obj.geometry = g; obj.userData.huge = undefined; }
+    const m = meshes.get(obj.userData.actor.meshIndex);
+    if (!m) continue;
+    obj.geometry = m.geo;
+    obj.userData.huge = undefined;
+    if (!obj.userData.checkpoint) obj.material = meshLook(obj.userData.actor, m.groups);
   }
   if (selected) attachGizmo(selected);
   applyFilter();
+}
+
+// Surfaces drawn the way the map shows them: its own textures, or a colour (see looks.js); the flat per-mesh colour
+// when nothing is known, as for most of the game's own surfaces.
+const surfaceCache = new Map(), textureCache = new Map();
+function surfaceMaterial(ref, fallback) {
+  if (!pkg || !ref) return fallback;
+  if (!surfaceCache.has(ref)) {
+    const look = surfaceLook(pkg, ref), map = look.texture === null ? null : texture(look.texture);
+    surfaceCache.set(ref, !map && !look.color ? null : new THREE.MeshStandardMaterial({
+      map, color: map ? 0xffffff : look.color, roughness: 0.8, metalness: 0.05, flatShading: true,
+      ...(look.emissive && map ? { emissiveMap: map, emissive: 0xffffff, emissiveIntensity: 0.5 } : {}),
+      ...(look.opacity < 1 ? { transparent: true, opacity: look.opacity, depthWrite: false } : {}) }));
+  }
+  return surfaceCache.get(ref) ?? fallback;
+}
+function texture(i) {
+  if (!textureCache.has(i)) {
+    const img = textureImage(pkg, i), t = img && new THREE.DataTexture(img.rgba, img.width, img.height);
+    if (t) Object.assign(t, { wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, colorSpace: THREE.SRGBColorSpace, generateMipmaps: true,
+                              minFilter: THREE.LinearMipmapLinearFilter, anisotropy: 4, needsUpdate: true });
+    textureCache.set(i, t);
+  }
+  return textureCache.get(i);
+}
+function forgetSurfaces() {
+  for (const m of surfaceCache.values()) m?.dispose();
+  for (const t of textureCache.values()) t?.dispose();
+  surfaceCache.clear();
+  textureCache.clear();
+}
+function meshLook(a, groups) {                    // a mesh actor's materials: per part, the component's surface or the mesh's own
+  const own = materialFor(a), mats = (groups.length ? groups : [{ material: 0 }]).map((g, k) => surfaceMaterial(a.materials?.[k] || g.material, own));
+  return mats.length === 1 ? mats[0] : mats;
+}
+const terrainLook = () => surfaceMaterial($('terrainMat').options.length ? +$('terrainMat').value : 0, terrainMat);
+const shapeLook = () => surfaceMaterial($('shapeMat').options.length ? +$('shapeMat').value : 0, shapeMat);
+function refreshSurfaces() {                      // terrain and new shapes follow the surfaces picked for them
+  for (const t of ter?.tiles.values() ?? []) t.mesh.material = terrainLook();
+  for (const o of added) if (o.userData.shape) o.material = shapeLook();
 }
 
 function applyFilter() {
@@ -958,7 +1007,8 @@ function makeTile(tx, ty, heights) {
   const g = new THREE.BufferGeometry();
   g.setIndex(index);
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const t = { tx, ty, heights, mesh: new THREE.Mesh(g, terrainMat) };
+  g.setAttribute('uv', new THREE.BufferAttribute(pos.filter((_, k) => k % 3 !== 1).map(v => v / 1000), 2));   // as saved: a repeat every 1000 units
+  const t = { tx, ty, heights, mesh: new THREE.Mesh(g, terrainLook()) };
   ter.tiles.set(tileKey(tx, ty), t);
   group.add(t.mesh);
   refreshTile(t);
@@ -1146,7 +1196,7 @@ function placeShape(key, loc, rot = [0, 0, 0], scale3d = [1, 1, 1], rest = true)
   const g = shapeData(key);
   if (!g) return setStatus('That shape is no longer in your library.', 'warn');
   if (!shapeGeos.has(key)) {
-    const geo = cornerGeometry(corners(g));
+    const geo = cornerGeometry(corners(g), g.uvs ? corners(g, 'uvs', 2) : null);
     geo.computeBoundingBox();
     shapeGeos.set(key, geo);
   }
@@ -1155,7 +1205,7 @@ function placeShape(key, loc, rot = [0, 0, 0], scale3d = [1, 1, 1], rest = true)
   if (rest) loc = [loc[0], loc[1], loc[2] - box.min.y];         // rests on the point you're looking at
   const a = { i: null, name, cls: 'Shape', mesh: name, loc, rot: [...rot], scale3d: [...scale3d], scale: 1,
               bounds: [c.x, c.z, c.y, size.x / 2, size.z / 2, size.y / 2], meshIndex: null };
-  const obj = new THREE.Mesh(geo, shapeMat);
+  const obj = new THREE.Mesh(geo, shapeLook());
   obj.userData = { actor: a, copy: true, shape: key };
   placeNew(obj);
 }
@@ -1573,6 +1623,8 @@ $('panelOn').addEventListener('change', e => {
   markDirty(selected);
   showSelection();
 });
+$('terrainMat').addEventListener('change', refreshSurfaces);
+$('shapeMat').addEventListener('change', refreshSurfaces);
 $('panelMat').addEventListener('change', e => {
   if (!selected?.userData.panel) return;
   selected.userData.panel.material = surfaceValue(e.target.value);
