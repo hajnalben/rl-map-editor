@@ -1,7 +1,7 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
-import { addCheckpoints, ballSpawnMarker, checkpointZones, lavaZones, mainSequence, spawnBall } from './kismet.js';
+import { addCheckpoints, ballSpawnMarker, checkpointZones, lavaZones, mainSequence, nodeProps, spawnBall } from './kismet.js';
 import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain } from './mesh.js';
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
@@ -22,8 +22,39 @@ export function describe(pkg) {
   const panels = actors.filter(a => /^CheckpointPanel/.test(a.mesh || '')).map(a => ({ i: a.i, material: a.materials[0] || null }));
   const tint = pkg.tintable(), spawn = actors.find(a => a.cls.startsWith('PlayerStart'))?.i ?? null;
   return { actors, palette: pkg.palette(actors), zone: pkg.zoneTemplate(), checkpoints: checkpointZones(pkg), lava: lavaZones(pkg), materials: pkg.materials(), panels,
-           spawnBall: spawnBall(pkg, spawn), ballSpawn: ballSpawnMarker(pkg),
+           spawnBall: spawnBall(pkg, spawn), ballSpawn: ballSpawnMarker(pkg), lights: mapLights(pkg).map(l => l.mood),
            tintable: tint && pkg.exports[tint[0]].name, terrain: { tile: TILE, cell: CELL, sink: SINK, base: ground.base, material: ground.material, tiles } };
+}
+
+// Lighting moods: a tint and a brightness factor for the map's sun and sky lights, relative to how the map had them
+// (the sky dome is unlit, so no night). The mood in use is kept in the lights' Tag, so another one replaces it
+// instead of stacking on it.
+export const LIGHTING = {
+  day: { name: 'Bright day', tint: [255, 252, 245], brightness: 1.25 },
+  warm: { name: 'Warm (golden hour)', tint: [255, 196, 135], brightness: 0.95 },
+  cool: { name: 'Cool (overcast)', tint: [196, 214, 255], brightness: 0.8 },
+  dim: { name: 'Dim', tint: [225, 228, 240], brightness: 0.5 },
+};
+function mapLights(pkg) {                         // the sun and sky lights: [{actor, component, mood}]
+  const out = [];
+  for (const a of pkg.levelActors()) {
+    const c = /Light$/.test(a.cls) ? pkg.get(pkg.exports[a.i], 'LightComponent', '<i') : null;
+    if (!c || c[0] <= 0 || !/^((Dominant)?Directional|Sky)LightComponent$/.test(pkg.classOf(pkg.exports[c[0] - 1]))) continue;
+    out.push({ actor: a.i, component: c[0] - 1, mood: /^Lighting_(\w+)$/.exec(nodeProps(pkg, pkg.exports[a.i]).Tag || '')?.[1] ?? null });
+  }
+  return out;
+}
+function setLighting(add, mood) {                 // `mood`: a LIGHTING key, or 'map' for the lights as the map had them
+  const pkg = add.pkg, next = LIGHTING[mood];
+  for (const l of mapLights(pkg)) {
+    const p = nodeProps(pkg, pkg.exports[l.component]), was = LIGHTING[l.mood];
+    const bgra = Array.isArray(p.LightColor) ? p.LightColor : [255, 255, 255, 0], tint = t => t ? [t[2], t[1], t[0]] : [255, 255, 255];
+    const color = bgra.slice(0, 3).map((v, k) => Math.max(0, Math.min(255, Math.round(v * 255 / tint(was?.tint)[k] * tint(next?.tint)[k] / 255))));
+    const brightness = (p.Brightness ?? 1) / (was?.brightness ?? 1) * (next?.brightness ?? 1);
+    add.setProps(l.component, { Brightness: add.tag('Brightness', 'FloatProperty', pack('<f', brightness)),
+                                LightColor: add.tag('LightColor', 'StructProperty', Uint8Array.of(...color, bgra[3]), 'Color') });
+    add.setProps(l.actor, { Tag: add.tag('Tag', 'NameProperty', add.fname(next ? `Lighting_${mood}` : pkg.classOf(pkg.exports[l.actor]))) });
+  }
 }
 
 const LAVA_COLOR = [1, 0.12, 0.01, 0];            // linear red-orange
@@ -56,11 +87,12 @@ const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its che
 // checkpoints ([{valueVar, zone, marker}]): to a new marker zone at `marker` (transform), or back to the zone itself.
 // `panels` ([{loc, rot, scale3d, scale, material}]) make checkpoints visible in game: an opaque box the size of the
 // zone that nothing collides with; `surfaces` ([{i, material}]) change the surface of saved mesh actors and panels.
+// `lighting` sets the mood of the sun and sky lights (a LIGHTING key, or 'map' for as the map had them).
 // `checkpoints` entries with `lava` are lava zones (see addCheckpoints). `ballSpawn` ({loc}) gives the ball a spawn
 // of its own (a map that has one moves its marker through `edits`). A panel material of 'lava' is a red copy
 // of the map's tintable surface (describe().tintable), added once.
 export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false,
-                                shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], surfaces = [], ballSpawn = null }) {
+                                shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], surfaces = [], ballSpawn = null, lighting = null }) {
   const pkg = new Package(source.slice());
   const before = pkg.levelList().length;
   let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [];
@@ -74,13 +106,14 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   }
   const markers = respawns.filter(r => r.marker);
   for (const r of respawns) if (!r.marker) pkg.set(pkg.exports[r.valueVar], 'ObjValue', '<i', r.zone + 1);
-  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || surfaces.length || ballSpawn) {
+  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || surfaces.length || ballSpawn || lighting) {
     const add = new Additions(pkg);
     let lava = null;
     const surface = m => m === 'lava' ? (lava ??= lavaSurface(add)) : m;
     for (const [v, value] of unsetModes) add.setProps(v, { IntValue: add.tag('IntValue', 'IntProperty', pack('<i', value)) });
     if (fresh) add.clearRefs(mainSequence(pkg), 'SequenceObjects');
     for (const [i, values] of missing) add.setValues(i, values);
+    if (lighting) setLighting(add, lighting);
     for (const dup of duplicates) add.duplicate(dup.src, [0, 0, 0], editValues(dup));
     for (const i of removes) add.remove(i);
     for (const r of markers) {
@@ -112,6 +145,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   if (packed.length < out.length) out = packed;
 
   const saved = new Package(out), actors = saved.levelActors(), byIndex = new Map(actors.map(a => [a.i, a]));
+  if (lighting) check(mapLights(saved).every(l => l.mood === (LIGHTING[lighting] ? lighting : null)), 'lighting');
   const markersAdded = markers.length + checkpoints.filter(c => c.respawn).length + (ballSpawn ? 1 : 0);
   if (ballSpawn) {
     const m = saved.levelActors().find(a => a.i === ballSpawnMarker(saved));

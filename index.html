@@ -12,6 +12,7 @@
   header .side { display: flex; align-items: center; gap: 10px; min-width: 0; }
   header .side.end { justify-content: flex-end; }
   .brand { font-size: 14px; white-space: nowrap; }
+  @media (max-width: 1200px) { .brand { display: none; } header { grid-template-columns: 1fr auto; } }   /* the toolbar needs the room */
   .group { display: flex; gap: 4px; align-items: center; padding-right: 10px; border-right: 1px solid var(--border); }
   #mapName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
   aside { background: var(--panel); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 18px; }
@@ -116,6 +117,10 @@
           <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
         </div>
       </details>
+      <details class="menu" id="lightingMenu">
+        <summary title="The mood of the map's sun and sky lights">Lighting ▾</summary>
+        <div class="items" id="lightingItems"></div>
+      </details>
     </div>
     <b class="brand">RL Map Editor</b>
     <div class="side end">
@@ -177,7 +182,7 @@
           </div>
         </div>
         <label class="field" id="surfaceRow">Surface <select id="surface" title="What it looks like in game"></select></label>
-        <div class="row"><span>Location</span><input type="number" data-f="loc" data-k="0"><input type="number" data-f="loc" data-k="1"><input type="number" data-f="loc" data-k="2"></div>
+        <div class="row" id="locRow"><span>Location</span><input type="number" data-f="loc" data-k="0"><input type="number" data-f="loc" data-k="1"><input type="number" data-f="loc" data-k="2"></div>
         <div class="row" id="rotRow"><span>Rotation°</span><input type="number" data-f="rot" data-k="0" title="Pitch"><input type="number" data-f="rot" data-k="1" title="Yaw"><input type="number" data-f="rot" data-k="2" title="Roll"></div>
         <div class="row" id="scaleRow"><span>Scale</span><input type="number" step="0.05" data-f="scale" data-k="0"><input type="number" step="0.05" data-f="scale" data-k="1"><input type="number" step="0.05" data-f="scale" data-k="2"></div>
         <div class="actions">
@@ -242,7 +247,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Package } from './ue3.js';
-import { build, describe, isOriginalGameMap, shapes } from './map.js';
+import { LIGHTING, build, describe, isOriginalGameMap, shapes } from './map.js';
 import { BALL_AHEAD, BALL_FRONT_LIFT, BALL_LIFT } from './kismet.js';
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
@@ -285,7 +290,8 @@ renderer.setPixelRatio(window.devicePixelRatio);
 view.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111317);
-scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x30343c, 2.2));
+const hemi = new THREE.HemisphereLight(0xdfe8ff, 0x30343c, 2.2);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 1.4);
 sun.position.set(0.4, 1, 0.3);
 scene.add(sun);
@@ -380,6 +386,19 @@ function materialFor(a) {
   return matCache.get(key);
 }
 
+// Lighting: the mood of the map's sun and sky lights (map.js LIGHTING), previewed on the editor's own lights
+let lighting = 'map', lightingSaved = 'map';      // the mood picked, and the one the map has
+function renderLighting() {
+  $('lightingItems').replaceChildren(...[['map', 'As the map has it'], ...Object.entries(LIGHTING).map(([k, v]) => [k, v.name])].map(([key, name]) => {
+    const label = document.createElement('label');
+    label.append(Object.assign(document.createElement('input'), { type: 'radio', name: 'lighting', value: key, checked: key === lighting }), ` ${name}`);
+    return label;
+  }));
+  const p = LIGHTING[lighting], [r, g, b] = (p?.tint ?? [255, 255, 255]).map(v => v / 255);
+  sun.color.setRGB(r, g, b, THREE.SRGBColorSpace);
+  sun.intensity = 1.4 * (p?.brightness ?? 1);
+  hemi.intensity = 2.2 * (p ? 0.5 + 0.5 * p.brightness : 1);
+}
 let saveName = 'my-map.udk';                      // suggested file name for Save as
 let mapName = null, source = null, pkg = null, actors = [], palette = [], zone = null, objects = [], selected = null;
 const CHECKPOINT_COLORS = { car: 0x3ddc84, ball: 0xff9f43, lava: 0xff3b1f };
@@ -476,6 +495,14 @@ function settleSpawn(obj) {                       // a moved spawn rests on what
 let spawnBall = null;                             // the open map's saved spawn ball, {onTop}
 const STARTER_CENTRE = [500, 0], BALL_REST = 95;  // a resting ball's centre this far over the ground (its radius is 92.75)
 const ballObj = () => objects.find(o => o.userData.ballSpawn);
+function baseSun() {                              // the starter's stand-in for the lights the map it is built on brings
+  const a = { i: null, name: 'Sun (comes with the map you build on)', cls: 'DirectionalLight', mesh: null, loc: [-3000, -3000, 4000],
+              rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null, meshIndex: null };
+  const obj = new THREE.Mesh(geometryFor(null), materialFor(a));
+  obj.userData = { actor: a, placeholder: true };
+  applyActor(obj);
+  return obj;
+}
 function ballObject(a, placed) {
   const obj = new THREE.Mesh(ballGeometry, ballMat);
   obj.userData = { actor: a, original: { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale }, ballSpawn: true, placed, onRoof: false };
@@ -515,7 +542,7 @@ function settleBall(obj) {                        // let go over the spawn car: 
 
 const dirty = new Set(), removed = new Set(), added = [], undo = [];
 let fresh = false;                                // a new map started from the open one: its scripts get emptied on save
-const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0);
+const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0) + (lighting !== lightingSaved);
 const group = new THREE.Group();
 scene.add(group);
 const selBox = new THREE.BoxHelper(undefined, 0xffd24a);
@@ -570,7 +597,7 @@ function loadStarter() {
   dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; fresh = false;
   mapName = source = pkg = null;
   actors = [{ i: null, name: 'PlayerStart', cls: 'PlayerStart', mesh: null, loc: [0, 0, RESPAWN_CLEARANCE], rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null, meshIndex: null }];
-  palette = []; objects = [spawnObject(actors[0]), ballObject(ballOfNoOne(), false)];
+  palette = []; objects = [spawnObject(actors[0]), ballObject(ballOfNoOne(), false), baseSun()];
   spawnBall = null;
   zone = { i: null, bounds: STARTER_ZONE };
   ter = { tile: TILE, cell: CELL, sink: SINK, base: -SINK, tiles: new Map(), dirty: new Set() };
@@ -579,6 +606,9 @@ function loadStarter() {
   $('terrainMat').parentElement.hidden = true;                  // surfaces come with the map it gets built on
   $('surface').innerHTML = '';
   lastSurface = null;
+  lighting = lightingSaved = 'map';
+  $('lightingMenu').hidden = false;
+  renderLighting();
   $('sculpt').disabled = false;
   $('mapName').textContent = 'Starter map';
   $('mapName').title = 'Sculpt the ground and add shapes and checkpoints. Saving builds it on a workshop map you pick.';
@@ -631,7 +661,7 @@ async function buildOnMap(file) {
   });
   readBack(objects.find(o => o.userData.spawn));
   readBack(ballObj());
-  const name = saveName, starterSpawn = structuredClone(spawnActor()), starterBall = ballObj().userData.placed ? [...ballObj().userData.actor.loc] : null;
+  const name = saveName, mood = lighting, starterSpawn = structuredClone(spawnActor()), starterBall = ballObj().userData.placed ? [...ballObj().userData.actor.loc] : null;
   if (!await openFile(file, false)) return;
   const start = spawnActor();
   if (!start) return setStatus(`${file.name} has no spawn point to build on; pick another map.`, 'warn');
@@ -653,6 +683,8 @@ async function buildOnMap(file) {
   start.rot = starterSpawn.rot;
   applyActor(spawn);
   settleSpawn(spawn);
+  lighting = mood;
+  renderLighting();
   if (starterBall) {
     const ball = ballObj();
     ball.userData.actor.loc = [starterBall[0] + dx * ter.cell, starterBall[1] + dy * ter.cell, starterBall[2] + floor];
@@ -690,6 +722,9 @@ function loadMap(name, bytes, parsed, data) {
   forgetSurfaces();
   dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; fresh = false;
   ({ actors, palette, zone, spawnBall } = data);
+  lighting = lightingSaved = data.lights.length && data.lights.every(m => m === data.lights[0]) && data.lights[0] || 'map';
+  $('lightingMenu').hidden = !data.lights.length;
+  renderLighting();
   const spawnAt = actors.find(a => a.cls.startsWith('PlayerStart'))?.loc;
   const checkpointZones = new Map(data.checkpoints.map(c => [c.i, c])), lavaZones = new Map(data.lava.map(z => [z.i, z]));
   mapName = name;
@@ -869,6 +904,7 @@ function select(obj) {
 // spawn only moves, and objects without a shape (lights, markers) don't scale.
 function abilities(o) {
   const u = o.userData;
+  if (u.placeholder) return { modes: [], yawOnly: false };
   if (u.ballSpawn) return { modes: ['translate'], yawOnly: false };
   if (u.spawn) return { modes: ['translate', 'rotate'], yawOnly: true };
   return { modes: u.actor.bounds || isVolume(u.actor) ? ['translate', 'rotate', 'scale'] : ['translate', 'rotate'], yawOnly: false };
@@ -877,6 +913,7 @@ function setMode(mode) {
   if (sculpting) setSculpt(false);
   if (selected && !abilities(selected).modes.includes(mode)) mode = 'translate';
   gizmo.setMode(mode);
+  if (selected && !abilities(selected).modes.length) gizmo.detach();
   gizmo.showX = gizmo.showZ = !(mode === 'rotate' && selected && abilities(selected).yawOnly);   // three's Y is up: yaw only
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   showSelection();
@@ -899,7 +936,9 @@ function showSelection() {
   readBack(selected);
   selBox.setFromObject(selected);
   const a = selected.userData.actor, isNew = a.i === null;
-  $('selInfo').innerHTML = selected.userData.spawn
+  $('selInfo').innerHTML = selected.userData.placeholder
+    ? `<div class="kv"><b>Sun</b> <span class="muted">(comes with the map you build on)</span></div><div class="kv muted">A new map gets the lights of the workshop map it is built on (TestGround has 6 sun lights). Lighting ▾ in the toolbar sets their mood.</div>`
+    : selected.userData.spawn
     ? `<div class="kv"><b>Spawn</b> <span class="muted">${a.name}</span></div><div class="kv muted">Where your car starts, facing the way it points, and comes back to on resets until you reach a checkpoint. Drag it anywhere: it settles just above the ground under it.</div>`
     : selected.userData.ballSpawn
     ? `<div class="kv"><b>${selected.userData.placed ? 'Ball spawn' : 'Ball start'}</b></div><div class="kv muted">${selected.userData.placed
@@ -919,9 +958,10 @@ function showSelection() {
         ? `, with the new ball ${selected.userData.ballOnTop ? 'just over the roof' : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
     : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
   $('selEdit').hidden = false;
-  $('duplicate').hidden = $('delete').hidden = !!selected.userData.spawn || !!selected.userData.ballSpawn;   // one of each per map
+  $('duplicate').hidden = $('delete').hidden = !!selected.userData.spawn || !!selected.userData.ballSpawn || !!selected.userData.placeholder;   // one of each per map
   const can = abilities(selected);
   document.querySelectorAll('[data-mode]').forEach(b => { b.hidden = !can.modes.includes(b.dataset.mode); });
+  $('locRow').hidden = !can.modes.length;
   $('rotRow').hidden = !can.modes.includes('rotate');
   $('scaleRow').hidden = !can.modes.includes('scale');
   document.querySelectorAll('#rotRow input').forEach(inp => inp.classList.toggle('unused', can.yawOnly && inp.dataset.k !== '1'));
@@ -994,7 +1034,7 @@ function popUndo() {
 }
 
 function duplicateSelected() {
-  if (!selected || selected.userData.spawn) return;
+  if (!selected || selected.userData.spawn || selected.userData.ballSpawn || selected.userData.placeholder) return;   // one of each, kept
   readBack(selected);
   const width = boxOf(selected).getSize(new THREE.Vector3()).x;
   const loc = selected.userData.actor.loc;
@@ -1367,7 +1407,7 @@ function copyObject(source, loc) {
   placeNew(obj);
 }
 function deleteSelected() {
-  if (!selected || selected.userData.spawn) return;
+  if (!selected || selected.userData.spawn || selected.userData.ballSpawn || selected.userData.placeholder) return;   // one of each, kept
   const obj = selected;
   select(null);
   obj.userData.deleted = true;
@@ -1533,8 +1573,10 @@ function changeSet() {                            // [what build() applies, summ
                    lava && `${lava} lava zones`,
                    terrain && `${terrain.tiles.length} terrain tiles`,
                    removed.size && `${removed.size} deleted`, respawns.length && `${respawns.length} respawn points`,
-                   panels.length && `${panels.length} checkpoint panels`, ballSpawn && 'a ball spawn'].filter(Boolean).join(', ') || 'no changes';
-  return [{ edits, duplicates, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn },
+                   panels.length && `${panels.length} checkpoint panels`, ballSpawn && 'a ball spawn',
+                   lighting !== lightingSaved && `${LIGHTING[lighting]?.name.toLowerCase() ?? 'the map\'s own'} lighting`].filter(Boolean).join(', ') || 'no changes';
+  return [{ edits, duplicates, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
+            lighting: lighting !== lightingSaved ? lighting : null },
           fresh ? `new map, ${summary}` : summary];
 }
 function editedMap() {                            // [map bytes with every change applied, summary]
@@ -1735,6 +1777,12 @@ $('outline').addEventListener('toggle', e => {    // remember open groups; an op
 }, true);
 $('showVolumes').addEventListener('change', applyFilter);
 $('showCheckpoints').addEventListener('change', applyFilter);
+$('lightingItems').addEventListener('change', e => {
+  lighting = e.target.value;
+  renderLighting();
+  $('lightingMenu').open = false;
+  updateDirty();
+});
 $('showMarkers').addEventListener('change', applyFilter);
 $('showHuge').addEventListener('change', applyFilter);
 $('save').addEventListener('click', save);
