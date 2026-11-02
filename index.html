@@ -1293,8 +1293,8 @@ function groupOf(o) {                             // [group, sub-group or null]
   const a = o.userData.actor;
   if (o.userData.lava) return ['Lava', null];
   if (o.userData.checkpoint) return ['Checkpoints', null];
-  if (/^PlayerStart|^Pylon|SceneCapture/.test(a.cls)) return ['Spawn & game', null];
-  if (/Light|Fog|PostProcess/.test(a.cls)) return ['Lights & atmosphere', null];
+  if (/^PlayerStart|^Pylon/.test(a.cls)) return ['Spawn & game', null];
+  if (/Light|Fog|PostProcess|SceneCapture/.test(a.cls)) return ['Lights & atmosphere', null];   // scene captures make reflections
   if (isVolume(a)) return ['Volumes', null];
   if (a.mesh) return ['Shapes', a.mesh];
   return ['Other', null];
