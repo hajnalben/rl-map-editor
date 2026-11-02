@@ -217,7 +217,9 @@ export class Package {
     return [...best.values()].sort((a, b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
   }
 
-  materials() {                                   // materials the map's mesh components use, most used first
+  // Surfaces to offer: the materials the map's mesh components use, most used first, then the map's other
+  // material instances and the game materials it refers to (but not skies and engine stand-ins)
+  materials() {
     const used = new Map();
     for (const e of this.exports) {
       const p = this.classOf(e) === 'StaticMeshComponent' ? this.prop(e, 'Materials') : null;
@@ -225,7 +227,10 @@ export class Package {
       const n = unpackFrom('<i', this.data, p[2])[0];
       for (const r of unpackFrom(`<${n}i`, this.data, p[2] + 4)) if (r) used.set(r, (used.get(r) || 0) + 1);
     }
-    return [...used].sort((a, b) => b[1] - a[1]).map(([ref]) => ({ ref, name: this.ref(ref) }));
+    const surface = /^(Material|MaterialInstanceConstant)$/, skip = /sky|^DefaultMaterial$|LevelColoration|TexturePaint/i;
+    const more = [...this.exports.map((e, i) => e.outer === 0 && this.classOf(e) === 'MaterialInstanceConstant' ? i + 1 : 0),
+                  ...this.imports.map((im, i) => surface.test(im.cls) && !skip.test(im.name) ? -(i + 1) : 0)].filter(r => r && !used.has(r));
+    return [...[...used].sort((a, b) => b[1] - a[1]).map(([ref]) => ref), ...more].map(ref => ({ ref, name: this.ref(ref) }));
   }
 
   // A material instance that only tints its parent (one vector setting, "Color"): [export index, offset of the

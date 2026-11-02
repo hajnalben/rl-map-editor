@@ -213,18 +213,6 @@
   </footer>
 </div>
 
-<div id="baseDialog" class="overlay" hidden>
-  <div class="card">
-    <h2 id="baseTitle">Save your new map</h2>
-    <p>A new map is built on a workshop map you already have: its sky, lights and game setup stay, and everything else
-       is what you made here. Any workshop map works; TestGround.udk is a good plain one.</p>
-    <div class="actions">
-      <button id="baseLast" class="primary" hidden></button>
-      <button id="basePick">Pick a workshop map…</button>
-      <button id="baseCancel">Cancel</button>
-    </div>
-  </div>
-</div>
 <div id="help" class="overlay" hidden>
   <div class="card">
     <h2>Controls</h2>
@@ -247,6 +235,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Package } from './ue3.js';
+import { blankMap } from './blank.js';
 import { LIGHTING, build, describe, isOriginalGameMap, shapes } from './map.js';
 import { BALL_AHEAD, BALL_FRONT_LIFT, BALL_LIFT } from './kismet.js';
 import { CELL, SINK, TILE } from './mesh.js';
@@ -488,15 +477,15 @@ function settleSpawn(obj) {                       // a moved spawn rests on what
   markDirty(obj);
 }
 // The ball where it starts. Until you place it, where the game puts it: dropped at the spawn in maps that hand you
-// one there (ball lava), else at the field centre, Free Play's kick-off spot (the starter's centre is only known
-// once it is built on a map; it shows where TestGround's would be, 500 ahead of its spawn). Placed, it is the
+// one there (ball lava), else at the field centre, Free Play's kick-off spot (in the starter 500 ahead of the
+// spawn, as in the blank map it is built on). Placed, it is the
 // ball's own spawn (a marker zone in the map, drawn as the ball): resting on the ground, or on the car's roof,
 // which it then follows.
 let spawnBall = null;                             // the open map's saved spawn ball, {onTop}
 const STARTER_CENTRE = [500, 0], BALL_REST = 95;  // a resting ball's centre this far over the ground (its radius is 92.75)
 const ballObj = () => objects.find(o => o.userData.ballSpawn);
-function baseSun() {                              // the starter's stand-in for the lights the map it is built on brings
-  const a = { i: null, name: 'Sun (comes with the map you build on)', cls: 'DirectionalLight', mesh: null, loc: [-3000, -3000, 4000],
+function baseSun() {                              // the starter's stand-in for the blank map's lights
+  const a = { i: null, name: 'Sun (comes with the blank map)', cls: 'DirectionalLight', mesh: null, loc: [-3000, -3000, 4000],
               rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null, meshIndex: null };
   const obj = new THREE.Mesh(geometryFor(null), materialFor(a));
   obj.userData = { actor: a, placeholder: true };
@@ -585,8 +574,8 @@ async function openFile(file, ask = true) {
   return true;
 }
 
-// The starter map is drawn by the editor alone (a page can't ship a real map file, they all belong to their
-// makers): flat ground to sculpt, the car and the ball. Saving builds it on a workshop map the user picks.
+// The starter map is drawn by the editor alone: flat ground to sculpt, the car and the ball. Saving builds it on
+// the blank map (blank.js).
 const STARTER_ZONE = [0, 0, 0, 509, 511.6, 353.3];     // checkpoint zone size until a real map supplies its own
 const starterGround = new THREE.Mesh(new THREE.PlaneGeometry(64000, 64000).rotateX(-Math.PI / 2), terrainMat);
 function loadStarter() {
@@ -611,7 +600,7 @@ function loadStarter() {
   renderLighting();
   $('sculpt').disabled = false;
   $('mapName').textContent = 'Starter map';
-  $('mapName').title = 'Sculpt the ground and add shapes and checkpoints. Saving builds it on a workshop map you pick.';
+  $('mapName').title = 'Sculpt the ground and add shapes and checkpoints.';
   saveName = 'my-map.udk';
   orbit.target.set(0, 0, 0);
   camera.position.set(-1400, 900, 1100);
@@ -625,24 +614,8 @@ function newMap() {
   setStatus('New map. Press T to sculpt the ground.', '');
 }
 
-// A new map has no file yet: Save as and Load into game first build it on a workshop map the user has (the last
-// one picked is remembered), then carry on.
-let buildAfterOpen = false, afterBuild = null;
-async function pickBaseMap(then) {
-  afterBuild = then;
-  $('baseTitle').textContent = then === play ? 'Load your new map into the game' : 'Save your new map';
-  const last = await remembered('base').catch(() => null);
-  $('baseLast').hidden = !last;
-  if (last) $('baseLast').textContent = `Build on ${last.name}`;
-  $('basePick').classList.toggle('primary', !last);
-  $('baseDialog').hidden = false;
-}
-async function buildThenContinue(file) {
-  $('baseDialog').hidden = true;
-  await buildOnMap(file);
-  if (source && afterBuild) await afterBuild();
-}
-async function buildOnMap(file) {
+// A new map has no file yet: Save as and Load into game first build it on the blank map.
+async function buildOnBlank() {
   // the starter: raised ground by grid vertex, checkpoints relative to its floor, the car at the origin facing +X
   const heights = [];
   for (const t of ter.tiles.values()) {
@@ -662,9 +635,8 @@ async function buildOnMap(file) {
   readBack(objects.find(o => o.userData.spawn));
   readBack(ballObj());
   const name = saveName, mood = lighting, starterSpawn = structuredClone(spawnActor()), starterBall = ballObj().userData.placed ? [...ballObj().userData.actor.loc] : null;
-  if (!await openFile(file, false)) return;
+  if (!await openFile(new File([blankMap()], name), false)) return false;
   const start = spawnActor();
-  if (!start) return setStatus(`${file.name} has no spawn point to build on; pick another map.`, 'warn');
   startFresh();
   const spawn = objects.find(o => o.userData.actor === start);
   const floor = floorHeight(), dx = Math.round(start.loc[0] / ter.cell), dy = Math.round(start.loc[1] / ter.cell);
@@ -673,7 +645,7 @@ async function buildOnMap(file) {
   for (const [gx, gy, h] of heights) setHeight(gx + dx, gy + dy, h, touched);
   for (const t of touched) { refreshTile(t); ter.dirty.add(tileKey(t.tx, t.ty)); }
   const hit = floorHit();
-  for (const c of zone ? checkpoints : []) {
+  for (const c of checkpoints) {
     const [loc, scale3d] = c.whole && hit ? lavaValues(hit.object, hit.point.y) : [[c.loc[0] + dx * ter.cell, c.loc[1] + dy * ter.cell, c.loc[2] + floor], c.scale3d];
     const obj = makeCheckpoint(c.kind, loc, c.rot, c.ballOnTop, scale3d, c.lava);
     if (c.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
@@ -694,8 +666,7 @@ async function buildOnMap(file) {
   select(null);
   saveName = name;
   updateDirty();
-  const lost = !zone && checkpoints.length ? ` It has no trigger zone, so your ${checkpoints.length} checkpoints were left out.` : '';
-  setStatus(`Built on ${file.name}.${lost} Click Save as or Load into game again to write it.`, lost ? 'warn' : 'ok');
+  return true;
 }
 
 // What a map needs to play and look right; everything else goes when a new map is built on it.
@@ -730,7 +701,7 @@ function loadMap(name, bytes, parsed, data) {
   mapName = name;
   source = bytes;
   pkg = parsed;
-  $('mapName').textContent = `${name} · ${(bytes.length / 1e6).toFixed(0)} MB`;
+  $('mapName').textContent = `${name} · ${(bytes.length / 1e6).toFixed(bytes.length < 1e7 ? 1 : 0)} MB`;
   $('mapName').title = name;
   renderPalette();
   const t = data.terrain;
@@ -875,7 +846,8 @@ function applyFilter() {
     const a = obj.userData.actor;
     if (obj.userData.huge === undefined) {
       if (!obj.geometry.boundingSphere) obj.geometry.computeBoundingSphere();
-      obj.userData.huge = !obj.userData.lava && obj.geometry.boundingSphere.radius * Math.max(obj.scale.x, obj.scale.y, obj.scale.z) > 15000;
+      const flat = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).y < 1000;   // a wide floor stays in view
+      obj.userData.huge = !obj.userData.lava && !flat && obj.geometry.boundingSphere.radius * Math.max(obj.scale.x, obj.scale.y, obj.scale.z) > 15000;
     }
     obj.visible = !obj.userData.deleted && !obj.userData.respawnFor
       && ($('showHuge').checked || !obj.userData.huge)
@@ -937,7 +909,7 @@ function showSelection() {
   selBox.setFromObject(selected);
   const a = selected.userData.actor, isNew = a.i === null;
   $('selInfo').innerHTML = selected.userData.placeholder
-    ? `<div class="kv"><b>Sun</b> <span class="muted">(comes with the map you build on)</span></div><div class="kv muted">A new map gets the lights of the workshop map it is built on (TestGround has 6 sun lights). Lighting ▾ in the toolbar sets their mood.</div>`
+    ? `<div class="kv"><b>Sun</b> <span class="muted">(comes with the blank map)</span></div><div class="kv muted">A new map gets three sun lights: a key light, a soft fill and one from above. Lighting ▾ in the toolbar sets their mood.</div>`
     : selected.userData.spawn
     ? `<div class="kv"><b>Spawn</b> <span class="muted">${a.name}</span></div><div class="kv muted">Where your car starts, facing the way it points, and comes back to on resets until you reach a checkpoint. Drag it anywhere: it settles just above the ground under it.</div>`
     : selected.userData.ballSpawn
@@ -1589,7 +1561,6 @@ const failed = err => err.name === 'SecurityError'   // the browser wants a fres
 const nextFrame = () => new Promise(r => setTimeout(r, 30));
 
 async function save() {
-  if (!source) return pickBaseMap(save);
   const name = saveName;
   try {
     // ask for the file first: the browser only allows the dialog right after the click
@@ -1598,6 +1569,7 @@ async function save() {
       : null;
     setStatus('Saving…', '');
     await nextFrame();
+    if (!source && !await buildOnBlank()) return;
     const [bytes, summary] = editedMap();
     if (handle) {
       const out = await handle.createWritable();
@@ -1653,7 +1625,6 @@ async function writeFile(dir, name, bytes) {
   await out.close();
 }
 async function play() {
-  if (!source) return pickBaseMap(play);
   try {
     const dir = await gameFolder();
     if (!await dir.getFileHandle(BACKUP).catch(() => null)) {            // keep the real Underpass before the first swap
@@ -1662,6 +1633,7 @@ async function play() {
     }
     setStatus('Writing the map into the game…', '');
     await nextFrame();
+    if (!source && !await buildOnBlank()) return;
     const [bytes, summary] = editedMap();
     await writeFile(dir, SLOT, bytes);
     setStatus(`${mapName} (${summary}) is in the game: Free Play → Underpass`, 'ok');
@@ -1842,32 +1814,13 @@ document.addEventListener('click', e => document.querySelectorAll('details.menu[
 function toggleHelp(show = $('help').hidden) { $('help').hidden = !show; }
 $('helpButton').addEventListener('click', () => toggleHelp());
 $('help').addEventListener('click', () => toggleHelp(false));
-$('open').addEventListener('click', () => { buildAfterOpen = false; $('file').click(); });
+$('open').addEventListener('click', () => $('file').click());
 $('file').addEventListener('change', e => {
-  const file = e.target.files[0], base = buildAfterOpen;
+  const file = e.target.files[0];
   e.target.value = '';
-  buildAfterOpen = false;
-  if (file) base ? buildThenContinue(file) : openFile(file);
+  openFile(file);
 });
-$('file').addEventListener('cancel', () => { buildAfterOpen = false; });
 $('newMap').addEventListener('click', newMap);
-$('baseLast').addEventListener('click', async () => {
-  try {
-    const handle = await remembered('base');
-    if (await handle.queryPermission() !== 'granted' && await handle.requestPermission() !== 'granted') return;
-    await buildThenContinue(await handle.getFile());
-  } catch (err) { failed(err); }
-});
-$('basePick').addEventListener('click', async () => {
-  if (!window.showOpenFilePicker) { $('baseDialog').hidden = true; buildAfterOpen = true; $('file').click(); return; }
-  try {
-    const [handle] = await showOpenFilePicker({ id: 'rl-base', types: [{ description: 'Rocket League map', accept: { 'application/octet-stream': ['.udk', '.upk'] } }] });
-    await remembered('base', handle).catch(() => {});
-    await buildThenContinue(await handle.getFile());
-  } catch (err) { failed(err); }
-});
-$('baseCancel').addEventListener('click', () => { $('baseDialog').hidden = true; });
-$('baseDialog').addEventListener('click', e => { if (e.target === $('baseDialog')) $('baseDialog').hidden = true; });
 view.addEventListener('dragover', e => e.preventDefault());
 view.addEventListener('drop', e => { e.preventDefault(); openFile(e.dataTransfer.files[0]); });
 window.addEventListener('beforeunload', e => { if (changeCount()) e.preventDefault(); });
@@ -1877,7 +1830,7 @@ setTool('raise');
 loadStarter();
 loadLibrary();
 window.editor = { objects: () => objects, camera, orbit, gizmo, pivot, select, duplicateSelected, deleteSelected, addFromPalette, addCheckpoint, addLava,
-                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, changeSet, ballObj, newMap, buildOnMap, placeShape, library };
+                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, changeSet, ballObj, newMap, buildOnBlank, placeShape, library };
 </script>
 </body>
 </html>
