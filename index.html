@@ -73,9 +73,10 @@
   .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
   #loading[hidden] { display: none; }
-  #help { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0, 0, 0, .5); }
-  #help[hidden] { display: none; }
-  #help .card { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-width: 520px; }
+  .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0, 0, 0, .5); }
+  .overlay[hidden] { display: none; }
+  .overlay .card { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-width: 520px; }
+  .overlay p { margin: 0 0 10px; color: var(--muted); }
   #help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
   #help dt { color: var(--accent); white-space: nowrap; } #help dd { margin: 0; }
 </style>
@@ -207,7 +208,19 @@
   </footer>
 </div>
 
-<div id="help" hidden>
+<div id="baseDialog" class="overlay" hidden>
+  <div class="card">
+    <h2 id="baseTitle">Save your new map</h2>
+    <p>A new map is built on a workshop map you already have: its sky, lights and game setup stay, and everything else
+       is what you made here. Any workshop map works; TestGround.udk is a good plain one.</p>
+    <div class="actions">
+      <button id="baseLast" class="primary" hidden></button>
+      <button id="basePick">Pick a workshop map…</button>
+      <button id="baseCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+<div id="help" class="overlay" hidden>
   <div class="card">
     <h2>Controls</h2>
     <dl>
@@ -582,11 +595,22 @@ function newMap() {
   setStatus('New map. Press T to sculpt the ground.', '');
 }
 
-let buildAfterOpen = false;
-function pickBaseMap() {                          // the starter has no map file yet
-  buildAfterOpen = true;
-  setStatus('Pick any workshop map to build this on. Only its sky, lights and game setup are used.', '');
-  $('file').click();
+// A new map has no file yet: Save as and Load into game first build it on a workshop map the user has (the last
+// one picked is remembered), then carry on.
+let buildAfterOpen = false, afterBuild = null;
+async function pickBaseMap(then) {
+  afterBuild = then;
+  $('baseTitle').textContent = then === play ? 'Load your new map into the game' : 'Save your new map';
+  const last = await remembered('base').catch(() => null);
+  $('baseLast').hidden = !last;
+  if (last) $('baseLast').textContent = `Build on ${last.name}`;
+  $('basePick').classList.toggle('primary', !last);
+  $('baseDialog').hidden = false;
+}
+async function buildThenContinue(file) {
+  $('baseDialog').hidden = true;
+  await buildOnMap(file);
+  if (source && afterBuild) await afterBuild();
 }
 async function buildOnMap(file) {
   // the starter: raised ground by grid vertex, checkpoints relative to its floor, the car at the origin facing +X
@@ -1517,11 +1541,13 @@ function editedMap() {                            // [map bytes with every chang
   const [changes, summary] = changeSet();
   return [build(source, changes), summary];
 }
-const failed = err => err.name !== 'AbortError' && setStatus(err.message, 'warn');   // cancelling a dialog is no error
+const failed = err => err.name === 'SecurityError'   // the browser wants a fresh click before it shows a file dialog
+  ? setStatus('Ready: click that button once more to pick where it goes.', 'ok')
+  : err.name !== 'AbortError' && setStatus(err.message, 'warn');   // cancelling a dialog is no error
 const nextFrame = () => new Promise(r => setTimeout(r, 30));
 
 async function save() {
-  if (!source) return pickBaseMap();
+  if (!source) return pickBaseMap(save);
   const name = saveName;
   try {
     // ask for the file first: the browser only allows the dialog right after the click
@@ -1585,7 +1611,7 @@ async function writeFile(dir, name, bytes) {
   await out.close();
 }
 async function play() {
-  if (!source) return pickBaseMap();
+  if (!source) return pickBaseMap(play);
   try {
     const dir = await gameFolder();
     if (!await dir.getFileHandle(BACKUP).catch(() => null)) {            // keep the real Underpass before the first swap
@@ -1773,10 +1799,27 @@ $('file').addEventListener('change', e => {
   const file = e.target.files[0], base = buildAfterOpen;
   e.target.value = '';
   buildAfterOpen = false;
-  if (file) base ? buildOnMap(file) : openFile(file);
+  if (file) base ? buildThenContinue(file) : openFile(file);
 });
 $('file').addEventListener('cancel', () => { buildAfterOpen = false; });
 $('newMap').addEventListener('click', newMap);
+$('baseLast').addEventListener('click', async () => {
+  try {
+    const handle = await remembered('base');
+    if (await handle.queryPermission() !== 'granted' && await handle.requestPermission() !== 'granted') return;
+    await buildThenContinue(await handle.getFile());
+  } catch (err) { failed(err); }
+});
+$('basePick').addEventListener('click', async () => {
+  if (!window.showOpenFilePicker) { $('baseDialog').hidden = true; buildAfterOpen = true; $('file').click(); return; }
+  try {
+    const [handle] = await showOpenFilePicker({ id: 'rl-base', types: [{ description: 'Rocket League map', accept: { 'application/octet-stream': ['.udk', '.upk'] } }] });
+    await remembered('base', handle).catch(() => {});
+    await buildThenContinue(await handle.getFile());
+  } catch (err) { failed(err); }
+});
+$('baseCancel').addEventListener('click', () => { $('baseDialog').hidden = true; });
+$('baseDialog').addEventListener('click', e => { if (e.target === $('baseDialog')) $('baseDialog').hidden = true; });
 view.addEventListener('dragover', e => e.preventDefault());
 view.addEventListener('drop', e => { e.preventDefault(); openFile(e.dataTransfer.files[0]); });
 window.addEventListener('beforeunload', e => { if (changeCount()) e.preventDefault(); });
