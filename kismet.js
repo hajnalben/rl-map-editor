@@ -222,6 +222,11 @@ export function spawnBall(pkg, spawn) {
   return { onTop: onTop === null || nodeProps(pkg, pkg.exports[onTop]).IntValue === 1 };
 }
 
+export function ballSpawnMarker(pkg) {            // the actor index of the ball's own spawn marker, or null
+  const v = namedVar(pkg, 'BallSpawn');
+  return v === null ? null : (nodeProps(pkg, pkg.exports[v]).ObjValue || 0) - 1;
+}
+
 function ballChainEntries(pkg, live, lastBall) {  // the respawn chain's first check (is there a ball checkpoint?) and its ball remover
   let hasBall = null, clear = null;
   for (const k of live) {
@@ -247,8 +252,10 @@ export const BALL_FRONT_LIFT = 65;
 // created once per map, or again when `fresh` (the main sequence was just emptied). Entries with `lava` are lava
 // zones instead: touching one with the car (or the ball, when `ball`) teleports the car back to the last checkpoint,
 // stopped, with a fresh ball as after a reset (always, for ball lava). With lava, the spawn `spawn` (an actor index)
-// counts as the first checkpoint, a ball one when there is ball lava. Returns the new trigger indices.
-export function addCheckpoints(add, template, checkpoints, fresh = false, spawn = null) {
+// counts as the first checkpoint, a ball one when there is ball lava. `ballSpawn` (transform values) gives the ball
+// a spawn of its own, a marker zone there: while the car is still at its spawn, the fresh ball goes to that marker.
+// Returns the new trigger indices.
+export function addCheckpoints(add, template, checkpoints, fresh = false, spawn = null, ballSpawn = null) {
   const pkg = add.pkg, enc = new Encoder(add);
   const seq = mainSequence(pkg), parent = seq + 1;
   const classes = new Map();
@@ -269,16 +276,18 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
 
   const x0 = 40000, y0 = 40000;
   const live = fresh ? new Set() : liveNodes(pkg);
+  if (ballSpawn && (spawn === null || namedVar(pkg, 'BallSpawn', live) !== null)) throw new Error('ball spawn: no car spawn, or the map has one already');
+  const marker = ballSpawn ? add.duplicate(template, [0, 0, 0], ballSpawn) : null;
   const lava = checkpoints.filter(c => c.lava), startAt = spawn === null ? [] : [['ObjValue', O, spawn + 1]];
   const startFrom = (v, when) => { if (v !== null && when && spawn !== null) add.setProps(v, { ObjValue: add.tag('ObjValue', O, pack('<i', spawn + 1)) }); };
   const last = namedVar(pkg, 'LastCheckpoint', live);
   let lastRef = last === null ? null : last + 1;
-  startFrom(last, lava.length);
+  startFrom(last, lava.length || ballSpawn);
   if (last === null) {
     const r = refs(['car', 'last', 'teleport', 'spawned']);
     lastRef = r.last;
     node('SeqVar_Object', vars(x0 + 100, y0 + 200));
-    node('SeqVar_Object', vars(x0 + 300, y0 + 200, [...(lava.length ? startAt : []), ['VarName', N, 'LastCheckpoint']]));
+    node('SeqVar_Object', vars(x0 + 300, y0 + 200, [...(lava.length || ballSpawn ? startAt : []), ['VarName', N, 'LastCheckpoint']]));
     node('SeqAct_Teleport', [
       ['InputLinks', A, [inputLink(y0 + 34)]],
       ['OutputLinks', A, [outputLink('Out', [], y0 + 34)]],
@@ -294,24 +303,53 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
     placed(r, 'car respawn');
   }
 
-  const lastBall = namedVar(pkg, 'LastBallCheckpoint', live), ballLava = lava.some(c => c.ball);
+  const lastBall = namedVar(pkg, 'LastBallCheckpoint', live), ballLava = lava.some(c => c.ball), ballFirst = ballLava || ballSpawn;
   let lastBallRef = lastBall === null ? null : lastBall + 1;
-  startFrom(lastBall, ballLava);
+  startFrom(lastBall, ballFirst);
+  // the ball's own spawn: at the start (the car still at its spawn) the added ball goes there instead
+  const SPAWN_NODES = ['ballSpawn', 'startVar', 'spawnAt', 'atStart', 'getSpawn', 'putSpawn'];
+  const spawnNodes = (r, ballVar, elsewhere, x, y) => {
+    node('SeqVar_Object', vars(x, y + 220, [['ObjValue', O, marker + 1], ['VarName', N, 'BallSpawn']]));
+    node('SeqVar_Object', vars(x + 60, y + 220, startAt));
+    node('SeqVar_Vector', vars(x + 120, y + 220));
+    node('SeqCond_CompareObject', [
+      ['InputLinks', A, [inputLink(y + 36, 'In', 23)]],
+      ['OutputLinks', A, [outputLink('A == B', [r.getSpawn], y + 26, 13), outputLink('A != B', elsewhere, y + 46, 33)]],
+      ['VariableLinks', A, [varLink('A', obj, [lastRef], x + 49, { delta: 45 }), varLink('B', obj, [r.startVar], x + 74, { delta: 70 })]],
+      ...layout(1, parent, x, y, 123, 85)]);
+    node('SeqAct_GetLocationAndRotation', [
+      ['InputLinks', A, [inputLink(y + 34)]],
+      ['OutputLinks', A, [outputLink('Out', [r.putSpawn], y + 34)]],
+      ['VariableLinks', A, [varLink('Target', obj, [r.ballSpawn], x + 238, { prop: 'Targets', maxVars: 1 }),
+                            varLink('Location', cls('SeqVar_Vector'), [r.spawnAt], x + 304, { prop: 'Location', writeable: true, delta: 76 }),
+                            varLink('Rotation Vector', cls('SeqVar_Vector'), [], x + 375, { prop: 'RotationVector', writeable: true, delta: 148 }),
+                            varLink('Rotation', cls('SeqVar_Vector'), [], x + 446, { prop: 'Rotation', writeable: true, delta: 219 })]],
+      ...layout(3, parent, x + 200, y, 290, 77)]);
+    node('SeqAct_SetLocation', [
+      ['InputLinks', A, [inputLink(y + 34)]],
+      ['OutputLinks', A, [outputLink('Out', [], y + 34)]],
+      ['VariableLinks', A, [varLink('Location', cls('SeqVar_Vector'), [r.spawnAt], x + 544, { maxVars: 1 }),
+                            varLink('Rotation', cls('SeqVar_Vector'), [], x + 615, { maxVars: 1, delta: 88 }),
+                            varLink('Target', obj, [ballVar], x + 681, { prop: 'Target', writeable: true, maxVars: 1, delta: 159 })]],
+      ...layout(3, parent, x + 500, y, 219, 61)]);
+    placed(r, 'ball spawn');
+  };
   const onTop = namedVar(pkg, 'BallOnTop', live, 'SeqVar_Int');
   let onTopRef = onTop === null ? null : onTop + 1;
   let { hasBall: hasBallRef, clear: clearRef } = lastBall === null ? {} : ballChainEntries(pkg, live, lastBall);
-  if (lastBallRef === null && checkpoints.some(c => c.ball || c.lava)) {
+  if (lastBallRef === null && (checkpoints.some(c => c.ball || c.lava) || ballSpawn)) {
     // on reset, if the last checkpoint was a ball one: remove the balls, add one, and put it above the checkpoint
     // (on the car) or ahead of it along the way it faces
     const r = refs(['lastBall', 'onTop', 'one', 'none', 'player', 'ball', 'at', 'dir', 'x', 'y', 'z', 'fx', 'fy', 'fz', 'lift', 'ahead',
                     'z2', 'dx', 'dy', 'x2', 'y2', 'above', 'front', 'spawned', 'hasBall', 'isBall', 'clear', 'addBall', 'where', 'split',
-                    'which', 'raise', 'join', 'place', 'splitDir', 'mulX', 'mulY', 'subX', 'subY', 'joinFront', 'placeFront', 'frontLift', 'z3', 'raiseFront']);
+                    'which', 'raise', 'join', 'place', 'splitDir', 'mulX', 'mulY', 'subX', 'subY', 'joinFront', 'placeFront', 'frontLift', 'z3', 'raiseFront',
+                    ...(ballSpawn ? SPAWN_NODES : [])]);
     lastBallRef = r.lastBall;
     onTopRef = r.onTop;
     [hasBallRef, clearRef] = [r.hasBall, r.clear];
     const [vx, vy, x, y] = [x0 + 1000, y0 + 220, x0 + 800, y0];
     const vec = cls('SeqVar_Vector'), flt = cls('SeqVar_Float'), int = cls('SeqVar_Int');
-    node('SeqVar_Object', vars(vx, vy, [...(ballLava ? startAt : []), ['VarName', N, 'LastBallCheckpoint']]));
+    node('SeqVar_Object', vars(vx, vy, [...(ballFirst ? startAt : []), ['VarName', N, 'LastBallCheckpoint']]));
     node('SeqVar_Int', vars(vx + 60, vy, [['VarName', N, 'BallOnTop']]));
     node('SeqVar_Int', vars(vx + 120, vy, [['IntValue', I, 1]]));
     node('SeqVar_Object', vars(vx + 180, vy));
@@ -344,7 +382,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
                             varLink('SpawnedBall', obj, spawned, px + 208, { prop: 'SpawnedBall', writeable: true, delta: 178 })]],
       ...layout(1, parent, px, y, 254, 149)];
     node('SeqAct_AddGameBall_TA', addBall({ DestroyedAll: [r.addBall] }, [], [], x + 600));
-    node('SeqAct_AddGameBall_TA', addBall({ Added: [r.where] }, [lastRef], [r.ball], x + 900));
+    node('SeqAct_AddGameBall_TA', addBall({ Added: [ballSpawn ? r.atStart : r.where] }, [lastRef], [r.ball], x + 900));
     const step = (outTo, links, px, py, w, version = 1) => [
       ['InputLinks', A, [inputLink(py + 34)]],
       ['OutputLinks', A, [outputLink('Out', outTo, py + 34)]],
@@ -391,7 +429,15 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
     node('SeqVar_Float', vars(vx + 1380, vy, [['FloatValue', F, -BALL_FRONT_LIFT]]));
     node('SeqVar_Float', vars(vx + 1440, vy));
     node('SeqAct_SubtractFloat', step([r.joinFront], math(r.z, r.frontLift, r.z3, x + 2840), x + 2840, y2 + 120, 196));
+    if (ballSpawn) spawnNodes(r, r.ball, [r.where], x + 900, y + 400);
     placed(r, 'ball respawn');
+  } else if (ballSpawn) {                         // an existing respawn script: its added ball goes through the check
+    const added = nodeProps(pkg, pkg.exports[clearRef - 1]).OutputLinks[2].Links[0].LinkedOp - 1, p = nodeProps(pkg, pkg.exports[added]);
+    const ballVar = p.VariableLinks.find(l => l.LinkDesc === 'SpawnedBall').LinkedVariables[0];
+    const r = refs(SPAWN_NODES), linked = o => (o.Links || []).map(l => [l.LinkedOp, l.InputLinkIdx]);
+    spawnNodes(r, ballVar, linked(p.OutputLinks[0]), x0 + 1700, y0 + 400);
+    add.setProps(added, { OutputLinks: enc.prop('OutputLinks', A, p.OutputLinks.map((o, k) =>
+      outputLink(o.LinkDesc, k === 0 ? [r.atStart] : linked(o), o.DrawY, o.OverrideDelta))) });
   }
 
   const triggers = [];
