@@ -78,6 +78,9 @@
   .overlay[hidden] { display: none; }
   .overlay .card { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-width: 520px; }
   .overlay p { margin: 0 0 10px; color: var(--muted); }
+  #ask { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-width: 420px; }
+  #ask::backdrop { background: rgba(0, 0, 0, .5); }
+  #ask p { margin: 0 0 10px; }
   #help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
   #help dt { color: var(--accent); white-space: nowrap; } #help dd { margin: 0; }
 </style>
@@ -229,6 +232,12 @@
     </dl>
   </div>
 </div>
+<dialog id="ask">
+  <form method="dialog">
+    <p></p>
+    <div class="actions"><button value="ok" class="primary"></button><button value="">Cancel</button></div>
+  </form>
+</dialog>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -553,9 +562,21 @@ function readBack(obj) {                          // three object -> actor trans
   if (!obj.userData.ballSpawn) a.scale3d = [obj.scale.x, obj.scale.z, obj.scale.y].map(v => v / a.scale);
 }
 
+// confirm() as a page dialog: the desktop app's browser pane answers native dialogs with "no" without showing them
+function confirmed(text, ok) {
+  const d = $('ask');
+  d.querySelector('p').textContent = text;
+  d.querySelector('[value=ok]').textContent = ok;
+  d.showModal();
+  return new Promise(resolve => {             // not on 'close', which the pane delivers seconds late
+    d.onsubmit = e => resolve(e.submitter?.value === 'ok');
+    d.oncancel = () => resolve(false);
+  });
+}
+
 async function openFile(file, ask = true) {
   if (!file) return false;
-  if (ask && changeCount() && !confirm(`Discard ${changeCount()} unsaved changes?`)) return false;
+  if (ask && changeCount() && !await confirmed(`Open ${file.name}? Your ${changeCount()} unsaved changes are discarded.`, 'Discard and open')) return false;
   $('loading').hidden = false;
   $('loading').textContent = `Loading ${file.name}…`;
   await new Promise(r => setTimeout(r, 30));      // let the message paint before parsing blocks the page
@@ -608,8 +629,8 @@ function loadStarter() {
   updateDirty();
   $('loading').hidden = true;
 }
-function newMap() {
-  if (changeCount() && !confirm(`Start a new map? Your ${changeCount()} unsaved changes are discarded.`)) return;
+async function newMap() {
+  if (changeCount() && !await confirmed(`Start a new map? Your ${changeCount()} unsaved changes are discarded.`, 'Discard and start new')) return;
   loadStarter();
   setStatus('New map. Press T to sculpt the ground.', '');
 }
@@ -1716,7 +1737,7 @@ const typing = el => el.tagName === 'SELECT' || (el.tagName === 'INPUT' && !['ra
 window.addEventListener('keyup', e => held.delete(e.key.toLowerCase()));
 window.addEventListener('blur', () => held.clear());
 window.addEventListener('keydown', e => {
-  if (typing(e.target)) return;
+  if (typing(e.target) || $('ask').open) return;
   if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); return popUndo(); }
   if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); return save(); }
   if ((e.metaKey || e.ctrlKey) && e.key === 'o') { e.preventDefault(); return $('open').click(); }
