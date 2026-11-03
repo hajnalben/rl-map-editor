@@ -2039,8 +2039,10 @@ renderer.domElement.addEventListener('pointerup', e => {
   setPointer(e);
   ray.setFromCamera(pointer, camera);
   const hits = ray.intersectObjects(objects.filter(o => o.visible), false);
-  const solid = hits.find(h => !isVolume(h.object.userData.actor)) || hits[0];
-  select(solid ? solid.object : null);
+  // the nearest shape or checkpoint; other zones (lava over the whole floor, huge volumes) only when nothing else is there
+  const clickable = o => !isVolume(o.userData.actor) || (o.userData.checkpoint && !o.userData.lava);
+  const hit = hits.find(h => clickable(h.object)) || hits[0];
+  select(hit ? hit.object : null);
 });
 function focus() {
   if (!selected) return;
