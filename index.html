@@ -81,6 +81,11 @@
   #ask { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-width: 420px; }
   #ask::backdrop { background: rgba(0, 0, 0, .5); }
   #ask p { margin: 0 0 10px; }
+  #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #labels[hidden] { display: none; }
+  #labels > span { position: absolute; left: 0; top: 0; padding: 0 5px; border-radius: 4px; background: rgba(0, 0, 0, .7); color: #fff; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; }
+  #legend { position: absolute; left: 10px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 6px; background: rgba(0, 0, 0, .7); font-size: 12px; }
+  #scaleBar { height: 4px; background: #fff; border-radius: 2px; }
   #help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
   #help dt { color: var(--accent); white-space: nowrap; } #help dd { margin: 0; }
 </style>
@@ -118,6 +123,7 @@
           <label><input type="checkbox" id="showVolumes"> Other trigger zones</label>
           <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
           <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
+          <label title="Labels that AI agents building the map refer to"><input type="checkbox" id="showIds"> Object ids</label>
         </div>
       </details>
       <details class="menu" id="lightingMenu">
@@ -154,6 +160,7 @@
 
   <main id="view">
     <div id="loading">Loading…</div>
+    <div id="labels" hidden><div id="legend"><span id="legendText"></span><span id="scaleBar"></span><span id="scaleText"></span></div></div>
     <input type="file" id="file" accept=".udk,.upk" hidden>
   </main>
 
@@ -230,6 +237,7 @@
       <dt>⌘S · ⌘O</dt><dd>Save as · open a map</dd>
       <dt>?</dt><dd>Show or hide this</dd>
     </dl>
+    <p>AI agents that can run JavaScript in this page can build maps here on their own: <code>await mapAI.help()</code> (or <a href="ai-guide.md" target="_blank">ai-guide.md</a>) explains how.</p>
   </div>
 </div>
 <dialog id="ask">
@@ -338,10 +346,14 @@ gizmo.addEventListener('objectChange', () => {
 
 function resize() {
   const { clientWidth: w, clientHeight: h } = view;
+  if (!w || !h) return;                           // a hidden page measures 0 × 0; keep the last size
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  reframe?.();
 }
+let reframe = null;                               // an AI agent's last look(), fitted again to the view until you move the camera
+for (const type of ['pointerdown', 'wheel', 'keydown']) window.addEventListener(type, () => { reframe = null; }, true);
 new ResizeObserver(resize).observe(view);
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
@@ -350,6 +362,7 @@ renderer.setAnimationLoop(() => {
   flyCamera(dt);
   orbit.update();
   renderer.render(scene, camera);
+  drawLabels();
 });
 
 const colors = new Map();
@@ -1056,14 +1069,14 @@ function addCheckpoint(kind, gate = false) {
   makeCheckpoint(kind, loc, [0, 0, 0], false, [gate ? GATE / (2 * zone.bounds[3]) : 1, 1, 1]);
 }
 const RESPAWN_CLEARANCE = 30;                     // a reset puts the car this far above the ground (it rests at 17)
-function groundUnder(at, depth) {                 // height of the first solid surface within `depth` below `at`, or null
+function groundHit(at, depth) {                   // the first solid surface within `depth` below `at`, as a raycast hit
   scene.updateMatrixWorld();
   const solid = objects.filter(o => !o.userData.deleted && !o.userData.respawnFor && o.userData.actor.bounds && !isVolume(o.userData.actor));
   const tiles = ter ? [...ter.tiles.values()].map(t => t.mesh) : [];
-  const hit = new THREE.Raycaster(toThree(at), new THREE.Vector3(0, -1, 0), 0, depth)
+  return new THREE.Raycaster(toThree(at), new THREE.Vector3(0, -1, 0), 0, depth)
     .intersectObjects([...solid, ...tiles, ...(pkg ? [] : [starterGround])], false)[0];
-  return hit ? hit.point.y : null;
 }
+const groundUnder = (at, depth) => groundHit(at, depth)?.point.y ?? null;   // its height, or null
 // Where a reset at checkpoint `o` puts the car: past a gate, and down on the ground when the zone reaches some.
 // The marker transform for that spot, or null when it is the zone's own pivot (a box in the air).
 function respawnValues(o) {
@@ -1363,6 +1376,7 @@ function placeShape(key, loc, rot = [0, 0, 0], scale3d = [1, 1, 1], rest = true)
   const obj = new THREE.Mesh(geo, shapeLook());
   obj.userData = { actor: a, copy: true, shape: key, surface: lastSurface };
   placeNew(obj);
+  return obj;
 }
 async function loadLibrary() {
   try {
@@ -1403,11 +1417,297 @@ function deleteSelected() {
   if (!selected || selected.userData.spawn || selected.userData.ballSpawn || selected.userData.placeholder) return;   // one of each, kept
   const obj = selected;
   select(null);
+  removeObject(obj);
+  applyFilter();
+  updateDirty();
+}
+function removeObject(obj) {
   obj.userData.deleted = true;
   obj.userData.copy ? added.splice(added.indexOf(obj), 1) : removed.add(obj);
   undo.push({ kind: 'delete', obj });
-  applyFilter();
-  updateDirty();
+}
+
+// AI agents build maps through window.mapAI (ai-guide.md): steps of JSON in map units and degrees, the map's facts
+// back, and camera views to take screenshots of. Objects have ids: the agent's own, or kind#n / map#<export>.
+const AI_SHAPES = { platform: 'Platform', ramp: 'Ramp', pillar: 'Pillar', ring: 'Ring', 'quarter pipe': 'Quarter pipe' };
+const LAVA_KINDS = { none: [], car: ['car'], ball: ['ball'], both: ['ball', 'car'] };
+const DEG = 32768 / 180, LIMIT = 100000;          // rotator units a degree; how far coordinates and sizes may go
+const CHECKPOINT_SINK = 50;                       // a checkpoint reaches this far under the ground it stands on
+const r1 = v => Math.round(v * 10) / 10, deg = uu => r1(uu / DEG);
+const isNum = v => typeof v === 'number' && Number.isFinite(v);
+const isVec = v => Array.isArray(v) && v.length === 3 && v.every(x => isNum(x) && Math.abs(x) <= LIMIT);
+const rotated = (rot, v) => { const ax = ueAxes(rot); return [0, 1, 2].map(k => ax[0][k] * v[0] + ax[1][k] * v[1] + ax[2][k] * v[2]); };
+const shapeBoxes = new Map();
+function shapeBox(key) {                          // a built-in shape's [min, max] corners
+  if (!shapeBoxes.has(key)) {
+    const p = shapeData(key).positions, axis = k => p.filter((_, v) => v % 3 === k);
+    shapeBoxes.set(key, [[0, 1, 2].map(k => Math.min(...axis(k))), [0, 1, 2].map(k => Math.max(...axis(k)))]);
+  }
+  return shapeBoxes.get(key);
+}
+// the point an agent's `at` names, relative to the pivot before rotation: a shape's bottom centre, a checkpoint's ground
+const shapeFoot = (key, s) => { const [min, max] = shapeBox(key); return [(min[0] + max[0]) / 2 * s[0], (min[1] + max[1]) / 2 * s[1], min[2] * s[2]]; };
+const zoneFoot = (b, s) => [b[0] * s[0], b[1] * s[1], (b[2] - b[5]) * s[2] + CHECKPOINT_SINK];
+const pivotFor = (at, rot, foot) => rotated(rot, foot).map((v, k) => at[k] - v);
+const footOf = (a, foot) => rotated(a.rot, foot).map((v, k) => r1(a.loc[k] + v));
+
+let aiCount = 0;
+const idOf = o => o.userData.aiId ??= o.userData.copy ? `${o.userData.lava ? 'lava' : o.userData.checkpoint ? 'checkpoint' : 'shape'}#${++aiCount}` : `map#${o.userData.actor.i}`;
+const surfaceKey = name => name.replace(/^MAT_|_(INST|MIC|MAT|Mat)$/g, '');
+const aiSurfaces = () => new Map([...$('surface').options].map(op => [op.value === 'lava' ? 'lava' : surfaceKey(op.text), surfaceValue(op.value)]));
+const surfaceRef = name => [...aiSurfaces()].find(([k]) => k.toLowerCase() === surfaceKey(name).toLowerCase())?.[1];
+const surfaceName = ref => [...aiSurfaces()].find(([, v]) => v === ref)?.[0] ?? null;
+function aiFloor() {                              // the widest flat solid the map came with: what lava covers
+  let best = null, area = 0;
+  for (const o of objects) {
+    const u = o.userData;
+    if (u.deleted || u.respawnFor || u.copy || !u.actor.bounds || isVolume(u.actor)) continue;
+    const s = boxOf(o).getSize(new THREE.Vector3());
+    if (s.y < 1000 && s.x * s.z > area) [best, area] = [o, s.x * s.z];
+  }
+  return best;
+}
+function aiObjects() {                            // [floor, what an agent works with: shapes, meshes, checkpoints, lava]
+  const floor = aiFloor();
+  return [floor, objects.filter(o => {
+    const u = o.userData;
+    return o !== floor && !u.deleted && !u.respawnFor && !u.spawn && !u.ballSpawn && !u.placeholder
+      && (u.checkpoint || (u.actor.bounds && !isVolume(u.actor) && !u.huge));
+  })];
+}
+const aiFind = id => aiObjects()[1].find(o => idOf(o) === id);
+const aiLava = () => {
+  const kinds = new Set(objects.filter(o => o.userData.lava && !o.userData.deleted).map(o => o.userData.checkpoint));
+  return kinds.size === 2 ? 'both' : [...kinds][0] ?? 'none';
+};
+
+function aiErrors(step) {                         // what is wrong with a step before anything changes
+  if (!step || typeof step !== 'object' || Array.isArray(step)) return ['a step is an object, such as {"add": [...]}'];
+  const out = [], bad = (where, what) => out.push(`${where}: ${what}`);
+  const FIELDS = ['new', 'name', 'lighting', 'lava', 'spawn', 'ball', 'add', 'remove'];
+  for (const k of Object.keys(step)) if (!FIELDS.includes(k)) bad(k, `unknown field; a step has ${FIELDS.join(', ')}`);
+  if ('new' in step && typeof step.new !== 'boolean') bad('new', 'true or false');
+  if ('name' in step && !(typeof step.name === 'string' && /^[\w -]{1,60}$/.test(step.name))) bad('name', 'up to 60 letters, digits, spaces, - or _');
+  if ('lighting' in step && step.lighting !== 'map' && !Object.hasOwn(LIGHTING, step.lighting)) bad('lighting', `one of map, ${Object.keys(LIGHTING).join(', ')}`);
+  if ('lava' in step && !Object.hasOwn(LAVA_KINDS, step.lava)) bad('lava', `one of ${Object.keys(LAVA_KINDS).join(', ')}`);
+  if ('spawn' in step && !(isVec(step.spawn?.at) && (!('yaw' in step.spawn) || isNum(step.spawn.yaw)))) bad('spawn', '{"at": [x, y, z], "yaw": degrees}');
+  if ('ball' in step && !['start', 'roof'].includes(step.ball) && !isVec(step.ball?.at)) bad('ball', '"start", "roof" or {"at": [x, y, z]}');
+  if ('remove' in step && !(Array.isArray(step.remove) && step.remove.every(id => typeof id === 'string'))) bad('remove', 'a list of ids');
+  if (!('add' in step)) return out;
+  if (!Array.isArray(step.add) || step.add.length > 2000) return [...out, 'add: a list of up to 2000 shapes and checkpoints'];
+  const ids = new Set(), KEYS = { shape: ['id', 'shape', 'at', 'size', 'yaw', 'pitch', 'roll', 'surface'],
+                                  checkpoint: ['id', 'checkpoint', 'at', 'size', 'yaw', 'gate', 'ballOnTop', 'visible'] };
+  step.add.forEach((e, n) => {
+    const where = `add[${n}]${typeof e?.id === 'string' ? ` (${e.id})` : ''}`, kind = e && ['shape', 'checkpoint'].filter(k => k in e);
+    if (!kind || kind.length !== 1) return bad(where, 'an object with either "shape" or "checkpoint"');
+    for (const k of Object.keys(e)) if (!KEYS[kind[0]].includes(k)) bad(where, `unknown field "${k}" for a ${kind[0]}`);
+    if ('id' in e && !(typeof e.id === 'string' && /^[\w-]{1,40}$/.test(e.id))) bad(where, 'id: up to 40 letters, digits, - or _');
+    else if ('id' in e && ids.has(e.id)) bad(where, 'id used twice in this step');
+    ids.add(e.id);
+    if (!isVec(e.at)) bad(where, `at: [x, y, z] within ±${LIMIT}`);
+    if ('size' in e && !(isVec(e.size) && e.size.every(v => v > 0))) bad(where, 'size: [x, y, z], each above 0');
+    for (const k of ['yaw', 'pitch', 'roll']) if (k in e && !isNum(e[k])) bad(where, `${k}: degrees`);
+    if ('shape' in e && !Object.hasOwn(AI_SHAPES, String(e.shape).toLowerCase())) bad(where, `shape: one of ${Object.keys(AI_SHAPES).join(', ')}`);
+    if ('surface' in e && typeof e.surface !== 'string') bad(where, 'surface: a name from state().surfaces');
+    if ('checkpoint' in e && !['car', 'ball'].includes(e.checkpoint)) bad(where, 'checkpoint: "car" or "ball"');
+    for (const k of ['gate', 'ballOnTop']) if (k in e && typeof e[k] !== 'boolean') bad(where, `${k}: true or false`);
+    if ('visible' in e && !['boolean', 'string'].includes(typeof e.visible)) bad(where, 'visible: true, false or a surface name');
+  });
+  return out;
+}
+const surfaceErrors = step => (step.add ?? []).flatMap((e, n) => [e.surface, typeof e.visible === 'string' ? e.visible : undefined]
+  .filter(s => s !== undefined && surfaceRef(s) === undefined)
+  .map(s => `add[${n}]: no surface "${s}"; this map has ${[...aiSurfaces().keys()].join(', ')}`));
+
+function aiAdd(e) {
+  const old = e.id && aiFind(e.id);
+  if (old) removeObject(old);
+  let obj;
+  if ('shape' in e) {
+    const key = `std:${AI_SHAPES[e.shape.toLowerCase()]}`, [min, max] = shapeBox(key);
+    const rot = [e.pitch ?? 0, e.yaw ?? 0, e.roll ?? 0].map(d => Math.round(d * DEG));
+    const scale3d = e.size ? e.size.map((v, k) => v / (max[k] - min[k])) : [1, 1, 1];
+    obj = placeShape(key, pivotFor(e.at, rot, shapeFoot(key, scale3d)), rot, scale3d, false);
+    if (e.surface) { obj.userData.surface = surfaceRef(e.surface); obj.material = shapeLook(obj.userData.surface); }
+  } else {
+    if (!zone) throw new Error('this map has no trigger zone to copy for checkpoints');
+    const b = zone.bounds, rot = [0, Math.round((e.yaw ?? 0) * DEG), 0], size = e.size ?? [2 * b[3], 2 * b[4], 2 * b[5]];
+    const scale3d = [e.gate ? GATE : size[0], size[1], size[2]].map((v, k) => v / (2 * b[3 + k]));
+    obj = makeCheckpoint(e.checkpoint, pivotFor(e.at, rot, zoneFoot(b, scale3d)), rot, !!e.ballOnTop, scale3d);
+    if (e.visible) { obj.userData.panel = { material: e.visible === true ? null : surfaceRef(e.visible) }; obj.material = lookOf(obj); }
+  }
+  obj.userData.aiId = e.id ?? idOf(obj);
+}
+function aiSetLava(kind) {
+  for (const o of objects.filter(o => o.userData.lava && !o.userData.deleted)) removeObject(o);
+  const floor = aiFloor(), kinds = LAVA_KINDS[kind];
+  if (kinds.length && (!floor || !zone)) throw new Error('this map has no floor or trigger zone for lava');
+  kinds.forEach((k, n) => {
+    const [loc, scale3d] = lavaValues(floor, boxOf(floor).max.y), obj = makeCheckpoint(k, loc, [0, 0, 0], false, scale3d, true);
+    if (!n) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }   // one red panel shows both kinds
+  });
+}
+function aiSpawn({ at, yaw = 0 }) {
+  const obj = objects.find(o => o.userData.spawn), a = obj.userData.actor;
+  a.loc = [at[0], at[1], at[2] + RESPAWN_CLEARANCE];
+  a.rot = [0, Math.round(yaw * DEG), 0];
+  applyActor(obj);
+  settleSpawn(obj);
+  markDirty(obj);
+}
+function aiBall(how, notes) {
+  const ball = ballObj(), a = ball.userData.actor, s = spawnActor();
+  if (how === 'start') {
+    if (a.i !== null) notes.push('ball: this map has a ball spawn of its own; place it with {"at": [x, y, z]}');
+    else ball.userData.placed = false;
+    return;
+  }
+  a.loc = how === 'roof' ? [s.loc[0], s.loc[1], s.loc[2] + BALL_LIFT] : [...how.at];
+  applyActor(ball);
+  settleBall(ball);
+}
+async function aiApply(step) {
+  if (typeof step === 'string') try { step = JSON.parse(step); } catch (err) { return { ok: false, errors: [`not JSON: ${err.message}`] }; }
+  let errors = aiErrors(step);
+  if (errors.length) return { ok: false, errors };
+  try {
+    if (step.new) loadStarter();
+    if (!source && !await buildOnBlank()) return { ok: false, errors: ['could not build on the blank map'] };
+    if ((errors = surfaceErrors(step)).length) return { ok: false, errors };
+    const notes = [];
+    if (step.name) saveName = `${step.name.trim()}.udk`;
+    if (step.lighting) { lighting = step.lighting; renderLighting(); }
+    for (const id of step.remove ?? []) { const o = aiFind(id); o ? removeObject(o) : notes.push(`remove: no object "${id}"`); }
+    for (const e of step.add ?? []) aiAdd(e);
+    if (step.lava) aiSetLava(step.lava);
+    if (step.spawn) aiSpawn(step.spawn);
+    if (step.ball) aiBall(step.ball, notes);
+    objects.forEach(fitGhosts);
+    select(null);
+    applyFilter();
+    updateDirty();
+    setStatus(`An AI agent changed the map: ${changeSet()[1]}`, 'ok');
+    return { ok: true, objects: aiObjects()[1].length, warnings: [...notes, ...aiWarnings()] };
+  } catch (err) {
+    return { ok: false, errors: [err.message] };
+  }
+}
+
+function aiEntry(o) {
+  readBack(o);
+  const u = o.userData, a = u.actor, b = boxOf(o), e = { id: idOf(o) };
+  if (u.lava) Object.assign(e, { kind: 'lava', resets: u.checkpoint });
+  else if (u.checkpoint) {
+    const s = a.scale3d.map(v => v * a.scale);
+    Object.assign(e, { kind: 'checkpoint', checkpoint: u.checkpoint, at: footOf(a, zoneFoot(a.bounds, s)), yaw: deg(a.rot[1]),
+                       size: s.map((v, k) => r1(2 * a.bounds[3 + k] * v)), gate: isGate(a), visible: !!u.panel });
+    if (u.checkpoint === 'ball') e.ballOnTop = !!u.ballOnTop;
+    e.respawn = (respawnValues(o) ?? a).loc.map(r1);
+  } else if (u.shape?.startsWith('std:')) {
+    const [min, max] = shapeBox(u.shape);
+    Object.assign(e, { kind: u.shape.slice(4).toLowerCase(), at: footOf(a, shapeFoot(u.shape, a.scale3d)), size: a.scale3d.map((v, k) => r1(v * (max[k] - min[k]))),
+                       yaw: deg(a.rot[1]), pitch: deg(a.rot[0]), roll: deg(a.rot[2]), surface: surfaceName(u.surface ?? lastSurface) });
+  } else Object.assign(e, { kind: 'mesh', mesh: a.mesh || a.name });
+  e.box = { min: fromThree(b.min).map(r1), max: fromThree(b.max).map(r1) };
+  return e;
+}
+function aiWarnings() {                           // what keeps the map from playing as meant
+  const [floor, list] = aiObjects(), lava = aiLava() !== 'none', out = [];
+  const floorTop = floor ? fromThree(boxOf(floor).max)[2] : -Infinity, s = spawnActor();
+  const under = groundHit([s.loc[0], s.loc[1], s.loc[2] + 150], 5000);
+  if (!under) out.push('spawn: nothing under the car');
+  else if (lava && under.object === floor) out.push('spawn: the car starts on the lava floor; stand it on a shape');
+  for (const o of list) {
+    const u = o.userData;
+    if (u.lava) continue;
+    if (u.checkpoint) {
+      const spot = (respawnValues(o) ?? u.actor).loc, hit = groundHit([spot[0], spot[1], spot[2] + 1], RESPAWN_CLEARANCE + 50);
+      if (!hit) out.push(`${idOf(o)}: nothing under its respawn spot [${spot.map(Math.round)}]; a reset drops the car from there`);
+      else if (lava && hit.object === floor) out.push(`${idOf(o)}: its respawn spot is on the lava floor`);
+    } else if (fromThree(boxOf(o).max)[2] <= floorTop) out.push(`${idOf(o)}: under the floor`);
+  }
+  const ball = ballObj(), b = ball.userData.actor.loc;
+  if (ball.userData.placed && !ball.userData.onRoof && !groundHit([b[0], b[1], b[2] + 1], BALL_REST + 50)) out.push('ball: in the air; it falls when the map starts');
+  return out;
+}
+function aiState() {
+  if (!pkg) return { map: null, note: 'The starter map is open; the first apply() builds on the blank map, keeping what is in the starter.' };
+  const [floor, list] = aiObjects(), s = spawnActor(), ball = ballObj();
+  return {
+    name: saveName, floor: floor ? r1(fromThree(boxOf(floor).max)[2]) : null, surfaces: [...aiSurfaces().keys()], lighting, lava: aiLava(),
+    spawn: { at: [s.loc[0], s.loc[1], s.loc[2] - RESPAWN_CLEARANCE].map(r1), yaw: deg(s.rot[1]) },
+    ball: { start: ball.userData.placed ? ball.userData.onRoof ? 'roof' : 'placed' : 'start', centre: ball.userData.actor.loc.map(r1) },
+    objects: list.map(aiEntry), warnings: aiWarnings(),
+  };
+}
+function aiGround(x, y) {
+  if (!isNum(x) || !isNum(y)) return { error: 'ground(x, y) takes two numbers' };
+  const hit = groundHit([x, y, LIMIT], 2 * LIMIT);
+  if (!hit) return null;
+  return { z: r1(hit.point.y), on: hit.object === aiFloor() ? 'floor' : hit.object.userData.actor ? idOf(hit.object) : 'terrain' };
+}
+async function aiLook(view = 'top', { labels = true } = {}) {
+  if (!pkg) return { ok: false, error: 'nothing built yet: apply a step first' };
+  const target = typeof view === 'string' && !['top', 'overview', 'spawn'].includes(view) ? aiFind(view) : null;
+  if (typeof view === 'string' ? !['top', 'overview', 'spawn'].includes(view) && !target : !(isVec(view?.from) && isVec(view?.at))) {
+    return { ok: false, error: 'look takes "top", "overview", "spawn", an object id, or {from: [x, y, z], at: [x, y, z]}' };
+  }
+  select(null);
+  $('showIds').checked = labels;
+  const s = spawnActor(), [ahead, right] = ueAxes(s.rot).map(toThree), up = new THREE.Vector3(0, 1, 0), tan = Math.tan(camera.fov * Math.PI / 360);
+  const box = new THREE.Box3().expandByPoint(toThree(s.loc)).expandByPoint(toThree(ballObj().userData.actor.loc));
+  for (const o of aiObjects()[1]) if (!o.userData.lava) box.union(boxOf(o));
+  const of = target ? boxOf(target) : box, centre = of.getCenter(new THREE.Vector3()), size = of.getSize(new THREE.Vector3());
+  const place = () => {
+    let from, at;
+    if (view === 'top') {                         // straight down, +X to the right (+Y is then down the screen)
+      const d = Math.max(size.z / 2 / tan, size.x / 2 / (tan * camera.aspect)) * 1.1 + 300;
+      at = new THREE.Vector3(centre.x, box.min.y, centre.z);
+      from = new THREE.Vector3(centre.x, box.max.y + d, centre.z + 0.01);
+    } else if (view === 'spawn') {
+      const p = toThree(s.loc);
+      from = p.clone().addScaledVector(ahead, -900).addScaledVector(up, 350);
+      at = p.clone().addScaledVector(ahead, 1200).addScaledVector(up, 100);
+    } else if (typeof view === 'string') {        // from behind the spawn's left shoulder, the whole box in view
+      at = centre;
+      from = ahead.clone().negate().addScaledVector(right, -0.5).addScaledVector(up, 0.8).normalize()
+        .multiplyScalar((size.length() / 2 + 200) / (tan * Math.min(1, camera.aspect)) * 1.1).add(centre);
+    } else [from, at] = [toThree(view.from), toThree(view.at)];
+    camera.position.copy(from);
+    orbit.target.copy(at);
+    orbit.update();
+  };
+  place();
+  reframe = place;
+  $('legendText').textContent = view === 'top' ? 'top view · +X → · +Y ↓' : '';
+  await nextFrame();
+  await nextFrame();
+  return { ok: true, note: 'Take a screenshot now. The bar is the scale at the middle of the view.' };
+}
+
+let labelTargets = null;                          // [object, id] to label; recounted when the map changes
+const labelEls = new Map();
+function drawLabels() {
+  $('labels').hidden = !$('showIds').checked || !pkg;
+  if ($('labels').hidden) return;
+  const { clientWidth: w, clientHeight: h } = view, seen = new Set();
+  labelTargets ??= [...aiObjects()[1].filter(o => !o.userData.lava).map(o => [o, idOf(o)]), [objects.find(o => o.userData.spawn), 'spawn'], [ballObj(), 'ball']];
+  for (const [o, id] of labelTargets) {
+    if (!o) continue;
+    const b = boxOf(o), p = new THREE.Vector3((b.min.x + b.max.x) / 2, b.max.y, (b.min.z + b.max.z) / 2).project(camera);
+    if (!labelEls.has(o)) labelEls.set(o, $('labels').appendChild(document.createElement('span')));
+    const el = labelEls.get(o);
+    if (el.textContent !== id) el.textContent = id;
+    el.hidden = p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1;
+    el.style.transform = `translate(${(p.x + 1) / 2 * w}px, ${(1 - p.y) / 2 * h}px) translate(-50%, -100%)`;
+    seen.add(o);
+  }
+  for (const [o, el] of labelEls) if (!seen.has(o)) { el.remove(); labelEls.delete(o); }
+  const across = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const px = (orbit.target.clone().addScaledVector(across, 1000).project(camera).x - orbit.target.clone().project(camera).x) / 2 * w;
+  const len = [100, 200, 500, 1000, 2000, 5000, 10000, 20000].find(l => l * px / 1000 >= 60) ?? 50000;
+  $('scaleBar').style.width = `${len * px / 1000}px`;
+  $('scaleText').textContent = `${len} units`;
 }
 
 const same = (x, y, eps) => x.every((v, i) => Math.abs(v - y[i]) < eps);
@@ -1504,6 +1804,7 @@ function renderOutline() {                        // • marks what isn't saved 
 }
 function updateDirty() {
   $('dirty').textContent = changeCount();
+  labelTargets = null;
   placeBallStart();
   if (!gizmo.dragging) scheduleOutline();          // positions refresh once a drag ends
 }
@@ -1852,6 +2153,8 @@ loadStarter();
 loadLibrary();
 window.editor = { objects: () => objects, camera, orbit, gizmo, pivot, select, duplicateSelected, deleteSelected, addFromPalette, addCheckpoint, addLava,
                   save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, changeSet, ballObj, newMap, buildOnBlank, placeShape, library };
+window.mapAI = { help: async () => (await fetch('ai-guide.md', { cache: 'no-store' })).text(), apply: aiApply, state: aiState, ground: aiGround, look: aiLook };
+console.info('AI agents: this editor has a map-building API. Run  await mapAI.help()  for the guide.');
 </script>
 </body>
 </html>
