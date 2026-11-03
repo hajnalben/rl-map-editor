@@ -600,9 +600,10 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
 }
 
 // Timer and death counter, drawn like Medieval Rings' clock: a loop that waits a second, counts, and shows
-// "Time: M:SS" and "Deaths: N" for that second. The timer freezes for good once the last checkpoint is the respawn
-// point; deaths are lava touches and resets (every car spawn after the first). The block hangs off events named
-// "HUD: ..." and reaches LastCheckpoint only by name, so all of it can be taken out again (hudNodes).
+// "Time: M:SS" for that second. The timer freezes for good once the last checkpoint is the respawn point.
+// "Deaths: N" stays on screen until the next death redraws it; deaths are lava touches and resets, counted from a
+// second after the car first spawns (Free Play's own ball may land in lava at the start). The block hangs off events
+// named "HUD: ..." and reaches LastCheckpoint only by name, so all of it can be taken out again (hudNodes).
 const HUD = 'HUD: ';
 export function hudOf(pkg) {                      // the {timer, deaths} a map shows, or null
   for (const k of liveNodes(pkg)) {
@@ -635,11 +636,11 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
   const { parent, cls, node, nodes, refs, placed, vars } = writer(add);
   const obj = cls('SeqVar_Object'), int = cls('SeqVar_Int'), bool = cls('SeqVar_Bool'), str = cls('SeqVar_String'), flt = cls('SeqVar_Float');
   const x0 = 40000, y0 = 30000, stops = timer && finish !== null;
-  const names = ['player', 'yes', 'one',
+  const names = ['player', 'one', ...(stops || deaths ? ['yes'] : []),
     ...(timer ? ['seconds', 'minutes', 'sixty', 'ten', 'zero', 'secText', 'timeText'] : []), ...(stops ? ['done', 'last', 'finish'] : []),
-    ...(deaths ? ['deaths', 'started', 'deathText'] : []), 'loaded', 'wait', ...(stops ? ['isDone', 'atFinish', 'setDone'] : []),
+    ...(deaths ? ['deaths', 'started', 'deathText'] : []), 'loaded', ...(timer ? ['wait'] : []), ...(stops ? ['isDone', 'atFinish', 'setDone'] : []),
     ...(timer ? ['tick', 'minute', 'wrap', 'addMinute', 'pad', 'padded', 'plain', 'join', 'showTime'] : []),
-    ...(deaths ? ['countText', 'showDeaths', 'spawned', 'wasStarted', 'setStarted', 'addDeath'] : [])];
+    ...(deaths ? ['spawned', 'wasStarted', 'arm', 'setStarted', ...(lava.length ? ['ifStarted'] : []), 'addDeath', 'hideDeaths', 'countText', 'showDeaths'] : [])];
   const r = refs(names);
   const at = n => [x0 + 220 * (names.indexOf(n) % 12), y0 + 200 * Math.floor(names.indexOf(n) / 12)];
   const op = (n, version, ins, outs, links, extra = [], w = 150, h = 77, name = null) => {
@@ -664,10 +665,13 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
     ...inputs.map((v, k) => varLink('Inputs', obj, [v], x + 16 + 58 * k, { prop: 'Targets', any: true, delta: 16 + 58 * k })),
     varLink('Output', str, [out], x + 132, { writeable: true, delta: 132 })],
     [['VarSeparator', S, separator], ...(inputs.length > 1 ? [['NumberOfInputs', I, inputs.length]] : [])]);
-  const show = (n, label, text, offset, next) => op(n, 3, [['Show', 13], ['Hide', 33]], [['Out', next, 23]], x => [
+  // seconds null: on screen until a Hide at the same offset
+  const show = (n, label, text, offset, next, seconds = 1) => op(n, 3, [['Show', 13], ['Hide', 33]], [['Out', next, 23]], x => [
     varLink('Target', obj, [r.player], x + 17, { prop: 'Targets', delta: 17 }), varLink('String', str, [text], x + 76, { minVars: 0, delta: 76 })],
-    [['DisplayTimeSeconds', F, 1], ['DrawTextInfo', T, ['KismetDrawTextInfo', textInfo(add, label, offset)]]]);
-  const afterTime = deaths ? [r.countText] : [[r.wait, 0]];
+    [...(seconds === null ? [] : [['DisplayTimeSeconds', F, seconds]]), ['DrawTextInfo', T, ['KismetDrawTextInfo', textInfo(add, label, offset)]]]);
+  const delay = (n, next) => op(n, 1, [['Start', 14], ['Stop', 35], ['Pause', 56]], [['Finished', next, 19], ['Aborted', [], 51]],
+    x => [varLink('Duration', flt, [], x + 25, { prop: 'Duration', delta: 25 })], [['Duration', F, 1]]);
+  const deathsAt = [-40, timer ? -180 : -220];
   const spec = {
     player: ['SeqVar_Player', value('player')], yes: ['SeqVar_Bool', value('yes', [['bValue', I, 1]])], one: ['SeqVar_Int', value('one', [['IntValue', I, 1]])],
     seconds: ['SeqVar_Int', value('seconds')], minutes: ['SeqVar_Int', value('minutes')],
@@ -676,11 +680,9 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
     done: ['SeqVar_Bool', value('done')], last: ['SeqVar_Named', value('last', [['ExpectedType', O, obj], ['FindVarName', N, 'LastCheckpoint']])],
     finish: ['SeqVar_Object', value('finish', finish === null ? [] : [['ObjValue', O, finish + 1]])],
     deaths: ['SeqVar_Int', value('deaths')], started: ['SeqVar_Bool', value('started')], deathText: ['SeqVar_String', value('deathText')],
-    loaded: ['SeqEvent_LevelLoaded', op('loaded', 3, [], [['Loaded and Visible', [[r.wait, 0]], 14], ['Beginning of Level', [], 35], ['Level Reset', [], 56]],
+    loaded: ['SeqEvent_LevelLoaded', op('loaded', 3, [], [['Loaded and Visible', timer ? [[r.wait, 0]] : [], 14], ['Beginning of Level', [], 35], ['Level Reset', [], 56]],
                                         () => [], [['MaxWidth', I, 136]], 98, 85, `${HUD}${[timer && 'timer', deaths && 'deaths'].filter(Boolean).join(' and ')}`)],
-    wait: ['SeqAct_Delay', op('wait', 1, [['Start', 14], ['Stop', 35], ['Pause', 56]],
-                              [['Finished', stops ? [r.isDone] : timer ? [r.tick] : [r.countText], 19], ['Aborted', [], 51]],
-                              x => [varLink('Duration', flt, [], x + 25, { prop: 'Duration', delta: 25 })], [['Duration', F, 1]])],
+    wait: ['SeqAct_Delay', delay('wait', stops ? [r.isDone] : [r.tick])],
     isDone: ['SeqCond_CompareBool', compareBool('isDone', r.done, [r.showTime], [r.atFinish])],
     atFinish: ['SeqCond_CompareObject', op('atFinish', 1, [['In', 23]], [['A == B', [r.setDone], 13], ['A != B', [r.tick], 33]],
                                            x => [varLink('A', obj, [r.last], x + 49, { delta: 45 }), varLink('B', obj, [r.finish], x + 74, { delta: 70 })], [], 123, 85)],
@@ -693,14 +695,17 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
     padded: ['SeqAct_ConvertToString', toText('padded', [r.zero, r.seconds], r.secText, [r.join])],
     plain: ['SeqAct_ConvertToString', toText('plain', [r.seconds], r.secText, [r.join])],
     join: ['SeqAct_ConvertToString', toText('join', [r.minutes, r.secText], r.timeText, [r.showTime], ':')],
-    showTime: ['SeqAct_DrawText', show('showTime', 'Time: ', r.timeText, [-40, -220], afterTime)],
-    countText: ['SeqAct_ConvertToString', toText('countText', [r.deaths], r.deathText, [r.showDeaths])],
-    showDeaths: ['SeqAct_DrawText', show('showDeaths', 'Deaths: ', r.deathText, [-40, timer ? -180 : -220], [[r.wait, 0]])],
+    showTime: ['SeqAct_DrawText', show('showTime', 'Time: ', r.timeText, [-40, -220], [[r.wait, 0]])],
     spawned: ['SeqEvent_CarSpawned_TA', op('spawned', 1, [], [['Out', [r.wasStarted], 66]],
                                           x => [varLink('Instigator', obj, [], x + 48, { writeable: true })], [['MaxWidth', I, 97]], 68, 128, `${HUD}reset death`)],
-    wasStarted: ['SeqCond_CompareBool', compareBool('wasStarted', r.started, [r.addDeath], [r.setStarted])],
-    setStarted: ['SeqAct_SetBool', setTrue('setStarted', r.started, [])],
-    addDeath: ['SeqAct_AddInt', math('addDeath', r.deaths, r.one, r.deaths, [])],
+    wasStarted: ['SeqCond_CompareBool', compareBool('wasStarted', r.started, [r.addDeath], [[r.arm, 0]])],
+    arm: ['SeqAct_Delay', delay('arm', [r.setStarted])],
+    setStarted: ['SeqAct_SetBool', setTrue('setStarted', r.started, [[r.hideDeaths, 1]])],
+    ifStarted: ['SeqCond_CompareBool', compareBool('ifStarted', r.started, [r.addDeath], [])],
+    addDeath: ['SeqAct_AddInt', math('addDeath', r.deaths, r.one, r.deaths, [[r.hideDeaths, 1]])],
+    hideDeaths: ['SeqAct_DrawText', show('hideDeaths', 'Deaths: ', r.deathText, deathsAt, [r.countText], null)],
+    countText: ['SeqAct_ConvertToString', toText('countText', [r.deaths], r.deathText, [r.showDeaths])],
+    showDeaths: ['SeqAct_DrawText', show('showDeaths', 'Deaths: ', r.deathText, deathsAt, [], null)],
   };
   for (const n of names) node(...spec[n]);
   placed(r, 'timer and deaths');
@@ -711,12 +716,12 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
     if (ball) {
       node('SeqVar_Object', vars(x + 30, y + 220));
       node('SeqCond_CompareObject', [['InputLinks', A, [inputLink(y + 36, 'In', 23)]],
-        ['OutputLinks', A, [outputLink('A == B', [], y + 26, 13), outputLink('A != B', [r.addDeath], y + 46, 33)]],
+        ['OutputLinks', A, [outputLink('A == B', [], y + 26, 13), outputLink('A != B', [r.ifStarted], y + 46, 33)]],
         ['VariableLinks', A, [varLink('A', obj, [z.instigator], x + 249, { delta: 45 }), varLink('B', obj, [r.player], x + 274, { delta: 70 })]],
         ...layout(1, parent, x + 200, y, 123, 85)]);
     }
     node('SeqEvent_Touch', [['Originator', O, i + 1], ['MaxTriggerCount', I, 0], ['ReTriggerDelay', F, 0.1], ...(ball ? [['bPlayerOnly', B, false]] : []),
-      ['MaxWidth', I, 173], ['OutputLinks', A, [outputLink('Touched', ball ? [z.notCar] : [r.addDeath], y + 69, 14), outputLink('UnTouched', [], y + 90, 35), outputLink('Empty', [], y + 111, 56)]],
+      ['MaxWidth', I, 173], ['OutputLinks', A, [outputLink('Touched', ball ? [z.notCar] : [r.ifStarted], y + 69, 14), outputLink('UnTouched', [], y + 90, 35), outputLink('Empty', [], y + 111, 56)]],
       ['VariableLinks', A, [varLink('Instigator', obj, ball ? [z.instigator] : [], x + 86, { writeable: true, delta: 54 })]],
       ...layout(2, parent, x, y, 131, 176, `${HUD}${ball ? 'ball' : 'car'} lava death`)]);
     placed(z, 'lava death');
