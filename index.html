@@ -130,6 +130,13 @@
         <summary title="The mood of the map's sun and sky lights">Lighting ▾</summary>
         <div class="items" id="lightingItems"></div>
       </details>
+      <details class="menu" id="screenMenu">
+        <summary title="Text the map shows on screen while you play">On screen ▾</summary>
+        <div class="items">
+          <label title="Counts up from the start and stops for good when the last checkpoint becomes the respawn point"><input type="checkbox" id="hudTimer"> Timer</label>
+          <label title="Counts lava touches and resets"><input type="checkbox" id="hudDeaths"> Death counter</label>
+        </div>
+      </details>
     </div>
     <b class="brand">RL Map Editor</b>
     <div class="side end">
@@ -413,6 +420,10 @@ function meshNamed(name) {                        // what a mesh with no readabl
 
 // Lighting: the mood of the map's sun and sky lights (map.js LIGHTING), previewed on the editor's own lights
 let lighting = 'map', lightingSaved = 'map';      // the mood picked, and the one the map has
+const NO_HUD = { timer: false, deaths: false };
+let hud = NO_HUD, hudSaved = NO_HUD;              // the timer and death counter wanted, and what the map has
+const hudChanged = () => hud.timer !== hudSaved.timer || hud.deaths !== hudSaved.deaths;
+function renderHud() { $('hudTimer').checked = hud.timer; $('hudDeaths').checked = hud.deaths; }
 function renderLighting() {
   $('lightingItems').replaceChildren(...[['map', 'As the map has it'], ...Object.entries(LIGHTING).map(([k, v]) => [k, v.name])].map(([key, name]) => {
     const label = document.createElement('label');
@@ -571,7 +582,7 @@ function settleBall(obj) {                        // let go over the spawn car: 
 
 const dirty = new Set(), removed = new Set(), added = [], undo = [];
 let fresh = false;                                // a new map started from the open one: its scripts get emptied on save
-const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0) + (lighting !== lightingSaved);
+const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0) + (lighting !== lightingSaved) + hudChanged();
 const group = new THREE.Group();
 scene.add(group);
 const selBox = new THREE.BoxHelper(undefined, 0xffd24a);
@@ -650,6 +661,8 @@ function loadStarter() {
   lastSurface = null;
   lighting = lightingSaved = 'map';
   $('lightingMenu').hidden = false;
+  hud = hudSaved = NO_HUD;
+  renderHud();
   renderLighting();
   $('sculpt').disabled = false;
   $('mapName').textContent = 'Starter map';
@@ -687,7 +700,7 @@ async function buildOnBlank() {
   });
   readBack(objects.find(o => o.userData.spawn));
   readBack(ballObj());
-  const name = saveName, mood = lighting, starterSpawn = structuredClone(spawnActor()), starterBall = ballObj().userData.placed ? [...ballObj().userData.actor.loc] : null;
+  const name = saveName, mood = lighting, screen = hud, starterSpawn = structuredClone(spawnActor()), starterBall = ballObj().userData.placed ? [...ballObj().userData.actor.loc] : null;
   if (!await openFile(new File([blankMap()], name), false)) return false;
   const start = spawnActor();
   startFresh();
@@ -710,6 +723,8 @@ async function buildOnBlank() {
   applyActor(spawn);
   settleSpawn(spawn);
   lighting = mood;
+  hud = screen;
+  renderHud();
   renderLighting();
   if (starterBall) {
     const ball = ballObj();
@@ -749,6 +764,8 @@ function loadMap(name, bytes, parsed, data) {
   ({ actors, palette, zone, spawnBall } = data);
   lighting = lightingSaved = data.lights.length && data.lights.every(m => m === data.lights[0]) && data.lights[0] || 'map';
   $('lightingMenu').hidden = !data.lights.length;
+  hud = hudSaved = data.hud ? { ...data.hud } : NO_HUD;
+  renderHud();
   renderLighting();
   const spawnAt = actors.find(a => a.cls.startsWith('PlayerStart'))?.loc;
   const checkpointZones = new Map(data.checkpoints.map(c => [c.i, c])), lavaZones = new Map(data.lava.map(z => [z.i, z]));
@@ -1513,12 +1530,13 @@ const aiLava = () => {
 function aiErrors(step) {                         // what is wrong with a step before anything changes
   if (!step || typeof step !== 'object' || Array.isArray(step)) return ['a step is an object, such as {"add": [...]}'];
   const out = [], bad = (where, what) => out.push(`${where}: ${what}`);
-  const FIELDS = ['new', 'name', 'lighting', 'lava', 'spawn', 'ball', 'add', 'remove'];
+  const FIELDS = ['new', 'name', 'lighting', 'lava', 'timer', 'deaths', 'spawn', 'ball', 'add', 'remove'];
   for (const k of Object.keys(step)) if (!FIELDS.includes(k)) bad(k, `unknown field; a step has ${FIELDS.join(', ')}`);
   if ('new' in step && typeof step.new !== 'boolean') bad('new', 'true or false');
   if ('name' in step && !(typeof step.name === 'string' && /^[\w -]{1,60}$/.test(step.name))) bad('name', 'up to 60 letters, digits, spaces, - or _');
   if ('lighting' in step && step.lighting !== 'map' && !Object.hasOwn(LIGHTING, step.lighting)) bad('lighting', `one of map, ${Object.keys(LIGHTING).join(', ')}`);
   if ('lava' in step && !Object.hasOwn(LAVA_KINDS, step.lava)) bad('lava', `one of ${Object.keys(LAVA_KINDS).join(', ')}`);
+  for (const k of ['timer', 'deaths']) if (k in step && typeof step[k] !== 'boolean') bad(k, 'true or false');
   if ('spawn' in step && !(isVec(step.spawn?.at) && (!('yaw' in step.spawn) || isNum(step.spawn.yaw)))) bad('spawn', '{"at": [x, y, z], "yaw": degrees}');
   if ('ball' in step && !['start', 'roof'].includes(step.ball) && !isVec(step.ball?.at)) bad('ball', '"start", "roof" or {"at": [x, y, z]}');
   if ('remove' in step && !(Array.isArray(step.remove) && step.remove.every(id => typeof id === 'string'))) bad('remove', 'a list of ids');
@@ -1608,6 +1626,7 @@ async function aiApply(step) {
     const notes = [];
     if (step.name) saveName = `${step.name.trim()}.udk`;
     if (step.lighting) { lighting = step.lighting; renderLighting(); }
+    if ('timer' in step || 'deaths' in step) { hud = { timer: step.timer ?? hud.timer, deaths: step.deaths ?? hud.deaths }; renderHud(); }
     for (const id of step.remove ?? []) { const o = aiFind(id); o ? removeObject(o) : notes.push(`remove: no object "${id}"`); }
     for (const e of step.add ?? []) aiAdd(e);
     if (step.lava) aiSetLava(step.lava);
@@ -1669,7 +1688,7 @@ function aiState() {
   if (!pkg) return { map: null, note: 'The starter map is open; the first apply() builds on the blank map, keeping what is in the starter.' };
   const [floor, list] = aiObjects(), s = spawnActor(), ball = ballObj();
   return {
-    name: saveName, floor: floor ? r1(fromThree(boxOf(floor).max)[2]) : null, surfaces: [...aiSurfaces().keys()], lighting, lava: aiLava(),
+    name: saveName, floor: floor ? r1(fromThree(boxOf(floor).max)[2]) : null, surfaces: [...aiSurfaces().keys()], lighting, lava: aiLava(), timer: hud.timer, deaths: hud.deaths,
     spawn: { at: [s.loc[0], s.loc[1], s.loc[2] - RESPAWN_CLEARANCE].map(r1), yaw: deg(s.rot[1]) },
     ball: { start: ball.userData.placed ? ball.userData.onRoof ? 'roof' : 'placed' : 'start', centre: ball.userData.actor.loc.map(r1) },
     objects: list.map(aiEntry), warnings: aiWarnings(),
@@ -1906,9 +1925,10 @@ function changeSet() {                            // [what build() applies, summ
                    terrain && `${terrain.tiles.length} terrain tiles`,
                    removed.size && `${removed.size} deleted`, respawns.length && `${respawns.length} respawn points`,
                    panels.length && `${panels.length} checkpoint panels`, ballSpawn && 'a ball spawn',
-                   lighting !== lightingSaved && `${LIGHTING[lighting]?.name.toLowerCase() ?? 'the map\'s own'} lighting`].filter(Boolean).join(', ') || 'no changes';
+                   lighting !== lightingSaved && `${LIGHTING[lighting]?.name.toLowerCase() ?? 'the map\'s own'} lighting`,
+                   hudChanged() && (hud.timer || hud.deaths ? `${[hud.timer && 'timer', hud.deaths && 'death counter'].filter(Boolean).join(' and ')} on screen` : 'nothing on screen')].filter(Boolean).join(', ') || 'no changes';
   return [{ edits, duplicates, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
-            lighting: lighting !== lightingSaved ? lighting : null },
+            lighting: lighting !== lightingSaved ? lighting : null, hud: hudChanged() ? hud : null },
           fresh ? `new map, ${summary}` : summary];
 }
 function editedMap() {                            // [map bytes with every change applied, summary]
@@ -2118,6 +2138,10 @@ $('lightingItems').addEventListener('change', e => {
   updateDirty();
 });
 $('showMarkers').addEventListener('change', applyFilter);
+for (const id of ['hudTimer', 'hudDeaths']) $(id).addEventListener('change', () => {
+  hud = { timer: $('hudTimer').checked, deaths: $('hudDeaths').checked };
+  updateDirty();
+});
 $('showHuge').addEventListener('change', applyFilter);
 $('save').addEventListener('click', save);
 $('play').addEventListener('click', play);

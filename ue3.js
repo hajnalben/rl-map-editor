@@ -402,7 +402,9 @@ export class Additions {
 
   clearRefs(i, prop) { this.appendRefs(i, prop, [], false); }
 
-  appendRefs(i, prop, refs, keep = true) {        // add object references to an existing object's array property
+  // add object references to an existing object's array property; `keep` (true, false, or a test of each
+  // reference) decides which of those already there stay
+  appendRefs(i, prop, refs, keep = true) {
     const e = this.pkg.exports[i];
     if (!this.replaced.has(i)) this.replaced.set(i, this.pkg.objectBytes(i).slice());
     const found = [...this.pkg.properties(e)].find(([name, ptype]) => name === prop && ptype === 'ArrayProperty');
@@ -410,7 +412,8 @@ export class Additions {
     const rel = found[3] - e.off;                 // earlier changes only ever touch bytes after this array's start
     let blob = this.replaced.get(i);
     const count = unpackFrom('<i', blob, rel)[0];
-    const old = keep ? unpackFrom(`<${count}i`, blob, rel + 4) : [];
+    const all = [...unpackFrom(`<${count}i`, blob, rel + 4)];
+    const old = keep === true ? all : keep === false ? [] : all.filter(keep);
     const next = [...old, ...refs];
     blob = concat(blob.subarray(0, rel), pack(`<i${next.length}i`, next.length, ...next), blob.subarray(rel + 4 + 4 * count));
     packInto('<i', blob, rel - 8, 4 + 4 * next.length);   // tag: name, type, size, array index

@@ -43,6 +43,8 @@ A step is an object with any of these fields:
   name: "Lava Climb",          // file name for Save as
   lighting: "warm",            // "day", "warm" (golden hour), "cool" (overcast), "dim", or "map" (as the map has it)
   lava: "both",                // the floor resets you: "car", "ball", "both" or "none"
+  timer: true,                 // on screen "Time: M:SS", frozen once the last checkpoint is the respawn point
+  deaths: true,                // on screen "Deaths: N": lava touches and resets
   spawn: { at: [x, y, z], yaw: 0 },   // where the car starts: a point on a surface
   ball: "roof",                // "roof" (on the car), {at: [x, y, z]} (on the surface there), or "start" (the game's default)
   add: [ /* shapes and checkpoints, below */ ],

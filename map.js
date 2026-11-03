@@ -1,7 +1,7 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
-import { addCheckpoints, ballSpawnMarker, checkpointZones, lavaZones, mainSequence, nodeProps, spawnBall, textInfo } from './kismet.js';
+import { addCheckpoints, ballSpawnMarker, checkpointZones, hudOf, lavaZones, mainSequence, nodeProps, setHud, spawnBall, textInfo } from './kismet.js';
 import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain } from './mesh.js';
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
@@ -22,7 +22,7 @@ export function describe(pkg) {
   const panels = actors.filter(a => /^CheckpointPanel/.test(a.mesh || '')).map(a => ({ i: a.i, material: a.materials[0] || null }));
   const tint = pkg.tintable(), spawn = actors.find(a => a.cls.startsWith('PlayerStart'))?.i ?? null;
   return { actors, palette: pkg.palette(actors), zone: pkg.zoneTemplate(), checkpoints: checkpointZones(pkg), lava: lavaZones(pkg), materials: pkg.materials(), panels,
-           spawnBall: spawnBall(pkg, spawn), ballSpawn: ballSpawnMarker(pkg), lights: mapLights(pkg).map(l => l.mood),
+           spawnBall: spawnBall(pkg, spawn), ballSpawn: ballSpawnMarker(pkg), lights: mapLights(pkg).map(l => l.mood), hud: hudOf(pkg),
            tintable: tint && pkg.exports[tint[0]].name, terrain: { tile: TILE, cell: CELL, sink: SINK, base: ground.base, material: ground.material, tiles } };
 }
 
@@ -88,11 +88,13 @@ const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its che
 // `panels` ([{loc, rot, scale3d, scale, material}]) make checkpoints visible in game: an opaque box the size of the
 // zone that nothing collides with; `surfaces` ([{i, material}]) change the surface of saved mesh actors and panels.
 // `lighting` sets the mood of the sun and sky lights (a LIGHTING key, or 'map' for as the map had them).
+// `hud` ({timer, deaths}) sets the timer and death counter; a map that has them gets them again, so they follow its
+// last checkpoint and lava zones.
 // `checkpoints` entries with `lava` are lava zones (see addCheckpoints). `ballSpawn` ({loc}) gives the ball a spawn
 // of its own (a map that has one moves its marker through `edits`). A panel material of 'lava' is a red copy
 // of the map's tintable surface (describe().tintable), added once.
 export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false,
-                                shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], surfaces = [], ballSpawn = null, lighting = null }) {
+                                shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], surfaces = [], ballSpawn = null, lighting = null, hud = null }) {
   const pkg = new Package(source.slice());
   const before = pkg.levelList().length;
   let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [];
@@ -147,11 +149,21 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     }
     out = add.save();
   }
+  const hudWanted = hud ?? hudOf(new Package(out));
+  if (hudWanted) {                                // after everything else, so it sees the final checkpoints and lava
+    const p = new Package(out), add = new Additions(p);
+    setHud(add, hudWanted, checkpointZones(p).at(-1)?.dest ?? null, lavaZones(p));
+    out = add.save();
+  }
   const packed = compact(out).bytes;              // unused meshes and textures shrunk, superseded copies gone
   if (packed.length < out.length) out = packed;
 
   const saved = new Package(out), actors = saved.levelActors(), byIndex = new Map(actors.map(a => [a.i, a]));
   if (lighting) check(mapLights(saved).every(l => l.mood === (LIGHTING[lighting] ? lighting : null)), 'lighting');
+  if (hudWanted) {
+    const got = hudOf(saved);
+    check(hudWanted.timer || hudWanted.deaths ? got?.timer === !!hudWanted.timer && got?.deaths === !!hudWanted.deaths : got === null, 'timer and death counter');
+  }
   const markersAdded = markers.length + checkpoints.filter(c => c.respawn).length + (ballSpawn ? 1 : 0);
   if (ballSpawn) {
     const m = saved.levelActors().find(a => a.i === ballSpawnMarker(saved));

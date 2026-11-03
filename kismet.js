@@ -119,19 +119,20 @@ const outputLink = (desc, targets, y, delta = 11) => [['Links', A, targets.map(t
   ['ActivateDelay', F, 0.0], ['DrawY', I, y], ['bHidden', B, false], ['bClampedMax', B, false],
   ['bClampedMin', B, false], ['OverrideDelta', I, delta]];
 
-const varLink = (desc, expected, linked, x, { prop = 'None', writeable = false, hidden = false, delta = 16, minVars = 1, maxVars = 255 } = {}) => [
+const varLink = (desc, expected, linked, x, { prop = 'None', writeable = false, hidden = false, delta = 16, minVars = 1, maxVars = 255, any = false } = {}) => [
   ['ExpectedType', O, expected], ['LinkedVariables', A, linked], ['LinkDesc', S, desc], ['LinkVar', N, 'None'],
   ['PropertyName', N, prop], ['bWriteable', B, writeable], ['bSequenceNeverReadsOnlyWritesToThisVar', B, false],
   ['bModifiesLinkedObject', B, false], ['bHidden', B, hidden], ['MinVars', I, minVars], ['MaxVars', I, maxVars],
-  ['DrawX', I, x], ['bAllowAnyType', B, false], ['bClampedMax', B, false], ['bClampedMin', B, false],
+  ['DrawX', I, x], ['bAllowAnyType', B, any], ['bClampedMax', B, false], ['bClampedMin', B, false],
   ['OverrideDelta', I, delta]];
 
 const layout = (version, parent, x, y, w, h, name = null) => [['ObjInstanceVersion', I, version], ['ParentSequence', O, parent],
   ['ObjPosX', I, x], ['ObjPosY', I, y], ...(name ? [['ObjName', S, name]] : []), ['DrawWidth', I, w], ['DrawHeight', I, h]];
 
-// a checkpoint's on-screen text (SeqAct_DrawText's DrawTextInfo), set like the messages in Lethamyr's maps
-export const textInfo = (add, text) => new Encoder(add).props([['MessageText', S, text], ['MessageFontScale', T, ['Vector2D', pack('<2f', 2, 2)]],
-                                                                ['MessageOffset', T, ['Vector2D', pack('<2f', -80, -300)]]]);
+// on-screen text (SeqAct_DrawText's DrawTextInfo), set like the messages in Lethamyr's maps; `at` is its offset from
+// the middle of the screen (checkpoint titles by default)
+export const textInfo = (add, text, at = [-80, -300]) => new Encoder(add).props([['MessageText', S, text], ['MessageFontScale', T, ['Vector2D', pack('<2f', 2, 2)]],
+                                                                                 ['MessageOffset', T, ['Vector2D', pack('<2f', ...at)]]]);
 
 export function mainSequence(pkg) {
   const level = pkg.levelIndex() + 1;
@@ -271,16 +272,14 @@ export const BALL_TOP_AHEAD = 40;                 // a ball on the car sits this
 // a spawn of its own, a marker zone there: while the car is still at its spawn, the fresh ball goes to that marker.
 // A checkpoint that becomes the respawn point shows "Checkpoint N" on screen for 2 seconds.
 // Returns the new trigger indices.
-export function addCheckpoints(add, template, checkpoints, fresh = false, spawn = null, ballSpawn = null) {
-  const pkg = add.pkg, enc = new Encoder(add);
-  const seq = mainSequence(pkg), parent = seq + 1;
-  if (seq < 0) throw new Error('this map has no Kismet sequence to hold checkpoints');
-  const classes = new Map();
+// Kismet nodes added to the main sequence: node(class, props) adds one; refs(names) gives the references the next
+// nodes will get, in order, so they can link to each other before they exist; placed() checks that order held.
+function writer(add) {
+  const pkg = add.pkg, enc = new Encoder(add), parent = mainSequence(pkg) + 1, classes = new Map(), nodes = [];
   const cls = name => {
     if (!classes.has(name)) classes.set(name, add.classRef(name, PACKAGES[name] || 'Engine'));
     return classes.get(name);
   };
-  const nodes = [];
   const node = (className, props) => {
     const i = add.addObject(cls(className), parent, className, concat(pack('<i', 0), enc.props(props)));
     nodes.push(i);
@@ -288,8 +287,15 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
   };
   const refs = names => Object.fromEntries(names.map((n, k) => [n, pkg.exports.length + add.added.length + 1 + k]));
   const placed = (r, from) => { if (nodes.slice(-Object.keys(r).length).some((n, k) => n + 1 !== Object.values(r)[k])) throw new Error(`${from}: node order`); };
-  const obj = cls('SeqVar_Object');
   const vars = (x, y, extra = []) => [...extra, ...layout(1, parent, x, y, 32, 32)];
+  return { enc, parent, cls, node, nodes, refs, placed, vars };
+}
+
+export function addCheckpoints(add, template, checkpoints, fresh = false, spawn = null, ballSpawn = null) {
+  const pkg = add.pkg, seq = mainSequence(pkg);
+  if (seq < 0) throw new Error('this map has no Kismet sequence to hold checkpoints');
+  const { enc, parent, cls, node, nodes, refs, placed, vars } = writer(add);
+  const obj = cls('SeqVar_Object');
 
   const x0 = 40000, y0 = 40000;
   const live = fresh ? new Set() : liveNodes(pkg);
@@ -591,4 +597,129 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
 
   add.appendRefs(seq, 'SequenceObjects', nodes.map(n => n + 1));
   return triggers;
+}
+
+// Timer and death counter, drawn like Medieval Rings' clock: a loop that waits a second, counts, and shows
+// "Time: M:SS" and "Deaths: N" for that second. The timer freezes for good once the last checkpoint is the respawn
+// point; deaths are lava touches and resets (every car spawn after the first). The block hangs off events named
+// "HUD: ..." and reaches LastCheckpoint only by name, so all of it can be taken out again (hudNodes).
+const HUD = 'HUD: ';
+export function hudOf(pkg) {                      // the {timer, deaths} a map shows, or null
+  for (const k of liveNodes(pkg)) {
+    if (pkg.classOf(pkg.exports[k]) !== 'SeqEvent_LevelLoaded') continue;
+    const name = nodeProps(pkg, pkg.exports[k]).ObjName;
+    if (typeof name === 'string' && name.startsWith(HUD)) return { timer: name.includes('timer'), deaths: name.includes('deaths') };
+  }
+  return null;
+}
+function hudNodes(pkg, live) {                    // the block: its events and everything they lead to or link
+  const props = k => nodeProps(pkg, pkg.exports[k]);
+  const todo = [...live].filter(k => /^SeqEvent/.test(pkg.classOf(pkg.exports[k])) && String(props(k).ObjName ?? '').startsWith(HUD));
+  const seen = new Set(todo);
+  while (todo.length) {
+    const p = props(todo.pop());
+    for (const r of [...(p.OutputLinks || []).flatMap(o => (o.Links || []).map(l => l.LinkedOp)), ...(p.VariableLinks || []).flatMap(v => v.LinkedVariables || [])]) {
+      if (r > 0 && live.has(r - 1) && !seen.has(r - 1)) { seen.add(r - 1); todo.push(r - 1); }
+    }
+  }
+  return seen;
+}
+
+// Replace the map's timer and death counter with `want` ({timer, deaths}; both off takes it out). `finish` is the
+// actor the last checkpoint makes the respawn point (null: there is none, and the timer never stops); `lava` the
+// lava zones ([{i, ball}]) whose touches count as deaths.
+export function setHud(add, { timer = false, deaths = false }, finish, lava) {
+  const pkg = add.pkg, seq = mainSequence(pkg), old = hudNodes(pkg, liveNodes(pkg));
+  if (old.size) add.appendRefs(seq, 'SequenceObjects', [], r => !old.has(r - 1));
+  if (!timer && !deaths) return;
+  const { parent, cls, node, nodes, refs, placed, vars } = writer(add);
+  const obj = cls('SeqVar_Object'), int = cls('SeqVar_Int'), bool = cls('SeqVar_Bool'), str = cls('SeqVar_String'), flt = cls('SeqVar_Float');
+  const x0 = 40000, y0 = 30000, stops = timer && finish !== null;
+  const names = ['player', 'yes', 'one',
+    ...(timer ? ['seconds', 'minutes', 'sixty', 'ten', 'zero', 'secText', 'timeText'] : []), ...(stops ? ['done', 'last', 'finish'] : []),
+    ...(deaths ? ['deaths', 'started', 'deathText'] : []), 'loaded', 'wait', ...(stops ? ['isDone', 'atFinish', 'setDone'] : []),
+    ...(timer ? ['tick', 'minute', 'wrap', 'addMinute', 'pad', 'padded', 'plain', 'join', 'showTime'] : []),
+    ...(deaths ? ['countText', 'showDeaths', 'spawned', 'wasStarted', 'setStarted', 'addDeath'] : [])];
+  const r = refs(names);
+  const at = n => [x0 + 220 * (names.indexOf(n) % 12), y0 + 200 * Math.floor(names.indexOf(n) / 12)];
+  const op = (n, version, ins, outs, links, extra = [], w = 150, h = 77, name = null) => {
+    const [x, y] = at(n);
+    return [...extra, ['InputLinks', A, ins.map(([desc, delta]) => inputLink(y + delta, desc, delta))],
+            ['OutputLinks', A, outs.map(([desc, to, delta]) => outputLink(desc, to, y + delta, delta))], ['VariableLinks', A, links(x)],
+            ...layout(version, parent, x, y, w, h, name)];
+  };
+  const value = (n, extra = []) => vars(...at(n), extra);
+  const math = (n, a, b, result, next, sub = false) => op(n, 1, [['In', 11]], [['Out', next, 11]], x => [
+    varLink('A', int, [a], x + 16, { prop: 'ValueA' }), varLink('B', int, [b], x + 41, { prop: 'ValueB', delta: 41 }),
+    varLink('IntResult', int, [result], x + 65, { prop: 'IntResult', writeable: true, delta: 65 }),
+    varLink('FloatResult', flt, [], x + 140, { prop: 'FloatResult', writeable: true, delta: 140 })]);
+  const compareInt = (n, a, b, below, atLeast) => op(n, 1, [['In', 59]],
+    [['A <= B', [], 15], ['A > B', [], 37], ['A == B', [], 59], ['A < B', below, 81], ['A >= B', atLeast, 103]],
+    x => [varLink('A', int, [a], x + 29, { prop: 'ValueA', delta: 29 }), varLink('B', int, [b], x + 54, { prop: 'ValueB', delta: 54 })], [], 91, 157);
+  const compareBool = (n, v, yes, no) => op(n, 2, [['In', 23]], [['True', yes, 13], ['False', no, 33]],
+    x => [varLink('Bool', bool, [v], x + 16), varLink('Result', bool, [], x + 59, { prop: 'bResult', writeable: true, delta: 59 })]);
+  const setTrue = (n, target, next) => op(n, 1, [['In', 11]], [['Out', next, 11]],
+    x => [varLink('Value', bool, [r.yes], x + 16, { minVars: 0 }), varLink('Target', bool, [target], x + 68, { writeable: true, delta: 68 })]);
+  const toText = (n, inputs, out, next, separator = '') => op(n, 2, [['In', 11]], [['Out', next, 11]], x => [
+    ...inputs.map((v, k) => varLink('Inputs', obj, [v], x + 16 + 58 * k, { prop: 'Targets', any: true, delta: 16 + 58 * k })),
+    varLink('Output', str, [out], x + 132, { writeable: true, delta: 132 })],
+    [['VarSeparator', S, separator], ...(inputs.length > 1 ? [['NumberOfInputs', I, inputs.length]] : [])]);
+  const show = (n, label, text, offset, next) => op(n, 3, [['Show', 13], ['Hide', 33]], [['Out', next, 23]], x => [
+    varLink('Target', obj, [r.player], x + 17, { prop: 'Targets', delta: 17 }), varLink('String', str, [text], x + 76, { minVars: 0, delta: 76 })],
+    [['DisplayTimeSeconds', F, 1], ['DrawTextInfo', T, ['KismetDrawTextInfo', textInfo(add, label, offset)]]]);
+  const afterTime = deaths ? [r.countText] : [[r.wait, 0]];
+  const spec = {
+    player: ['SeqVar_Player', value('player')], yes: ['SeqVar_Bool', value('yes', [['bValue', I, 1]])], one: ['SeqVar_Int', value('one', [['IntValue', I, 1]])],
+    seconds: ['SeqVar_Int', value('seconds')], minutes: ['SeqVar_Int', value('minutes')],
+    sixty: ['SeqVar_Int', value('sixty', [['IntValue', I, 60]])], ten: ['SeqVar_Int', value('ten', [['IntValue', I, 10]])],
+    zero: ['SeqVar_String', value('zero', [['StrValue', S, '0']])], secText: ['SeqVar_String', value('secText')], timeText: ['SeqVar_String', value('timeText')],
+    done: ['SeqVar_Bool', value('done')], last: ['SeqVar_Named', value('last', [['ExpectedType', O, obj], ['FindVarName', N, 'LastCheckpoint']])],
+    finish: ['SeqVar_Object', value('finish', finish === null ? [] : [['ObjValue', O, finish + 1]])],
+    deaths: ['SeqVar_Int', value('deaths')], started: ['SeqVar_Bool', value('started')], deathText: ['SeqVar_String', value('deathText')],
+    loaded: ['SeqEvent_LevelLoaded', op('loaded', 3, [], [['Loaded and Visible', [[r.wait, 0]], 14], ['Beginning of Level', [], 35], ['Level Reset', [], 56]],
+                                        () => [], [['MaxWidth', I, 136]], 98, 85, `${HUD}${[timer && 'timer', deaths && 'deaths'].filter(Boolean).join(' and ')}`)],
+    wait: ['SeqAct_Delay', op('wait', 1, [['Start', 14], ['Stop', 35], ['Pause', 56]],
+                              [['Finished', stops ? [r.isDone] : timer ? [r.tick] : [r.countText], 19], ['Aborted', [], 51]],
+                              x => [varLink('Duration', flt, [], x + 25, { prop: 'Duration', delta: 25 })], [['Duration', F, 1]])],
+    isDone: ['SeqCond_CompareBool', compareBool('isDone', r.done, [r.showTime], [r.atFinish])],
+    atFinish: ['SeqCond_CompareObject', op('atFinish', 1, [['In', 23]], [['A == B', [r.setDone], 13], ['A != B', [r.tick], 33]],
+                                           x => [varLink('A', obj, [r.last], x + 49, { delta: 45 }), varLink('B', obj, [r.finish], x + 74, { delta: 70 })], [], 123, 85)],
+    setDone: ['SeqAct_SetBool', setTrue('setDone', r.done, [r.showTime])],
+    tick: ['SeqAct_AddInt', math('tick', r.seconds, r.one, r.seconds, [r.minute])],
+    minute: ['SeqCond_CompareInt', compareInt('minute', r.seconds, r.sixty, [r.pad], [r.wrap])],
+    wrap: ['SeqAct_SubtractInt', math('wrap', r.seconds, r.sixty, r.seconds, [r.addMinute])],
+    addMinute: ['SeqAct_AddInt', math('addMinute', r.minutes, r.one, r.minutes, [r.pad])],
+    pad: ['SeqCond_CompareInt', compareInt('pad', r.seconds, r.ten, [r.padded], [r.plain])],
+    padded: ['SeqAct_ConvertToString', toText('padded', [r.zero, r.seconds], r.secText, [r.join])],
+    plain: ['SeqAct_ConvertToString', toText('plain', [r.seconds], r.secText, [r.join])],
+    join: ['SeqAct_ConvertToString', toText('join', [r.minutes, r.secText], r.timeText, [r.showTime], ':')],
+    showTime: ['SeqAct_DrawText', show('showTime', 'Time: ', r.timeText, [-40, -220], afterTime)],
+    countText: ['SeqAct_ConvertToString', toText('countText', [r.deaths], r.deathText, [r.showDeaths])],
+    showDeaths: ['SeqAct_DrawText', show('showDeaths', 'Deaths: ', r.deathText, [-40, timer ? -180 : -220], [[r.wait, 0]])],
+    spawned: ['SeqEvent_CarSpawned_TA', op('spawned', 1, [], [['Out', [r.wasStarted], 66]],
+                                          x => [varLink('Instigator', obj, [], x + 48, { writeable: true })], [['MaxWidth', I, 97]], 68, 128, `${HUD}reset death`)],
+    wasStarted: ['SeqCond_CompareBool', compareBool('wasStarted', r.started, [r.addDeath], [r.setStarted])],
+    setStarted: ['SeqAct_SetBool', setTrue('setStarted', r.started, [])],
+    addDeath: ['SeqAct_AddInt', math('addDeath', r.deaths, r.one, r.deaths, [])],
+  };
+  for (const n of names) node(...spec[n]);
+  placed(r, 'timer and deaths');
+
+  if (deaths) lava.forEach(({ i, ball }, k) => {     // a touch of its own on each lava zone, beside the zone's reset
+    const [x, y] = [x0 + 300 * k, y0 + 1000];
+    const z = refs(ball ? ['instigator', 'notCar', 'touch'] : ['touch']);
+    if (ball) {
+      node('SeqVar_Object', vars(x + 30, y + 220));
+      node('SeqCond_CompareObject', [['InputLinks', A, [inputLink(y + 36, 'In', 23)]],
+        ['OutputLinks', A, [outputLink('A == B', [], y + 26, 13), outputLink('A != B', [r.addDeath], y + 46, 33)]],
+        ['VariableLinks', A, [varLink('A', obj, [z.instigator], x + 249, { delta: 45 }), varLink('B', obj, [r.player], x + 274, { delta: 70 })]],
+        ...layout(1, parent, x + 200, y, 123, 85)]);
+    }
+    node('SeqEvent_Touch', [['Originator', O, i + 1], ['MaxTriggerCount', I, 0], ['ReTriggerDelay', F, 0.1], ...(ball ? [['bPlayerOnly', B, false]] : []),
+      ['MaxWidth', I, 173], ['OutputLinks', A, [outputLink('Touched', ball ? [z.notCar] : [r.addDeath], y + 69, 14), outputLink('UnTouched', [], y + 90, 35), outputLink('Empty', [], y + 111, 56)]],
+      ['VariableLinks', A, [varLink('Instigator', obj, ball ? [z.instigator] : [], x + 86, { writeable: true, delta: 54 })]],
+      ...layout(2, parent, x, y, 131, 176, `${HUD}${ball ? 'ball' : 'car'} lava death`)]);
+    placed(z, 'lava death');
+  });
+  add.appendRefs(seq, 'SequenceObjects', nodes.map(n => n + 1));
 }
