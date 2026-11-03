@@ -106,8 +106,9 @@ the spawn and every checkpoint's reset spot must be on shapes above the floor; t
   2000 forward (an estimate, not tested here).
 - Tested in the game with the ball on the roof (a 10-level lava dribble course rated right for a solid dribbler):
   gaps between pads of 300 (easy) up to 800 (hard), steps up of 100–150, drops of 120, pads 650–1700 wide.
-- Without `ball`, Free Play drops the ball at the field centre (0, 0). With ball lava, a ball comes at the spawn.
-  `state().ball.centre` shows where.
+- Without `ball`, Free Play puts the ball at the field centre (0, 0), resting at z = 0, even under a shape built
+  over that spot. With ball lava, a ball comes at the spawn instead. `state().ball.centre` shows where.
+- For a dribbling course, use `lava: "both"`, ball checkpoints with `ballOnTop: true`, and `ball: "roof"`.
 
 ## Example
 

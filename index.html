@@ -500,8 +500,8 @@ function settleSpawn(obj) {                       // a moved spawn rests on what
 }
 // The ball where it starts. Until you place it, where the game puts it: dropped at the spawn in maps that hand you
 // one there (ball lava), else at the field centre, Free Play's kick-off spot (in the starter 500 ahead of the
-// spawn, as in the blank map it is built on). Placed, it is the
-// ball's own spawn (a marker zone in the map, drawn as the ball): resting on the ground, or on the car's roof,
+// spawn, as in the blank map it is built on). That spot is a resting ball's height over z = 0, whatever is built
+// above it: a platform over the field centre covers the ball (seen in game). Placed, it is the ball's own spawn (a marker zone in the map, drawn as the ball): resting on the ground, or on the car's roof,
 // which it then follows.
 let spawnBall = null;                             // the open map's saved spawn ball, {onTop}
 const STARTER_CENTRE = [500, 0], BALL_REST = 95;  // a resting ball's centre this far over the ground (its radius is 92.75)
@@ -532,7 +532,7 @@ function placeBallStart() {
     a.loc = [start.loc[0] + forward[0] * (onTop ? 0 : BALL_AHEAD), start.loc[1] + forward[1] * (onTop ? 0 : BALL_AHEAD), start.loc[2] + (onTop ? BALL_LIFT : BALL_FRONT_LIFT)];
   } else {
     const [x, y] = pkg ? [0, 0] : STARTER_CENTRE;
-    a.loc = [x, y, (groundUnder([x, y, (start?.loc[2] ?? 0) + 2000], 50000) ?? 0) + BALL_REST];
+    a.loc = [x, y, (groundUnder([x, y, BALL_REST], 50000) ?? 0) + BALL_REST];
   }
   applyActor(ball);
 }
@@ -1628,6 +1628,9 @@ function aiWarnings() {                           // what keeps the map from pla
   }
   const ball = ballObj(), b = ball.userData.actor.loc;
   if (ball.userData.placed && !ball.userData.onRoof && !groundHit([b[0], b[1], b[2] + 1], BALL_REST + 50)) out.push('ball: in the air; it falls when the map starts');
+  const over = !ball.userData.placed && !spawnBall && !objects.some(o => o.userData.lava && o.userData.checkpoint === 'ball' && !o.userData.deleted)
+    && groundHit([b[0], b[1], LIMIT], 2 * LIMIT);
+  if (over && over.point.y > b[2]) out.push(`ball: Free Play starts it at the field centre under ${over.object === floor ? 'the floor' : idOf(over.object)}; place it with "ball", or keep (0, 0) clear`);
   return out;
 }
 function aiState() {
