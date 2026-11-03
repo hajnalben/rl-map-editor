@@ -88,10 +88,7 @@ class Encoder {                                   // tagged-property writer; nam
   prop(name, ptype, value) {
     const head = concat(this.add.fname(name), this.add.fname(ptype));
     if (ptype === B) return concat(head, pack('<ii', 0, 0), Uint8Array.of(value ? 1 : 0));
-    if (ptype === T) {                            // [struct name, its bytes]: raw for atomic structs, else tagged properties
-      const [struct, bytes] = value;
-      return concat(head, pack('<ii', bytes.length, 0), this.add.fname(struct), bytes);
-    }
+    if (ptype === T) return this.add.tag(name, T, value[1], value[0]);   // [struct name, its bytes]: raw for atomic structs, else tagged properties
     const body = this.value(ptype, value);
     return concat(head, pack('<ii', body.length, 0), body);
   }
@@ -99,9 +96,9 @@ class Encoder {                                   // tagged-property writer; nam
     if (ptype === I || ptype === O) return pack('<i', value);
     if (ptype === F) return pack('<f', value);
     if (ptype === N) return this.add.fname(value);
-    if (ptype === S) {
-      const text = concat(latin1Bytes(value), new Uint8Array(1));
-      return concat(pack('<i', text.length), text);
+    if (ptype === S) {                            // Latin-1, or UTF-16 (a negative length) for anything beyond it
+      if (/^[\x00-\xff]*$/.test(value)) return concat(pack('<i', value.length + 1), latin1Bytes(value), new Uint8Array(1));
+      return concat(pack('<i', -(value.length + 1)), new Uint8Array(Uint16Array.from((value + '\0').split(''), ch => ch.charCodeAt(0)).buffer));
     }
     if (ptype === A) {
       if (value.length && Array.isArray(value[0])) return concat(pack('<i', value.length), ...value.map(v => this.props(v)));   // structs
@@ -132,6 +129,10 @@ const varLink = (desc, expected, linked, x, { prop = 'None', writeable = false, 
 const layout = (version, parent, x, y, w, h, name = null) => [['ObjInstanceVersion', I, version], ['ParentSequence', O, parent],
   ['ObjPosX', I, x], ['ObjPosY', I, y], ...(name ? [['ObjName', S, name]] : []), ['DrawWidth', I, w], ['DrawHeight', I, h]];
 
+// a checkpoint's on-screen text (SeqAct_DrawText's DrawTextInfo), set like the messages in Lethamyr's maps
+export const textInfo = (add, text) => new Encoder(add).props([['MessageText', S, text], ['MessageFontScale', T, ['Vector2D', pack('<2f', 2, 2)]],
+                                                                ['MessageOffset', T, ['Vector2D', pack('<2f', -80, -300)]]]);
+
 export function mainSequence(pkg) {
   const level = pkg.levelIndex() + 1;
   return pkg.exports.findIndex(e => pkg.classOf(e) === 'Sequence' && e.outer === level);
@@ -158,7 +159,8 @@ function namedVar(pkg, name, live = liveNodes(pkg), cls = 'SeqVar_Object') {
 // originator), dest what a reset teleports to (the zone itself, or a marker just past a gate) and valueVar the
 // SeqVar_Object holding dest. Ball checkpoints also store whether the respawned ball goes on top of the car:
 // modeVar is the SeqVar_Int their SetInt writes into BallOnTop (null in maps made before that setting existed,
-// where it always goes on top).
+// where it always goes on top). textNode is the SeqAct_DrawText showing its title when it becomes the respawn point
+// (title its text), null in maps made before checkpoints had one.
 function graph(pkg, live) {                       // node properties, variable links by name, and the Touch event a node runs from
   const props = new Map([...live].map(k => [k, nodeProps(pkg, pkg.exports[k])]));
   const links = k => new Map((props.get(k)?.VariableLinks || []).map(l => [l.LinkDesc, l.LinkedVariables || []]));
@@ -174,15 +176,20 @@ function graph(pkg, live) {                       // node properties, variable l
     }
     return -1;
   };
-  return { props, links, touchOf };
+  return { props, links, callers, touchOf };
 }
 
 export function checkpointZones(pkg) {
   const live = liveNodes(pkg), last = namedVar(pkg, 'LastCheckpoint', live), lastBall = namedVar(pkg, 'LastBallCheckpoint', live);
   if (last === null) return [];
   const onTop = namedVar(pkg, 'BallOnTop', live, 'SeqVar_Int');
-  const { props, links, touchOf } = graph(pkg, live);
+  const { props, links, callers, touchOf } = graph(pkg, live);
   const touchedZone = k => { const t = touchOf(k); return t < 0 ? -1 : (props.get(t).Originator || 0) - 1; };
+  const textOf = k => {                           // the DrawText beside the SetObject, run by the same check
+    const check = callers.get(k)?.[0];
+    const ops = check === undefined ? [] : (props.get(check).OutputLinks || []).flatMap(o => o.Links || []).map(l => l.LinkedOp - 1);
+    return ops.find(j => j >= 0 && pkg.classOf(pkg.exports[j]) === 'SeqAct_DrawText') ?? null;
+  };
   const found = [], balls = new Map();
   for (const k of live) {
     if (pkg.classOf(pkg.exports[k]) !== 'SeqAct_SetObject') continue;
@@ -191,8 +198,9 @@ export function checkpointZones(pkg) {
       const dest = v > 0 ? (props.get(v - 1) ?? nodeProps(pkg, pkg.exports[v - 1])).ObjValue - 1 : -1;
       if (dest < 0) continue;
       if (target.includes(last + 1)) {
-        const zone = touchedZone(k);
-        found.push({ i: zone >= 0 ? zone : dest, dest, valueVar: v - 1 });
+        const zone = touchedZone(k), textNode = textOf(k);
+        found.push({ i: zone >= 0 ? zone : dest, dest, valueVar: v - 1, textNode,
+                     title: textNode === null ? null : props.get(textNode)?.DrawTextInfo?.MessageText ?? '' });
       }
       if (lastBall === null || !target.includes(lastBall + 1)) continue;
       const next = (props.get(k).OutputLinks?.[0]?.Links || [])[0]?.LinkedOp;
@@ -250,6 +258,7 @@ const PACKAGES = { SeqEvent_CarSpawned_TA: 'TAGame', SeqAct_AddGameBall_TA: 'TAG
 export const BALL_LIFT = 130;
 export const BALL_AHEAD = 250;
 export const BALL_FRONT_LIFT = 65;
+export const BALL_TOP_AHEAD = 40;                 // a ball on the car sits this far ahead of the car's middle
 
 // Copy trigger zone `template` once per checkpoint ({values: {prop: [fmt, values]}, ball, ballOnTop, respawn}) and
 // wire Kismet; `respawn` (transform values) puts a reset at a marker zone there instead of the checkpoint itself:
@@ -346,11 +355,12 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
   let onTopRef = onTop === null ? null : onTop + 1;
   let { hasBall: hasBallRef, clear: clearRef } = lastBall === null ? {} : ballChainEntries(pkg, live, lastBall);
   if (lastBallRef === null && (checkpoints.some(c => c.ball || c.lava) || ballSpawn)) {
-    // on reset, if the last checkpoint was a ball one: remove the balls, add one, and put it above the checkpoint
-    // (on the car) or ahead of it along the way it faces
+    // on reset, if the last checkpoint was a ball one: remove the balls, add one, and put it over the checkpoint (on the
+    // car, a little ahead of its middle) or ahead of it along the way it faces
     const r = refs(['lastBall', 'onTop', 'one', 'none', 'player', 'ball', 'at', 'dir', 'x', 'y', 'z', 'fx', 'fy', 'fz', 'lift', 'ahead',
                     'z2', 'dx', 'dy', 'x2', 'y2', 'above', 'front', 'spawned', 'hasBall', 'isBall', 'clear', 'addBall', 'where', 'split',
                     'which', 'raise', 'join', 'place', 'splitDir', 'mulX', 'mulY', 'subX', 'subY', 'joinFront', 'placeFront', 'frontLift', 'z3', 'raiseFront',
+                    'topAhead', 'tdx', 'tdy', 'tx', 'ty', 'topDir', 'topMulX', 'topMulY', 'topSubX', 'topSubY',
                     ...(ballSpawn ? SPAWN_NODES : [])]);
     lastBallRef = r.lastBall;
     onTopRef = r.onTop;
@@ -424,8 +434,8 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
                             varLink('Rotation', vec, [], px + 115, { maxVars: 1, delta: 88 }),
                             varLink('Target', obj, [r.ball], px + 181, { prop: 'Target', writeable: true, maxVars: 1, delta: 159 })]],
       ...layout(3, parent, px, py, 219, 61)];
-    node('SeqAct_SubtractFloat', step([r.join], math(r.z, r.lift, r.z2, x + 1950), x + 1950, y, 196));
-    node('SeqAct_SetVectorComponents', step([r.place], xyz('Output Vector', 'OutVector', r.above, [r.x, r.y, r.z2], x + 2200, true), x + 2200, y, 168));
+    node('SeqAct_SubtractFloat', step([r.topDir], math(r.z, r.lift, r.z2, x + 1950), x + 1950, y, 196));
+    node('SeqAct_SetVectorComponents', step([r.place], xyz('Output Vector', 'OutVector', r.above, [r.tx, r.ty, r.z2], x + 2200, true), x + 2200, y, 168));
     node('SeqAct_SetLocation', setLocation(r.above, x + 2400, y));
     node('SeqAct_GetVectorComponents', step([r.mulX], xyz('Input Vector', 'InVector', r.dir, [r.fx, r.fy, r.fz], x + 1950, false), x + 1950, y2, 168));
     node('SeqAct_MultiplyFloat', step([r.mulY], math(r.fx, r.ahead, r.dx, x + 2150), x + 2150, y2, 196));
@@ -437,6 +447,15 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
     node('SeqVar_Float', vars(vx + 1380, vy, [['FloatValue', F, -BALL_FRONT_LIFT]]));
     node('SeqVar_Float', vars(vx + 1440, vy));
     node('SeqAct_SubtractFloat', step([r.joinFront], math(r.z, r.frontLift, r.z3, x + 2840), x + 2840, y2 + 120, 196));
+    // on top: a little ahead of the car's middle, along the way the checkpoint faces
+    const yTop = y - 250;
+    node('SeqVar_Float', vars(vx + 1500, vy, [['FloatValue', F, -BALL_TOP_AHEAD]]));
+    for (let k = 0; k < 4; k++) node('SeqVar_Float', vars(vx + 1560 + 60 * k, vy));
+    node('SeqAct_GetVectorComponents', step([r.topMulX], xyz('Input Vector', 'InVector', r.dir, [r.fx, r.fy, r.fz], x + 1950, false), x + 1950, yTop, 168));
+    node('SeqAct_MultiplyFloat', step([r.topMulY], math(r.fx, r.topAhead, r.tdx, x + 2150), x + 2150, yTop, 196));
+    node('SeqAct_MultiplyFloat', step([r.topSubX], math(r.fy, r.topAhead, r.tdy, x + 2380), x + 2380, yTop, 196));
+    node('SeqAct_SubtractFloat', step([r.topSubY], math(r.x, r.tdx, r.tx, x + 2610), x + 2610, yTop, 196));
+    node('SeqAct_SubtractFloat', step([r.join], math(r.y, r.tdy, r.ty, x + 2840), x + 2840, yTop, 196));
     if (ballSpawn) spawnNodes(r, r.ball, [r.where], x + 900, y + 400);
     placed(r, 'ball respawn');
   } else if (ballSpawn) {                         // an existing respawn script: its added ball goes through the check
@@ -450,7 +469,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
 
   const triggers = [];
   let number = fresh ? 0 : checkpointZones(pkg).length;   // checkpoints are numbered on screen in the order they were added
-  checkpoints.forEach(({ values, ball, ballOnTop = false, respawn = null, lava: isLava = false }, k) => {
+  checkpoints.forEach(({ values, ball, ballOnTop = false, respawn = null, lava: isLava = false, title = '' }, k) => {
     const trig = add.duplicate(template, [0, 0, 0], values);
     const dest = respawn ? add.duplicate(template, [0, 0, 0], respawn) : trig;   // the marker has no Touch event
     triggers.push(trig);
@@ -473,10 +492,9 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
       ['OutputLinks', A, [outputLink('A == B', [], y + 26, 13), outputLink('A != B', next, y + 46, 33)]],
       ['VariableLinks', A, [varLink('A', obj, [a], px + 49, { delta: 45 }), varLink('B', obj, [b], px + 74, { delta: 70 })]],
       ...layout(1, parent, px, y, 123, 85)];
-    const say = (text, player, px, py) => [      // on screen for 2 seconds, set like the messages in Lethamyr's maps
+    const say = (text, player, px, py) => [      // on screen for 2 seconds
       ['DisplayTimeSeconds', F, 2],
-      ['DrawTextInfo', T, ['KismetDrawTextInfo', enc.props([['MessageText', S, text], ['MessageFontScale', T, ['Vector2D', pack('<2f', 2, 2)]],
-                                                              ['MessageOffset', T, ['Vector2D', pack('<2f', -80, -300)]]])]],
+      ['DrawTextInfo', T, ['KismetDrawTextInfo', textInfo(add, text)]],
       ['InputLinks', A, [inputLink(py + 36, 'Show', 13), inputLink(py + 56, 'Hide', 33)]],
       ['OutputLinks', A, [outputLink('Out', [], py + 46, 23)]],
       ['VariableLinks', A, [varLink('Target', obj, [player], px + 40, { prop: 'Targets', delta: 17 }),
@@ -542,7 +560,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
       node('SeqVar_Player', vars(x + 80, y + 220));
       node('SeqCond_CompareObject', differs(lastRef, r.value, [r.setLast, r.say], x + 200));
       node('SeqAct_SetObject', setObject(r.value, lastRef, [], x + 360, y));
-      node('SeqAct_DrawText', say(`Checkpoint ${number}`, r.player, x + 360, y + 100));
+      node('SeqAct_DrawText', say(title || `Checkpoint ${number}`, r.player, x + 360, y + 100));
       node('SeqEvent_Touch', touch(true, [r.isNew], []));
       placed(r, 'car checkpoint');
       return;
@@ -556,7 +574,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
     node('SeqCond_CompareObject', differs(lastRef, r.value, [r.setLast, r.say], x + 360));
     node('SeqAct_SetObject', setObject(r.value, lastRef, [r.setBall], x + 520, y));
     node('SeqAct_SetObject', setObject(r.value, lastBallRef, onTopRef ? [r.setMode] : [], x + 680, y));
-    node('SeqAct_DrawText', say(`Checkpoint ${number}`, r.player, x + 520, y + 100));
+    node('SeqAct_DrawText', say(title || `Checkpoint ${number}`, r.player, x + 520, y + 100));
     node('SeqEvent_Touch', touch(false, [r.notCar], [r.instigator]));
     if (onTopRef) {                               // maps made before the setting always put the ball on top
       const int = cls('SeqVar_Int');

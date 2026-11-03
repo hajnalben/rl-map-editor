@@ -1,7 +1,7 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
-import { addCheckpoints, ballSpawnMarker, checkpointZones, lavaZones, mainSequence, nodeProps, spawnBall } from './kismet.js';
+import { addCheckpoints, ballSpawnMarker, checkpointZones, lavaZones, mainSequence, nodeProps, spawnBall, textInfo } from './kismet.js';
 import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain } from './mesh.js';
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
@@ -98,7 +98,10 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [];
   const missing = pkg.apply(edits);
   // ball checkpoints switched between ball in front / on top: their mode variable (UDK leaves an IntValue of 0 out)
-  const zones = new Map(checkpointZones(pkg).map(z => [z.i, z])), unsetModes = [];
+  const zoneList = checkpointZones(pkg), zones = new Map(zoneList.map(z => [z.i, z])), unsetModes = [];
+  // saved checkpoints given another title (an empty one is "Checkpoint N" again, N its place among the checkpoints)
+  const titles = edits.filter(e => 'title' in e && zones.get(e.i)?.textNode != null)
+    .map(e => ({ i: e.i, text: e.title || `Checkpoint ${zoneList.indexOf(zones.get(e.i)) + 1}` }));
   for (const edit of edits) {
     const modeVar = 'ballOnTop' in edit ? zones.get(edit.i)?.modeVar : null;
     if (modeVar === null || modeVar === undefined) continue;
@@ -106,11 +109,14 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   }
   const markers = respawns.filter(r => r.marker);
   for (const r of respawns) if (!r.marker) pkg.set(pkg.exports[r.valueVar], 'ObjValue', '<i', r.zone + 1);
-  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || surfaces.length || ballSpawn || lighting) {
+  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || surfaces.length || ballSpawn || lighting || titles.length) {
     const add = new Additions(pkg);
     let lava = null;
     const surface = m => m === 'lava' ? (lava ??= lavaSurface(add)) : m;
     for (const [v, value] of unsetModes) add.setProps(v, { IntValue: add.tag('IntValue', 'IntProperty', pack('<i', value)) });
+    for (const { i, text } of titles) {
+      add.setProps(zones.get(i).textNode, { DrawTextInfo: add.tag('DrawTextInfo', 'StructProperty', textInfo(add, text), 'KismetDrawTextInfo') });
+    }
     if (fresh) add.clearRefs(mainSequence(pkg), 'SequenceObjects');
     for (const [i, values] of missing) add.setValues(i, values);
     if (lighting) setLighting(add, lighting);
@@ -124,7 +130,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
       const zone = pkg.zoneTemplate();
       if (!zone) throw new Error('this map has no trigger zone to copy for checkpoints');
       const spawn = pkg.levelActors().find(a => a.cls.startsWith('PlayerStart'))?.i ?? null;
-      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball, ballOnTop: !!c.ballOnTop, lava: !!c.lava,
+      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball, ballOnTop: !!c.ballOnTop, lava: !!c.lava, title: c.title ?? '',
                                                                      respawn: c.respawn ? editValues(c.respawn) : null })), fresh, spawn,
                                 ballSpawn && editValues({ loc: ballSpawn.loc, rot: [0, 0, 0], scale3d: [0.1, 0.1, 0.1] }));
     }
@@ -158,10 +164,12 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     if (c.lava) return check(z && z.ball === !!c.ball && !savedZones.has(t), `lava zone ${k + 1} wiring`);
     // maps made before the ball placement setting always drop the ball on top
     check(z && z.ball === !!c.ball && (!c.ball || z.modeVar === null || z.ballOnTop === !!c.ballOnTop) && (z.dest !== t) === !!c.respawn, `checkpoint ${k + 1} wiring`);
+    check(c.title ? z.title === c.title : /^Checkpoint \d+$/.test(z.title), `checkpoint ${k + 1} title`);
   });
   for (const edit of edits) {
     if ('ballOnTop' in edit && zones.get(edit.i)?.modeVar != null) check(savedZones.get(edit.i)?.ballOnTop === !!edit.ballOnTop, `${edit.i} ball placement`);
   }
+  for (const { i, text } of titles) check(savedZones.get(i)?.title === text, `${i} title`);
   if (ground) {
     const tiles = terrain(saved, actors).tiles, w = TILE + 3;
     for (const t of ground.tiles) {

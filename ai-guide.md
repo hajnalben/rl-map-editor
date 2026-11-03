@@ -82,7 +82,8 @@ and the car and the ball bounce off it.
 ```
 
 - `checkpoint: "car"`: the car passing through it saves the spot. `"ball"`: the ball passing through saves it, and
-  a reset there also brings a new ball, on the car's roof (`ballOnTop: true`) or 250 ahead of it.
+  a reset there also brings a new ball, on the car's roof a little ahead of its middle (`ballOnTop: true`), or 250
+  ahead of it.
 - A reset (Backspace in Free Play, or touching lava) puts the car at the last saved checkpoint, 30 above the ground
   under it, facing the checkpoint's yaw. The spawn counts as the first checkpoint.
 - `at` is a point on the ground or pad where the checkpoint stands; the zone reaches 50 below it. The natural size
@@ -91,6 +92,9 @@ and the car and the ball bounce off it.
   it, so leave pad under that spot. Boxes (no `gate`) are zones you drive or dribble into.
 - `visible: true` shows a panel of its size in the game, in the map's glass surface; nothing collides with it. A
   surface name instead of `true` uses that surface. Checkpoints without it are invisible in the game.
+- When a checkpoint becomes the respawn point, its `title` (up to 60 characters, e.g. `"The Stairs"`) shows on screen
+  for 2 seconds; without one it shows "Checkpoint N", numbered in the order checkpoints were added. Titles that
+  name the regions of a course read well.
 
 ### Lava
 
