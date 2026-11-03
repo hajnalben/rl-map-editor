@@ -8,10 +8,14 @@ import { nodeProps } from './kismet.js';
 
 const TEXTURE_PARAMS = ['Diffuse', 'Emissive', 'PaintTexture', 'SourceTexture'];
 const COLOR_PARAMS = ['Color', 'CollisionColor'];
-const GUESSES = [[/glass|transparent|clear/i, '#cfe6ff'], [/lava|fire|magma/i, '#ff4a1c'], [/metal|steel|chrome/i, '#9aa0a8'],
+const GUESSES = [[/fog|mist|haze/i, '#dfe5ec'], [/water|lake|river|ocean/i, '#3d78a8'], [/glass|transparent|clear/i, '#cfe6ff'],
+                 [/lava|fire|magma/i, '#ff4a1c'], [/metal|steel|chrome/i, '#9aa0a8'],
                  [/concrete|cement|stone|rock|asphalt/i, '#a7a6a1'], [/ice|snow/i, '#dcefff'], [/grass/i, '#5f9a45'],
                  [/sand|dirt/i, '#c9a46c'], [/white/i, '#ececec'], [/black/i, '#2a2a2a'], [/boost|orange/i, '#ff9a2e']];
-const SEE_THROUGH = /glass|transparent|clear|collision/i;
+const SEE_THROUGH = /glass|transparent|clear|collision|fog|mist|haze/i;
+
+// {color, opacity} that a surface or mesh name hints at; color is null when the name says nothing
+export const nameLook = name => ({ color: GUESSES.find(([re]) => re.test(name))?.[1] ?? null, opacity: SEE_THROUGH.test(name) ? 0.35 : 1 });
 
 const hex = rgb => '#' + rgb.slice(0, 3).map(c => Math.round(255 * Math.min(1, Math.max(0, c)) ** (1 / 2.2)).toString(16).padStart(2, '0')).join('');
 const params = (list) => new Map((Array.isArray(list) ? list : []).map(v => [v.ParameterName, v.ParameterValue]));
@@ -31,8 +35,8 @@ export function surfaceLook(pkg, ref) {
     if (tint && texture === null) color = hex(tint);
     r = p.Parent;
   }
-  if (texture === null && color === null) color = GUESSES.find(([re]) => re.test(name))?.[1] ?? null;
-  return { name, texture, color, emissive, opacity: SEE_THROUGH.test(name) ? 0.35 : 1 };
+  const hint = nameLook(name);
+  return { name, texture, color: texture === null && color === null ? hint.color : color, emissive, opacity: hint.opacity };
 }
 
 const BLOCK = { PF_DXT1: 8, PF_DXT3: 16, PF_DXT5: 16 }, PIXEL = { PF_A8R8G8B8: 4, PF_G8: 1 };

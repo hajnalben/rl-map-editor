@@ -257,7 +257,7 @@ import { LIGHTING, build, describe, isOriginalGameMap, shapes } from './map.js';
 import { BALL_AHEAD, BALL_FRONT_LIFT, BALL_LIFT } from './kismet.js';
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
-import { surfaceLook, textureImage } from './looks.js';
+import { nameLook, surfaceLook, textureImage } from './looks.js';
 
 // Unreal is left-handed Z-up, Three.js right-handed Y-up: swapping Y and Z converts without mirroring.
 const UU = Math.PI / 32768;                       // rotator units to radians
@@ -301,8 +301,16 @@ scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 1.4);
 sun.position.set(0.4, 1, 0.3);
 scene.add(sun);
-const grid = new THREE.GridHelper(100000, 100, 0x2a2f38, 0x1d2128);
-scene.add(grid);
+let grid = null;
+function fitGrid(reach = 50000) {                 // 1000-unit squares from the origin out to `reach` every way
+  const size = 2 * Math.ceil(reach / 1000) * 1000;
+  if (grid?.userData.size === size) return;
+  if (grid) { scene.remove(grid); grid.geometry.dispose(); grid.material.dispose(); }
+  grid = new THREE.GridHelper(size, size / 1000, 0x2a2f38, 0x1d2128);
+  grid.userData.size = size;
+  scene.add(grid);
+}
+fitGrid();
 const camera = new THREE.PerspectiveCamera(60, 1, 10, 2e6);
 const orbit = new OrbitControls(camera, renderer.domElement);
 orbit.enableDamping = true;
@@ -392,9 +400,14 @@ function materialFor(a) {
   if (!matCache.has(key)) {
     matCache.set(key, isVolume(a)
       ? new THREE.MeshBasicMaterial({ color: colorFor(a.cls), transparent: true, opacity: 0.12, depthWrite: false })
-      : new THREE.MeshStandardMaterial({ color: colorFor(a.mesh || a.cls), roughness: 0.7, metalness: 0.05, flatShading: true }));
+      : meshNamed(a.mesh || a.cls));
   }
   return matCache.get(key);
+}
+function meshNamed(name) {                        // what a mesh with no readable surface looks like: what its name hints, else a colour of its own
+  const hint = nameLook(name);
+  return new THREE.MeshStandardMaterial({ color: hint.color ?? colorFor(name), roughness: 0.7, metalness: 0.05, flatShading: true,
+                                          ...(hint.opacity < 1 ? { transparent: true, opacity: hint.opacity, depthWrite: false } : {}) });
 }
 
 // Lighting: the mood of the map's sun and sky lights (map.js LIGHTING), previewed on the editor's own lights
@@ -625,6 +638,7 @@ function loadStarter() {
   zone = { i: null, bounds: STARTER_ZONE };
   ter = { tile: TILE, cell: CELL, sink: SINK, base: -SINK, tiles: new Map(), dirty: new Set() };
   group.add(starterGround, ...objects);           // the floor (unraised terrain stays hidden under it), the spawn and the ball
+  fitGrid();
   renderPalette();
   $('terrainMat').parentElement.hidden = true;                  // surfaces come with the map it gets built on
   $('surface').innerHTML = '';
@@ -792,6 +806,8 @@ function loadMap(name, bytes, parsed, data) {
   }
   saveName = name.replace(/\.(udk|upk)$/i, '') + '-edit.udk';
   applyFilter();
+  fitGrid(Math.max(50000, ...objects.filter(o => o.visible && o.userData.actor.bounds)
+    .flatMap(o => { const b = boxOf(o); return [b.min.x, b.max.x, b.min.z, b.max.z].map(Math.abs); })));
   updateDirty();
   loadMeshes();
   objects.forEach(fitGhosts);                     // now that the ground under the checkpoints has its real shape
@@ -880,8 +896,9 @@ function applyFilter() {
     const a = obj.userData.actor;
     if (obj.userData.huge === undefined) {
       if (!obj.geometry.boundingSphere) obj.geometry.computeBoundingSphere();
-      const flat = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).y < 1000;   // a wide floor stays in view
-      obj.userData.huge = !obj.userData.lava && !flat && obj.geometry.boundingSphere.radius * Math.max(obj.scale.x, obj.scale.y, obj.scale.z) > 15000;
+      const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+      const ground = size.y < Math.max(1000, 0.12 * Math.max(size.x, size.z));   // floors and rolling hills stay in view; domes, walls, mountains go
+      obj.userData.huge = !obj.userData.lava && !ground && obj.geometry.boundingSphere.radius * Math.max(obj.scale.x, obj.scale.y, obj.scale.z) > 15000;
     }
     obj.visible = !obj.userData.deleted && !obj.userData.respawnFor
       && ($('showHuge').checked || !obj.userData.huge)
