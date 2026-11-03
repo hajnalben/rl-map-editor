@@ -1680,7 +1680,8 @@ async function aiLook(view = 'top', { labels = true } = {}) {
   place();
   reframe = place;
   $('legendText').textContent = view === 'top' ? 'top view · +X → · +Y ↓' : '';
-  await nextFrame();
+  renderer.render(scene, camera);                 // now: a hidden page gets no animation frames
+  drawLabels();
   await nextFrame();
   return { ok: true, note: 'Take a screenshot now. The bar is the scale at the middle of the view.' };
 }
