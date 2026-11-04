@@ -1,7 +1,7 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
-import { addCheckpoints, ballSpawnMarker, checkpointZones, editorDataOf, hudOf, lavaZones, mainSequence, moversOf, nodeProps, setEditorData, setHud, setMovers, spawnBall, textInfo } from './kismet.js';
+import { addCheckpoints, ballSpawnMarker, checkpointZones, editorDataOf, hudOf, keysOf, lavaZones, mainSequence, moversOf, nodeProps, setEditorData, setHud, setKeys, setMovers, spawnBall, textInfo } from './kismet.js';
 import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain, toMover } from './mesh.js';
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
@@ -115,6 +115,12 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
                                 lights = [], movers = null, triggerZones = [], script = null, conversions = [], meta = null }) {
   const pkg = new Package(source.slice());
   const before = pkg.levelList().length;
+  // Rocket League's own Kismet classes that older saves imported from Engine, where the game can't find them
+  const packageAt = name => pkg.imports.findIndex(im => im.cls === 'Package' && im.outer === 0 && im.name.toLowerCase() === name);
+  const [engine, tagame] = [packageAt('engine'), packageAt('tagame')];
+  if (engine >= 0 && tagame >= 0) pkg.imports.forEach((im, k) => {
+    if (im.cls === 'Class' && /^Seq\w+_TA$/.test(im.name) && im.outer === -(engine + 1)) pkg.setImportOuter(k, -(tagame + 1));
+  });
   let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [], copies = [], shapeActors = [], zoneActors = [], converted = new Map();
   const missing = pkg.apply(edits);
   // ball checkpoints switched between ball in front / on top: their mode variable (UDK leaves an IntValue of 0 out)
@@ -224,6 +230,14 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     setScript(add, script.source.trim() ? { source: script.source, plan, names: scriptNames, homes } : null);
     out = add.save();
   }
+  {                                               // the quick-chat keys follow the checkpoints as they are now
+    const p = new Package(out);
+    if (checkpointZones(p).length || keysOf(p)) {
+      const add = new Additions(p);
+      setKeys(add, p.levelActors().find(a => a.cls.startsWith('PlayerStart'))?.i ?? null);
+      out = add.save();
+    }
+  }
   const hudWanted = hud ?? hudOf(new Package(out));
   if (hudWanted) {                                // after everything else, so it sees the final checkpoints and lava
     const p = new Package(out), add = new Additions(p);
@@ -257,6 +271,8 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   for (const e of edits) if (typeof e.gravity === 'number') check(gravityIs(e.i, e.gravity), `${saved.exports[e.i].name} gravity`);
   duplicates.forEach((d, k) => { if (typeof d.gravity === 'number') check(gravityIs(copies[k], d.gravity), `copy ${k + 1} gravity`); });
   if (notes) check(JSON.stringify(editorDataOf(saved)) === JSON.stringify(notes), 'editor notes');
+  check(!saved.imports.some(im => im.cls === 'Class' && /^Seq\w+_TA$/.test(im.name) && saved.ref(im.outer)?.toLowerCase() !== 'tagame'), 'Kismet classes from TAGame');
+  check(keysOf(saved) === (checkpointZones(saved).length > 0 && actors.some(a => a.cls.startsWith('PlayerStart'))), 'checkpoint keys');
   for (const [, i] of converted) check(byIndex.get(i)?.cls === 'InterpActor', 'shape made a mover');
   if (script) {
     const got = scriptOf(saved);

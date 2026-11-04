@@ -116,6 +116,8 @@ standing on a platform that slides under another shape gets pushed off.
 - `checkpoint: "car"`: the car passing through it saves the spot. `"ball"`: the ball passing through saves it, and
   a reset there also brings a new ball, on the car's roof a little ahead of its middle (`ballOnTop: true`), or 250
   ahead of it.
+- In game the quick-chat keys work every checkpoint map: chat 1 resets to the last checkpoint at once, chat 2 and
+  chat 3 go to the previous and next one (the spawn first). Scripts shouldn't use `chat1`…`chat3` for their own.
 - A reset (Backspace in Free Play, or touching lava) puts the car at the last saved checkpoint, 30 above the ground
   under it, facing the checkpoint's yaw. The spawn counts as the first checkpoint.
 - `at` is a point on the ground or pad where the checkpoint stands; the zone reaches 50 below it. The natural size
@@ -194,7 +196,7 @@ on(reset, up.stop, open.set(false));
 | `after(s)`, `every(s)` | s seconds after the start; every s seconds |
 | `zone(id).enter(by)`, `.leave(by)` | the car, ball or either (`"car"`, `"ball"`, `"any"`, the default) goes in or out |
 | `checkpoint(id).enter(by)`, `.leave(by)`, `.reached` | the same for a checkpoint; `reached`: it becomes the respawn point |
-| `reset` | the car respawns (a reset, lava, falling; not the first spawn) |
+| `reset` | the car respawns (a reset, the chat 1 reset key, lava, falling; not the first spawn) |
 | `lava(by)` | the car touches car lava, or the ball touches ball lava |
 | `pressed(button)` | a fresh press of `jump`, `boost`, `handbrake`, `ballcam`, `reset`, `chat1`…`chat4` |
 | `signal(name)` | `emit(name)` ran |

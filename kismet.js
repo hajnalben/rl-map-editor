@@ -183,7 +183,8 @@ function graph(pkg, live) {                       // node properties, variable l
 }
 
 export function checkpointZones(pkg) {
-  const live = liveNodes(pkg), last = namedVar(pkg, 'LastCheckpoint', live), lastBall = namedVar(pkg, 'LastBallCheckpoint', live);
+  const all = liveNodes(pkg), keys = new Set(keyNodes(pkg, all)), live = new Set([...all].filter(k => !keys.has(k)));   // the keys set LastCheckpoint too
+  const last = namedVar(pkg, 'LastCheckpoint', live), lastBall = namedVar(pkg, 'LastBallCheckpoint', live);
   if (last === null) return [];
   const onTop = namedVar(pkg, 'BallOnTop', live, 'SeqVar_Int');
   const { props, links, callers, touchOf } = graph(pkg, live);
@@ -255,7 +256,7 @@ function ballChainEntries(pkg, live, lastBall) {  // the respawn chain's first c
   return { hasBall, clear };
 }
 
-const PACKAGES = { SeqEvent_CarSpawned_TA: 'TAGame', SeqAct_AddGameBall_TA: 'TAGame' };   // the others live in Engine
+const packageOf = name => /_TA$/.test(name) ? 'TAGame' : /_X$/.test(name) ? 'ProjectX' : 'Engine';   // Rocket League's own classes, then UE3's
 // Where a respawned ball starts, from the spot the car is teleported to (30 above the ground when there is ground):
 // on top, just over the roof; in front, this far ahead the way the checkpoint faces, just over the ground.
 export const BALL_LIFT = 130;
@@ -279,7 +280,7 @@ export const BALL_TOP_AHEAD = 40;                 // a ball on the car sits this
 export function writer(add) {
   const pkg = add.pkg, enc = new Encoder(add), parent = mainSequence(pkg) + 1, classes = new Map(), nodes = [];
   const cls = name => {
-    if (!classes.has(name)) classes.set(name, add.classRef(name, PACKAGES[name] || 'Engine'));
+    if (!classes.has(name)) classes.set(name, add.classRef(name, packageOf(name)));
     return classes.get(name);
   };
   const node = (className, props, tail = new Uint8Array(0)) => {
@@ -642,7 +643,7 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
     ...(timer ? ['seconds', 'minutes', 'sixty', 'ten', 'zero', 'secText', 'timeText'] : []), ...(stops ? ['done', 'last', 'finish'] : []),
     ...(deaths ? ['deaths', 'started', 'deathText'] : []), 'loaded', ...(timer ? ['wait'] : []), ...(stops ? ['isDone', 'atFinish', 'setDone'] : []),
     ...(timer ? ['tick', 'minute', 'wrap', 'addMinute', 'pad', 'padded', 'plain', 'join', 'showTime'] : []),
-    ...(deaths ? ['spawned', 'wasStarted', 'arm', 'setStarted', ...(lava.length ? ['ifStarted'] : []), 'addDeath', 'hideDeaths', 'countText', 'showDeaths'] : [])];
+    ...(deaths ? ['spawned', 'wasStarted', 'arm', 'setStarted', 'ifStarted', 'keyReset', 'addDeath', 'hideDeaths', 'countText', 'showDeaths'] : [])];
   const r = refs(names);
   const at = n => [x0 + 220 * (names.indexOf(n) % 12), y0 + 200 * Math.floor(names.indexOf(n) / 12)];
   const op = (n, version, ins, outs, links, extra = [], w = 150, h = 77, name = null) => {
@@ -704,6 +705,8 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
     arm: ['SeqAct_Delay', delay('arm', [r.setStarted])],
     setStarted: ['SeqAct_SetBool', setTrue('setStarted', r.started, [[r.hideDeaths, 1]])],
     ifStarted: ['SeqCond_CompareBool', compareBool('ifStarted', r.started, [r.addDeath], [])],
+    keyReset: ['SeqEvent_RemoteEvent', op('keyReset', 2, [], [['Out', [r.ifStarted], 11]], x => [varLink('Instigator', obj, [], x + 30, { writeable: true })],
+                                          [['EventName', N, KEY_RESET]], 150, 77, `${HUD}key reset death`)],
     addDeath: ['SeqAct_AddInt', math('addDeath', r.deaths, r.one, r.deaths, [[r.hideDeaths, 1]])],
     hideDeaths: ['SeqAct_DrawText', show('hideDeaths', 'Deaths: ', r.deathText, deathsAt, [r.countText], null)],
     countText: ['SeqAct_ConvertToString', toText('countText', [r.deaths], r.deathText, [r.showDeaths])],
@@ -729,6 +732,102 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
     placed(z, 'lava death');
   });
   add.appendRefs(seq, 'SequenceObjects', nodes.map(n => n + 1));
+}
+
+// Quick-chat keys on checkpoint maps: ChatPreset1 resets to the last checkpoint at once (as lava does, without the
+// respawn's wait), ChatPreset2 and ChatPreset3 go to the previous and next checkpoint, the spawn counting as the
+// first, as Kaokor's maps step through levels. Each key is polled and acts once per press. A key reset also fires the
+// remote event KEY_RESET, which the death counter and scripts' reset hear. The block is written anew on every save;
+// it links into the checkpoints' own nodes, so it keeps its node list in its event's comment and that is what goes.
+const KEYS = 'Keys';
+export const KEY_RESET = 'Keys reset';
+export const keysOf = pkg => keyNodes(pkg).length > 0;
+function keyNodes(pkg, live = liveNodes(pkg)) {
+  return [...live].flatMap(k => {
+    if (pkg.classOf(pkg.exports[k]) !== 'SeqEvent_LevelLoaded') return [];
+    const p = nodeProps(pkg, pkg.exports[k]);
+    return p.ObjName === KEYS ? [k, ...JSON.parse(p.ObjComment).nodes] : [];
+  });
+}
+export function setKeys(add, spawn) {
+  const pkg = add.pkg, seq = mainSequence(pkg), live = liveNodes(pkg), old = new Set(keyNodes(pkg, live));
+  if (old.size) add.appendRefs(seq, 'SequenceObjects', [], r => !old.has(r - 1));
+  const last = namedVar(pkg, 'LastCheckpoint', live), zones = checkpointZones(pkg);
+  if (last === null || spawn === null || !zones.length) return;
+  const lastBall = namedVar(pkg, 'LastBallCheckpoint', live), onTop = namedVar(pkg, 'BallOnTop', live, 'SeqVar_Int');
+  const { hasBall } = lastBall === null ? {} : ballChainEntries(pkg, live, lastBall), atSpawn = spawnBall(pkg, spawn);
+  const stops = [{ dest: spawn, ball: !!atSpawn, ballOnTop: !!atSpawn?.onTop, textNode: null, modeVar: atSpawn ? 0 : null }, ...zones];
+  const { parent, cls, node, nodes, refs, placed, vars } = writer(add);
+  const obj = cls('SeqVar_Object'), bool = cls('SeqVar_Bool'), int = cls('SeqVar_Int');
+  const keys = [['reset', 'ChatPreset1'], ['prev', 'ChatPreset2'], ['next', 'ChatPreset3']], x0 = 40000, y0 = 20000;
+  const names = ['loaded', 'player', 'yes', 'no', 'dir', 'mag', 'teleport', 'stop', 'activate',
+    ...keys.flatMap(([k]) => [`${k}Wait`, `${k}Check`, `${k}Down`, `${k}IsDown`, `${k}Press`, `${k}Release`]),
+    ...stops.flatMap((s, k) => [`dest${k}`, `set${k}`, `next${k}`, `prev${k}`,
+      ...(s.ball && lastBall !== null ? [`setBall${k}`, ...(s.modeVar !== null && onTop !== null ? [`mode${k}`, `setMode${k}`] : [])] : [])])];
+  const r = refs(names), n = stops.length;
+  const at = name => { const k = names.indexOf(name); return [x0 + 260 * (k % 10), y0 + 220 * Math.floor(k / 10)]; };
+  const op = (name, version, ins, outs, links, extra = [], w = 150, h = 77, objName = null) => {
+    const [x, y] = at(name);
+    return [...extra, ['InputLinks', A, ins.map(([desc, delta]) => inputLink(y + delta, desc, delta))],
+            ['OutputLinks', A, outs.map(([desc, to, delta]) => outputLink(desc, to, y + delta, delta))], ['VariableLinks', A, links(x)],
+            ...layout(version, parent, x, y, w, h, objName)];
+  };
+  const setBool = (name, value, target) => op(name, 1, [['In', 11]], [['Out', [], 11]],
+    x => [varLink('Value', bool, [value], x + 16, { minVars: 0 }), varLink('Target', bool, [target], x + 68, { writeable: true, delta: 68 })]);
+  const setObject = (name, value, target, next) => op(name, 2, [['In', 11]], [['Out', next, 11]],
+    x => [varLink('Value', obj, [value], x + 34, { prop: 'Value' }), varLink('Target', obj, [target], x + 90, { prop: 'Targets', delta: 68 })], [], 128, 61);
+  const compare = (name, b, same, other) => op(name, 1, [['In', 23]], [['A == B', same, 13], ['A != B', other, 33]],
+    x => [varLink('A', obj, [last + 1], x + 49, { delta: 45 }), varLink('B', obj, [b], x + 74, { delta: 70 })], [], 123, 85);
+  const arrive = k => {                            // after LastCheckpoint (and the ball's) is set: there, with its title
+    const text = stops[k].textNode;
+    return [r.teleport, ...(text === null ? [] : [[text + 1, 0]])];
+  };
+  const go = k => [r[`set${k}`]];
+  const spec = {
+    loaded: ['SeqEvent_LevelLoaded', op('loaded', 3, [], [['Loaded and Visible', keys.map(([k]) => [r[`${k}Wait`], 0]), 14], ['Beginning of Level', [], 35], ['Level Reset', [], 56]],
+                                        () => [], [['MaxWidth', I, 136], ['ObjComment', S, '']], 98, 85, KEYS)],
+    player: ['SeqVar_Player', vars(...at('player'))], yes: ['SeqVar_Bool', vars(...at('yes'), [['bValue', I, 1]])], no: ['SeqVar_Bool', vars(...at('no'))],
+    dir: ['SeqVar_Vector', vars(...at('dir'))], mag: ['SeqVar_Float', vars(...at('mag'))],
+    teleport: ['SeqAct_Teleport', op('teleport', 2, [['In', 34]], [['Out', [r.stop, ...(hasBall ? [hasBall] : [])], 34]], x => [
+      varLink('Target', obj, [r.player], x + 38, { prop: 'Targets' }), varLink('Destination', obj, [last + 1], x + 113, { delta: 76 }),
+      varLink('Teleport Volumes', obj, [], 0, { prop: 'TeleportVolumes', hidden: true, delta: 0 })], [], 166, 61)],
+    stop: ['SeqAct_SetVelocity', op('stop', 1, [['In', 34]], [['Out', [], 34]], x => [
+      varLink('Target', obj, [r.player], x + 38, { prop: 'Targets' }), varLink('Velocity Dir', cls('SeqVar_Vector'), [r.dir], x + 102, { prop: 'VelocityDir', delta: 76 }),
+      varLink('Velocity Mag', cls('SeqVar_Float'), [r.mag], x + 171, { prop: 'VelocityMag', delta: 145 })], [], 214, 77)],
+    activate: ['SeqAct_ActivateRemoteEvent', op('activate', 1, [['In', 11]], [['Out', [], 11]],
+      x => [varLink('Instigator', obj, [r.player], x + 30, { prop: 'Instigator' })], [['EventName', N, KEY_RESET]])],
+  };
+  for (const [k, action] of keys) {                // poll; only a fresh press counts
+    spec[`${k}Wait`] = ['SeqAct_Delay', op(`${k}Wait`, 1, [['Start', 14], ['Stop', 35], ['Pause', 56]], [['Finished', [r[`${k}Check`]], 19], ['Aborted', [], 51]],
+      x => [varLink('Duration', cls('SeqVar_Float'), [], x + 25, { prop: 'Duration', delta: 25 })], [['Duration', F, 0.03]])];
+    spec[`${k}Check`] = ['SeqAct_IsActionPressed_TA', op(`${k}Check`, 1, [['Check', 23]],
+      [['True', [[r[`${k}Wait`], 0], r[`${k}IsDown`]], 13], ['False', [[r[`${k}Wait`], 0], r[`${k}Release`]], 33]],
+      x => [varLink('Instigator', obj, [r.player], x + 30, { prop: 'Instigator', delta: 30 })], [['ActionName', N, action]])];
+    spec[`${k}Down`] = ['SeqVar_Bool', vars(...at(`${k}Down`))];
+    spec[`${k}IsDown`] = ['SeqCond_CompareBool', op(`${k}IsDown`, 2, [['In', 23]], [['True', [], 13], ['False', [r[`${k}Press`]], 33]],
+      x => [varLink('Bool', bool, [r[`${k}Down`]], x + 16), varLink('Result', bool, [], x + 59, { prop: 'bResult', writeable: true, delta: 59 })])];
+    const then = { reset: [r.activate, r.teleport], prev: [r.prev0], next: [r.next0] }[k];
+    spec[`${k}Press`] = ['SeqAct_SetBool', setBool(`${k}Press`, r.yes, r[`${k}Down`])];
+    spec[`${k}Press`][1].find(([p]) => p === 'OutputLinks')[2] = [outputLink('Out', then, at(`${k}Press`)[1] + 11)];
+    spec[`${k}Release`] = ['SeqAct_SetBool', setBool(`${k}Release`, r.no, r[`${k}Down`])];
+  }
+  stops.forEach((s, k) => {                        // a chain of checks finds where LastCheckpoint is; none: the spawn
+    const ball = s.ball && lastBall !== null, mode = ball && s.modeVar !== null && onTop !== null;
+    spec[`dest${k}`] = ['SeqVar_Object', vars(...at(`dest${k}`), [['ObjValue', O, s.dest + 1]])];
+    spec[`set${k}`] = ['SeqAct_SetObject', setObject(`set${k}`, r[`dest${k}`], last + 1, ball ? [r[`setBall${k}`]] : arrive(k))];
+    spec[`next${k}`] = ['SeqCond_CompareObject', compare(`next${k}`, r[`dest${k}`], go(Math.min(k + 1, n - 1)), k + 1 < n ? [r[`next${k + 1}`]] : go(Math.min(1, n - 1)))];
+    spec[`prev${k}`] = ['SeqCond_CompareObject', compare(`prev${k}`, r[`dest${k}`], go(Math.max(k - 1, 0)), k + 1 < n ? [r[`prev${k + 1}`]] : go(0))];
+    if (ball) spec[`setBall${k}`] = ['SeqAct_SetObject', setObject(`setBall${k}`, r[`dest${k}`], lastBall + 1, mode ? [r[`setMode${k}`]] : arrive(k))];
+    if (mode) {
+      spec[`mode${k}`] = ['SeqVar_Int', vars(...at(`mode${k}`), [['IntValue', I, s.ballOnTop ? 1 : 0]])];
+      spec[`setMode${k}`] = ['SeqAct_SetInt', op(`setMode${k}`, 2, [['In', 11]], [['Out', arrive(k), 11]],
+        x => [varLink('Value', int, [r[`mode${k}`]], x + 34, { prop: 'Value' }), varLink('Target', int, [onTop + 1], x + 90, { prop: 'Target', writeable: true, delta: 68 })], [], 128, 61)];
+    }
+  });
+  spec.loaded[1].find(([p]) => p === 'ObjComment')[2] = JSON.stringify({ nodes: names.slice(1).map(name => r[name] - 1) });
+  for (const name of names) node(...spec[name]);
+  placed(r, 'keys');
+  add.appendRefs(seq, 'SequenceObjects', nodes.map(k => k + 1));
 }
 
 // Moving shapes (motion.js): per mover a Matinee (SeqAct_Interp) playing its InterpData's one move track on the

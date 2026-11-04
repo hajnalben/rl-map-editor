@@ -32,7 +32,7 @@ export class Package {
       this.pos += 8;                              // name flags
     }
     this.nameTable = this.data.slice(noff, this.pos);
-    this.pos = ioff;
+    this.pos = this.importsAt = ioff;
     this.imports = [];
     for (let k = 0; k < icount; k++) {
       this.fname();                               // class package
@@ -118,6 +118,12 @@ export class Package {
       if (name === wanted) return [ptype, structName, off, size];
     }
     return null;
+  }
+
+  setImportOuter(k, outer) {                      // in place: import k (28 bytes each) moves to another package
+    packInto('<i', this.data, this.importsAt + 28 * k + 16, outer);
+    packInto('<i', this.importTable, 28 * k + 16, outer);
+    this.imports[k].outer = outer;
   }
 
   get(e, name, fmt) {
@@ -336,10 +342,12 @@ export class Additions {
     return k >= 0 ? -(k + 1) : n >= 0 ? -(this.pkg.imports.length + n + 1) : null;
   }
 
-  classRef(className, packageName) {              // reference to a script class, importing it when the map never used it
-    let ref = this.findImport(className, 'Class');
+  // reference to a script class of `packageName`, importing it when the map never used it (an import of the same
+  // name in another package, as older saves made for TAGame's Kismet classes, doesn't count: the game can't find it)
+  classRef(className, packageName) {
+    let outer = this.findImport(packageName, 'Package');
+    let ref = outer === null ? null : this.findImport(className, 'Class', outer);
     if (ref === null) {
-      let outer = this.findImport(packageName, 'Package');
       if (outer === null) outer = this.addImport('Core', 'Package', 0, packageName);
       ref = this.addImport('Core', 'Class', outer, className);
     }

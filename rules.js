@@ -2,7 +2,7 @@
 // and variables for its state, built from the node layouts working maps use (airdribblegauntlet, tower, The Path,
 // Leth's maps). The nodes are listed in a store node that also keeps the script's source and the objects its names
 // stand for, so the next save takes them all out before writing the script anew.
-import { A, B, E, F, I, N, O, S, T, checkpointZones, inputLink, lavaZones, layout, liveNodes, mainSequence, nodeProps, outputLink, textInfo, varLink, writer } from './kismet.js';
+import { A, B, E, F, I, KEY_RESET, N, O, S, T, checkpointZones, inputLink, lavaZones, layout, liveNodes, mainSequence, nodeProps, outputLink, textInfo, varLink, writer } from './kismet.js';
 import { concat, pack } from './bytes.js';
 import { BUTTONS } from './script.js';
 
@@ -139,12 +139,12 @@ export function setScript(add, script) {
         hooks.set(text, [...(hooks.get(text) ?? []), relay]);
         return [[relay, 0]];
       }
-      if (e.on === 'reset') {                      // every car spawn after the first
+      if (e.on === 'reset') {                      // every car spawn after the first, and the quick-chat reset key
         const spawned = op('SeqEvent_CarSpawned_TA', 1, [], [['Out', 66]], (R, x) => [varLink('Instigator', obj, [], x + 48, { writeable: true })],
                            { pre: [['MaxWidth', I, 97]], size: [68, 128], name: `${STORE}: reset` });
         const was = boolVar(false, false), c = compareBool(was), set = setBool(was, boolVar(true));
         link([[spawned, 0]], c); link([[c, 1]], set);
-        return [[c, 0]];
+        return [[c, 0], [remote('SeqEvent_RemoteEvent', KEY_RESET, [], 2), 0]];
       }
       if (e.on === 'finished' || e.on === 'reversed') return [[clips.get(e.clip), e.on === 'finished' ? 0 : 1]];
       if (e.on === 'pressed') {                    // polled, as airdribblegauntlet and The Path do; only a fresh press counts
