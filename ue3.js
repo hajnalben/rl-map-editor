@@ -192,10 +192,13 @@ export class Package {
       if (cls === 'WorldInfo' || cls === 'ReachSpec') continue;
       const scale = this.get(e, 'DrawScale', '<f');
       const [shape, bounds] = this.shape(e, cache);
+      // the mesh component's own Scale3D and Scale, which multiply the actor's (Leth sizes road pieces this way)
+      const comp = this.get(e, 'StaticMeshComponent', '<i')?.[0], c = comp > 0 ? this.exports[comp - 1] : null;
+      const inner = c ? (this.get(c, 'Scale3D', '<3f') || [1, 1, 1]).map(v => v * (this.get(c, 'Scale', '<f')?.[0] ?? 1)) : [1, 1, 1];
       actors.push({
         i, name: e.name, cls, mesh: this.meshOf(e),
         loc: this.get(e, 'Location', '<3f') || [0, 0, 0], rot: this.get(e, 'Rotation', '<3i') || [0, 0, 0],
-        scale3d: this.get(e, 'DrawScale3D', '<3f') || [1, 1, 1], scale: scale ? scale[0] : 1, bounds,
+        scale3d: this.get(e, 'DrawScale3D', '<3f') || [1, 1, 1], scale: scale ? scale[0] : 1, inner, bounds,
         meshIndex: shape !== null && this.classOf(this.exports[shape]) === 'StaticMesh' ? shape : null,
       });
     }

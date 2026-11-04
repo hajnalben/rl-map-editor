@@ -991,14 +991,15 @@ function applyActor(obj) {
   obj.position.copy(toThree(a.loc));
   obj.quaternion.copy(ueToQuat(a.rot));
   if (obj.userData.ballSpawn) return;             // real size, whatever the marker zone's scale
-  const s = a.scale;
-  obj.scale.set(a.scale3d[0] * s, a.scale3d[2] * s, a.scale3d[1] * s);
+  const s = a.scale, c = a.inner ?? [1, 1, 1];      // inner: the mesh component's own scale, kept apart from the actor's
+  obj.scale.set(a.scale3d[0] * s * c[0], a.scale3d[2] * s * c[2], a.scale3d[1] * s * c[1]);
 }
 function readBack(obj) {                          // three object -> actor transform
   const a = obj.userData.actor;
   a.loc = fromThree(obj.position);
   a.rot = quatToUe(obj.quaternion);
-  if (!obj.userData.ballSpawn) a.scale3d = [obj.scale.x, obj.scale.z, obj.scale.y].map(v => v / a.scale);
+  const c = a.inner ?? [1, 1, 1];
+  if (!obj.userData.ballSpawn) a.scale3d = [obj.scale.x / c[0], obj.scale.z / c[2], obj.scale.y / c[1]].map(v => v / a.scale);
 }
 
 // confirm() as a page dialog: the desktop app's browser pane answers native dialogs with "no" without showing them
