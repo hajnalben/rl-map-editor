@@ -293,19 +293,31 @@ function newMeshSetup(add) {
   return { actor, comp, template, meshExport };
 }
 
-// Place shapes ([{key, values, material?}], values as editValues returns) whose geometry is {key: [geometryMesh
+// Place shapes ([{key, values, material?, mover?}], values as editValues returns) whose geometry is {key: [geometryMesh
 // arguments]}; each distinct shape becomes one mesh named `name`, drawn with its own or the shared `material`.
-// Shapes that aren't `solid` are only seen: nothing collides with them. Returns the new actor indices.
+// Shapes that aren't `solid` are only seen: nothing collides with them. A `mover` is an InterpActor, which Matinee
+// moves, with its mesh component as on Leth's moving platforms: lit as a dynamic object, and the template's
+// surface physics (sticky walls). Returns the new actor indices.
 export function addShapes(add, shapes, geometry, material = null, { name = 'Shape', solid = true } = {}) {
   const { actor, comp, template, meshExport } = newMeshSetup(add), meshes = new Map();
   const ghost = solid ? {} : Object.fromEntries(['CollideActors', 'BlockActors', 'BlockRigidBody', 'BlockZeroExtent', 'BlockNonZeroExtent']
     .map(n => [n, add.tag(n, 'BoolProperty', new Uint8Array(1))]));
-  return shapes.map(({ key, values, material: own = material }) => {
+  const phys = add.pkg.get(add.pkg.exports[comp], 'PhysMaterialOverride', '<i')?.[0] ?? 0;
+  const lit = add.tag('LightingChannels', 'StructProperty', concat(...['bInitialized', 'Dynamic'].map(n => add.tag(n, 'BoolProperty', Uint8Array.of(1))), add.fname('None')),
+                      'LightingChannelContainer');
+  const mover = (mesh, own, values) => add.addActor('InterpActor', 'StaticMeshComponent', 'StaticMeshComponent0', component => [
+    add.tag('StaticMeshComponent', 'ObjectProperty', pack('<i', component)), ...Object.values(add.transformTags(values)),
+    add.tag('Tag', 'NameProperty', add.fname('InterpActor')), add.tag('CollisionComponent', 'ObjectProperty', pack('<i', component))],
+    [add.tag('StaticMesh', 'ObjectProperty', pack('<i', mesh)), ...(own !== null ? [add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(own)))] : []),
+     add.tag('ReplacementPrimitive', 'ObjectProperty', pack('<i', 0)), lit, ...(phys ? [add.tag('PhysMaterialOverride', 'ObjectProperty', pack('<i', phys))] : [])],
+    pack('<i', 0));
+  return shapes.map(({ key, values, material: own = material, mover: moves = false }) => {
     if (!meshes.has(key)) {
       if (!geometry[key]) throw new Error(`no geometry for shape ${key}`);
       const [blob, rawAt] = write(geometryMesh(template, ...geometry[key]));
       meshes.set(key, add.addObject(meshExport.cls, meshExport.outer, name, blob, meshExport.flags, [rawAt]) + 1);
     }
+    if (moves) return mover(meshes.get(key), own, values);
     const tags = { ...ghost, StaticMesh: add.tag('StaticMesh', 'ObjectProperty', pack('<i', meshes.get(key))) };
     if (own !== null) tags.Materials = add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(own)));
     // no baked lighting (LODData): the engine lights the new mesh dynamically

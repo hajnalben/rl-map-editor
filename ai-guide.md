@@ -77,6 +77,35 @@ Surfaces come from `state().surfaces`. The blank map has Sand, White, Gray, Dark
 Metal_Master, CS_Concrete, Concrete_Hexagons, BCH_Plastic_White and Ice_02. Every shape is solid: cars drive on it,
 and the car and the ball bounce off it.
 
+### Moving shapes
+
+A shape with `motion` moves in the game (a Matinee, as Leth's maps move their platforms). The car and the ball ride
+on it and bounce off it. `look()` shows shapes where they start; the editor plays the motions.
+
+```js
+{ id: "lift", shape: "platform", at: [0, 0, 300], motion: { kind: "slide", to: [0, 0, 800], seconds: 3, pause: 1 } }
+```
+
+| kind | what it does | its own settings (defaults) |
+|---|---|---|
+| `slide` | goes to a second spot and back | `to`: [x, y, z] from where it stands ([1000, 0, 0]); `back`: `"same"` or `"jump"` |
+| `path` | visits spots in order, then back | `points`: up to 20 [x, y, z] from where it stands; `back`: `"same"` (retraces), `"start"` (straight back) or `"jump"` |
+| `spin` | keeps turning about its middle | `axis`: `"yaw"` (flat, a turntable), `"roll"` (a windmill facing the way it points), `"pitch"` (tumbling); `steps` (1): turns in that many steps; `reverse` (false) |
+| `swing` | swings back and forth like a pendulum | `axis` (`"roll"`), `angle` (45): degrees each way; `hinge`: `"top"`, `"middle"` or `"bottom"` of the shape |
+
+Every kind also takes:
+- `seconds`: one move (slide, path), one step (spin: a whole turn with 1 step), or one whole swing there and back.
+  Defaults 2, 2, 4, 3.
+- `smooth` (true, spin false): eases into and out of every stop; a swing moves like a pendulum. False is steady speed.
+- `pause` (0): seconds it waits at each stop: a spot, after a spin step, at the ends of a swing.
+- `delay` (0): seconds after its start before it moves.
+- `trigger` (null): a checkpoint id; it starts when the car or ball touches that checkpoint, else with the map.
+- `once` (false): goes through its round once instead of over and over. With `back: "jump"` it then stays at its
+  last spot, which makes a door that opens or a bridge that drops when a checkpoint is touched.
+
+Offsets are world units from where the shape starts, whatever way it faces. Give a moving shape room: a car
+standing on a platform that slides under another shape gets pushed off.
+
 ### Checkpoints
 
 ```js

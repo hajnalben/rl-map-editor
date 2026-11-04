@@ -1,12 +1,13 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
-import { addCheckpoints, ballSpawnMarker, checkpointZones, hudOf, lavaZones, mainSequence, nodeProps, setHud, spawnBall, textInfo } from './kismet.js';
+import { addCheckpoints, ballSpawnMarker, checkpointZones, hudOf, lavaZones, mainSequence, moversOf, nodeProps, setHud, setMovers, spawnBall, textInfo } from './kismet.js';
 import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain } from './mesh.js';
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
 import { compact } from './compact.js';
 import { LIGHT_FIELDS, addLight, lightOf, setLight } from './lights.js';
+import { motionKeys, scaledBox } from './motion.js';
 
 export function describe(pkg) {
   const all = pkg.levelActors(), ground = terrain(pkg, all);
@@ -24,7 +25,7 @@ export function describe(pkg) {
   const panels = actors.filter(a => /^CheckpointPanel/.test(a.mesh || '')).map(a => ({ i: a.i, material: a.materials[0] || null }));
   const tint = pkg.tintable(), spawn = actors.find(a => a.cls.startsWith('PlayerStart'))?.i ?? null;
   return { actors, palette: pkg.palette(actors), zone: pkg.zoneTemplate(), checkpoints: checkpointZones(pkg), lava: lavaZones(pkg), materials: pkg.materials(), panels,
-           spawnBall: spawnBall(pkg, spawn), ballSpawn: ballSpawnMarker(pkg), lights: mapLights(pkg).map(l => l.mood), hud: hudOf(pkg),
+           spawnBall: spawnBall(pkg, spawn), ballSpawn: ballSpawnMarker(pkg), lights: mapLights(pkg).map(l => l.mood), hud: hudOf(pkg), movers: moversOf(pkg),
            tintable: tint && pkg.exports[tint[0]].name, terrain: { tile: TILE, cell: CELL, sink: SINK, base: ground.base, material: ground.material, tiles } };
 }
 
@@ -94,15 +95,18 @@ const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its che
 // last checkpoint and lava zones.
 // `lights` are new lights ([{kind, loc, rot, ...settings}], see lights.js); an edit or duplicate with `light`
 // ({setting: value}) sets those on a saved light or its copy. A sun or sky light set by hand leaves the mood.
+// `movers` ([{i | shape: k | duplicate: k, motion}], see motion.js) is every moving shape the map should have, given
+// when they change: a saved one, `shapes[k]` (written as a mover), or the copy `duplicates[k]`. A motion's trigger
+// is {i} (a saved checkpoint zone), {checkpoint: k} (`checkpoints[k]`) or null.
 // `checkpoints` entries with `lava` are lava zones (see addCheckpoints). `ballSpawn` ({loc}) gives the ball a spawn
 // of its own (a map that has one moves its marker through `edits`). A panel material of 'lava' is a red copy
 // of the map's tintable surface (describe().tintable), added once.
 export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false,
                                 shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], surfaces = [], ballSpawn = null, lighting = null, hud = null,
-                                lights = [] }) {
+                                lights = [], movers = null }) {
   const pkg = new Package(source.slice());
   const before = pkg.levelList().length;
-  let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [], copies = [];
+  let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [], copies = [], shapeActors = [];
   const missing = pkg.apply(edits);
   // ball checkpoints switched between ball in front / on top: their mode variable (UDK leaves an IntValue of 0 out)
   const zoneList = checkpointZones(pkg), zones = new Map(zoneList.map(z => [z.i, z])), unsetModes = [];
@@ -142,7 +146,8 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
                                 ballSpawn && editValues({ loc: ballSpawn.loc, rot: [0, 0, 0], scale3d: [0.1, 0.1, 0.1] }));
     }
     if (ground) [tilesAdded, tilesRemoved] = saveTerrain(add, Number(ground.base), ground.material, ground.tiles);
-    if (shapes.length) addShapes(add, shapes.map(s => ({ key: s.key, values: editValues(s), material: s.material == null ? undefined : surface(s.material) })), shapeGeometry, shapeMaterial);
+    if (shapes.length) shapeActors = addShapes(add, shapes.map(s => ({ key: s.key, values: editValues(s), material: s.material == null ? undefined : surface(s.material), mover: !!s.mover })),
+                                               shapeGeometry, shapeMaterial);
     if (panels.length) {
       const zone = pkg.zoneTemplate();
       if (!zone) throw new Error('this map has no trigger zone to size checkpoint panels');
@@ -168,6 +173,17 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     newLights = lights.map(l => addLight(add, l.kind, l.loc, l.rot ?? [0, 0, 0], l));
     out = add.save();
   }
+  const moving = movers && movers.map(mv => ({ actor: 'i' in mv ? mv.i : 'shape' in mv ? shapeActors[mv.shape] : copies[mv.duplicate],
+    motion: { ...mv.motion, trigger: mv.motion.trigger === null ? null : 'i' in mv.motion.trigger ? mv.motion.trigger.i : triggers[mv.motion.trigger.checkpoint] } }));
+  if (moving) {
+    const p = new Package(out), add = new Additions(p), placed = new Map(p.levelActors().map(a => [a.i, a]));
+    setMovers(add, moving.map(mv => {
+      const a = placed.get(mv.actor);
+      if (!a || a.cls !== 'InterpActor') throw new Error(`mover ${mv.actor} is no InterpActor in the map`);
+      return { ...mv, ...motionKeys(mv.motion, a.rot, scaledBox(a.bounds, a.scale3d, a.scale)) };
+    }));
+    out = add.save();
+  }
   const hudWanted = hud ?? hudOf(new Package(out));
   if (hudWanted) {                                // after everything else, so it sees the final checkpoints and lava
     const p = new Package(out), add = new Additions(p);
@@ -190,6 +206,10 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     const a = byIndex.get(i);
     check(lightIs(i, lights[k], lights[k].kind) && a && a.loc.every((v, j) => Math.abs(v - lights[k].loc[j]) < 0.01), `new light ${k + 1}`);
   });
+  if (moving) {
+    const got = new Map(moversOf(saved).map(m => [m.i, JSON.stringify(m.motion)]));
+    check(got.size === moving.length && moving.every(m => got.get(m.actor) === JSON.stringify(m.motion)), 'moving shapes');
+  }
   if (hudWanted) {
     const got = hudOf(saved);
     check(hudWanted.timer || hudWanted.deaths ? got?.timer === !!hudWanted.timer && got?.deaths === !!hudWanted.deaths : got === null, 'timer and death counter');

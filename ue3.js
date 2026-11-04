@@ -2,6 +2,7 @@
 import { calcsize, concat, latin1, latin1Bytes, pack, packInto, pyRound, unpackFrom, utf16 } from './bytes.js';
 
 const HAS_STACK = 0x0200000000000000n;           // RF_HasStack: actors carry a script state frame
+const PROBE = (0x0dn << 32n) | 0xffffffffn;       // a new actor's state frame probe mask, as most workshop maps' lights and movers have
 
 export class Package {
   constructor(buffer) {
@@ -364,6 +365,27 @@ export class Additions {
     if (bulkAt.length) this.bulkAt.set(this.added.length, [...bulkAt]);
     this.added.push([entry, blob]);
     return added;
+  }
+
+  // the template a class's defaults keep for one of its components (Engine.Default__<class>.<name>), imported
+  templateRef(className, name, componentClass) {
+    const engine = this.findImport('Engine', 'Package') ?? this.addImport('Core', 'Package', 0, 'Engine');
+    const defaults = this.findImport(`Default__${className}`, className, engine) ?? this.addImport('Engine', className, engine, `Default__${className}`);
+    return this.findImport(name, componentClass, defaults) ?? this.addImport('Engine', componentClass, defaults, name);
+  }
+
+  // A new level actor of Engine class `className` and its one component, made from the class defaults' `template`
+  // (as UDK saves lights and InterpActors): `actorTags(componentRef)` and `componentTags` are lists of tags, `tail`
+  // the component's native data. Returns the actor's export index.
+  addActor(className, componentClass, template, actorTags, componentTags, tail = new Uint8Array(0)) {
+    const actorClass = this.classRef(className, 'Engine'), componentClassRef = this.classRef(componentClass, 'Engine');
+    const at = this.pkg.exports.length + this.added.length, props = list => concat(...list, this.fname('None'));
+    this.addObject(actorClass, this.pkg.levelIndex() + 1, className, concat(pack('<iiQhi', actorClass, actorClass, PROBE, 0, -1), pack('<i', 0),
+      props(actorTags(at + 2))), 0x0207000100000000n, [], { netAt: 22 });
+    this.addObject(componentClassRef, at + 1, componentClass, concat(pack('<ii', 0, 0), props(componentTags), tail), 0x0007000100000000n, [],
+                   { netAt: 4, archetype: this.templateRef(className, template, componentClass) });
+    this.levelListChange(refs => [...refs, at + 1]);
+    return at;
   }
 
   tag(name, ptype, body, structName = null) {     // one tagged property: name, type, size, array index, struct name, value

@@ -124,6 +124,7 @@
           <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
           <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
           <label title="Labels that AI agents building the map refer to"><input type="checkbox" id="showIds"> Object ids</label>
+          <label title="Moving shapes move in the view as they will in the game"><input type="checkbox" id="playMotion" checked> Play moving shapes</label>
         </div>
       </details>
       <details class="menu" id="lightingMenu">
@@ -199,6 +200,24 @@
             <button data-ball="top" title="The new ball drops onto the car's roof">On the car</button>
           </div>
         </div>
+        <div id="motionEdit" hidden>
+          <label class="field" title="How it moves in the game">Moves <select id="mKind"><option value="">No</option></select></label>
+          <div class="row" data-m="slide" title="Where it goes, from where it stands (units)"><span>Goes by</span><input type="number" step="50" data-mv="to" data-k="0" title="X"><input type="number" step="50" data-mv="to" data-k="1" title="Y"><input type="number" step="50" data-mv="to" data-k="2" title="Z"></div>
+          <div id="mSpots" data-m="path"></div>
+          <div class="actions" data-m="path"><button id="mAddSpot" title="Another spot after the last one">Add spot</button><button id="mDropSpot">Remove last</button></div>
+          <label class="field" data-m="slide path" title="How it gets back to where it started">Back <select id="mBack"><option value="same">The same way</option><option value="start">Straight to the start</option><option value="jump">Jumps to the start</option></select></label>
+          <label class="field" data-m="spin swing" title="The shape's own axis it turns about">Axis <select id="mAxis"><option value="yaw">Up (like a turntable)</option><option value="roll">Forward (like a windmill)</option><option value="pitch">Sideways (tumbling)</option></select></label>
+          <label class="field" data-m="spin" title="Turns this many times per round, waiting the pause after each">Steps <input type="number" id="mSteps" min="1" max="36" step="1"></label>
+          <label data-m="spin"><input type="checkbox" id="mReverse"> The other way round</label>
+          <label class="field" data-m="swing" title="How far it swings each way from where it hangs">Angle° <input type="number" id="mAngle" min="1" max="180" step="5"></label>
+          <label class="field" data-m="swing" title="The point it swings about">Hinge <select id="mHinge"><option value="top">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select></label>
+          <label class="field" data-m="all"><span id="mSecondsLabel">Seconds</span> <input type="number" id="mSeconds" min="0.1" max="600" step="0.1"></label>
+          <label class="field" data-m="all" title="Seconds it waits at each stop">Pause <input type="number" id="mPause" min="0" max="600" step="0.1"></label>
+          <label data-m="all" title="Eases into and out of every stop; a swing moves like a pendulum"><input type="checkbox" id="mSmooth"> Smooth starts and stops</label>
+          <label class="field" data-m="all" title="What sets it going; the view plays every moving shape from the start">Starts <select id="mTrigger"></select></label>
+          <label class="field" data-m="all" title="Seconds after it starts before it moves">Delay <input type="number" id="mDelay" min="0" max="600" step="0.1"></label>
+          <label data-m="all" title="Moves through its round once, instead of over and over"><input type="checkbox" id="mOnce"> Runs once</label>
+        </div>
         <div id="lightEdit" hidden>
           <label class="field">Colour <input type="color" id="lightColor"></label>
           <label class="field" title="1 is a plain light; most maps' suns are 0.3 to 1.3">Brightness <input type="number" id="lightBrightness" min="0" max="100" step="0.1"></label>
@@ -273,6 +292,7 @@ import { blankMap } from './blank.js';
 import { LIGHTING, build, describe, isOriginalGameMap, shapes } from './map.js';
 import { BALL_AHEAD, BALL_FRONT_LIFT, BALL_LIFT, BALL_TOP_AHEAD } from './kismet.js';
 import { LIGHT_FIELDS, LIGHT_KINDS } from './lights.js';
+import { MOTIONS, eulerRotator, keysAt, motionErrors, motionKeys, newMotion, scaledBox, ueAxes } from './motion.js';
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
 import { nameLook, surfaceLook, textureImage } from './looks.js';
@@ -283,12 +303,6 @@ const toThree = v => new THREE.Vector3(v[0], v[2], v[1]);
 const fromThree = v => [v.x, v.z, v.y];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
-function ueAxes([pitch, yaw, roll]) {             // FRotationMatrix rows: local X, Y, Z in world space
-  const [SP, CP, SY, CY, SR, CR] = [Math.sin(pitch * UU), Math.cos(pitch * UU), Math.sin(yaw * UU), Math.cos(yaw * UU), Math.sin(roll * UU), Math.cos(roll * UU)];
-  return [[CP * CY, CP * SY, SP],
-          [SR * SP * CY - CR * SY, SR * SP * SY + CR * CY, -SR * CP],
-          [-(CR * SP * CY + SR * SY), CY * SR - CR * SP * SY, CR * CP]];
-}
 function ueToQuat(rot) {
   const [X, Y, Z] = ueAxes(rot);
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(toThree(X), toThree(Z), toThree(Y)));
@@ -388,7 +402,9 @@ renderer.setAnimationLoop(() => {
   flyCamera(dt);
   orbit.update();
   syncLightPreview();
+  const posed = $('playMotion').checked && !gizmo.dragging ? poseMovers() : [];
   renderer.render(scene, camera);
+  for (const [o, p, q] of posed) { o.position.copy(p); o.quaternion.copy(q); }
   drawLabels();
 });
 
@@ -448,6 +464,7 @@ function renderLighting() {
 }
 let saveName = 'my-map.udk';                      // suggested file name for Save as
 let mapName = null, source = null, pkg = null, actors = [], palette = [], zone = null, objects = [], selected = null;
+let moversSaved = 0;                              // how many moving shapes the open map has
 const CHECKPOINT_COLORS = { car: 0x3ddc84, ball: 0xff9f43, lava: 0xff3b1f };
 const checkpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
   [k, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.28, depthWrite: false })]));
@@ -612,6 +629,117 @@ function showLightGuide(obj) {
 }
 const previewPoints = Array.from({ length: 12 }, () => { const p = new THREE.PointLight(0xffffff, 0, 1, 0); scene.add(p); return p; });
 const previewSpots = Array.from({ length: 4 }, () => { const s = new THREE.SpotLight(0xffffff, 0, 1, 0.5, 0, 0); scene.add(s, s.target); return s; });
+// Moving shapes (motion.js): a shape's userData.motion, its trigger the checkpoint object that starts it (or null).
+// The view plays them from the start, as if every trigger fired at once; the selected one shows its spots.
+const copyMotion = m => m && { ...JSON.parse(JSON.stringify({ ...m, trigger: null })), trigger: m.trigger };
+const motionKey = o => {                          // what the map would store, to tell whether it changed
+  const m = o.userData.motion, t = m?.trigger;
+  return m ? JSON.stringify({ ...m, trigger: t && !t.userData.deleted ? (t.userData.copy ? `new ${objects.indexOf(t)}` : t.userData.actor.i) : null }) : '';
+};
+const canMove = o => !!o.userData.shape || !!o.userData.mover;   // new shapes, and moving shapes the map has
+const moverBox = o => scaledBox(o.userData.actor.bounds, [o.scale.x, o.scale.z, o.scale.y]);
+let motionStart = performance.now();
+function poseMovers() {                           // moves them for one frame; returns how to put them back
+  const time = (performance.now() - motionStart) / 1000, posed = [];
+  for (const o of objects) {
+    const m = o.userData.motion;
+    if (!m || o.userData.deleted || !o.visible) continue;
+    const { keys, length } = motionKeys(m, quatToUe(o.quaternion), moverBox(o));
+    const t = Math.max(0, time - m.delay) % (m.once ? length + 1.5 : length);   // one that runs once replays after a breather
+    const { pos, rot } = keysAt(keys, t);
+    posed.push([o, o.position.clone(), o.quaternion.clone()]);
+    o.position.add(toThree(pos).applyQuaternion(o.quaternion));
+    o.quaternion.multiply(ueToQuat(eulerRotator(rot)));
+  }
+  return posed;
+}
+const motionGuide = new THREE.Group();
+scene.add(motionGuide);
+function showMotionGuide(o) {                     // the spots a slide or path visits, as ghosts joined by a line
+  for (const c of motionGuide.children) if (c.isLine) c.geometry.dispose();
+  motionGuide.clear();
+  const m = o?.userData.motion;
+  if (!m || !['slide', 'path'].includes(m.kind)) return;
+  const spots = [[0, 0, 0], ...(m.kind === 'slide' ? [m.to] : m.points)].map(v => o.position.clone().add(toThree(v)));
+  for (const p of spots.slice(1)) {
+    const ghost = new THREE.Mesh(o.geometry, ghostMat);
+    ghost.position.copy(p); ghost.quaternion.copy(o.quaternion); ghost.scale.copy(o.scale);
+    motionGuide.add(ghost);
+  }
+  const route = m.back === 'start' ? [...spots, spots[0]] : spots;
+  motionGuide.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(route), new THREE.LineBasicMaterial({ color: 0xffd24a })));
+}
+function checkpointName(o) {
+  const u = o.userData, a = u.actor;
+  return u.title || `${u.checkpoint === 'ball' ? 'Ball' : 'Car'} ${isGate(a) ? 'gate' : 'checkpoint'} at ${a.loc.slice(0, 2).map(Math.round).join(', ')}`;
+}
+function showMotion(o) {                          // the inspector's Motion settings for `o`
+  $('motionEdit').hidden = !canMove(o);
+  if ($('motionEdit').hidden) return;
+  const m = o.userData.motion, kind = m?.kind ?? '';
+  if ($('mKind').options.length === 1) $('mKind').append(...Object.entries(MOTIONS).map(([k, v]) => new Option(v, k)));
+  $('mKind').value = kind;
+  for (const el of $('motionEdit').querySelectorAll('[data-m]')) el.hidden = !kind || (el.dataset.m !== 'all' && !el.dataset.m.split(' ').includes(kind));
+  if (!m) return;
+  $('mBack').querySelector('[value=start]').hidden = kind !== 'path';
+  $('mSecondsLabel').textContent = { slide: 'Move s', path: 'Move s', spin: 'Step s', swing: 'Swing s' }[kind];
+  $('mSecondsLabel').parentElement.title = { slide: 'Seconds from one end to the other', path: 'Seconds from one spot to the next', spin: 'Seconds a step takes (with one step, a whole turn)',
+                                             swing: 'Seconds a whole swing takes, there and back' }[kind];
+  if (kind === 'path' && $('mSpots').children.length !== m.points.length) {
+    $('mSpots').replaceChildren(...m.points.map((_, n) => {
+      const row = Object.assign(document.createElement('div'), { className: 'row', title: 'A spot it visits, from where it stands (units)' });
+      row.append(Object.assign(document.createElement('span'), { textContent: `Spot ${n + 1}` }),
+                 ...[0, 1, 2].map(k => Object.assign(document.createElement('input'), { type: 'number', step: 50, title: 'XYZ'[k], dataset: { mp: n, k } })));
+      return row;
+    }));
+  }
+  const checkpoints = objects.filter(c => c.userData.checkpoint && !c.userData.lava && !c.userData.deleted);
+  $('mTrigger').replaceChildren(new Option('With the map', ''), ...checkpoints.map(c => new Option(`When ${checkpointName(c)} is touched`, objects.indexOf(c))));
+  $('mTrigger').value = m.trigger && checkpoints.includes(m.trigger) ? objects.indexOf(m.trigger) : '';
+  const set = (id, v) => { if (document.activeElement !== $(id)) $(id).value = v; };
+  for (const inp of $('motionEdit').querySelectorAll('[data-mv]')) if (document.activeElement !== inp) inp.value = Math.round(m.to?.[+inp.dataset.k] ?? 0);
+  for (const inp of $('mSpots').querySelectorAll('[data-mp]')) if (document.activeElement !== inp) inp.value = Math.round(m.points?.[+inp.dataset.mp]?.[+inp.dataset.k] ?? 0);
+  set('mBack', m.back ?? 'same'); set('mAxis', m.axis ?? 'yaw'); set('mSteps', m.steps ?? 1); set('mAngle', m.angle ?? 45); set('mHinge', m.hinge ?? 'top');
+  set('mSeconds', m.seconds); set('mPause', m.pause); set('mDelay', m.delay);
+  $('mReverse').checked = !!m.reverse; $('mSmooth').checked = m.smooth; $('mOnce').checked = m.once;
+}
+function changeMotion(field, change) {            // one edit of the selected shape's motion, undone as one step per field
+  const o = selected;
+  if (!o) return;
+  const last = undo.at(-1);
+  if (!(last?.kind === 'motion' && last.obj === o && last.field === field)) undo.push({ kind: 'motion', obj: o, field, motion: copyMotion(o.userData.motion) });
+  change(o);
+  markDirty(o);
+  showSelection();
+}
+$('mKind').addEventListener('change', () => changeMotion('kind', o => {
+  const k = $('mKind').value, was = o.userData.motion;
+  o.userData.motion = k ? { ...newMotion(k), ...(was ? { pause: was.pause, delay: was.delay, once: was.once, trigger: was.trigger } : {}) } : null;
+  motionStart = performance.now();
+}));
+$('motionEdit').addEventListener('change', e => {
+  const el = e.target, m = selected?.userData.motion;
+  if (!m || el.id === 'mKind' || !el.matches('input, select')) return;
+  const num = () => Math.min(el.max === '' ? Infinity : +el.max, Math.max(el.min === '' ? -Infinity : +el.min, parseFloat(el.value)));
+  if ((el.type === 'number' && Number.isNaN(parseFloat(el.value)))) return showSelection();
+  changeMotion(el.id || el.dataset.mv || `spot${el.dataset.mp}`, () => {
+    if (el.dataset.mv) m.to[+el.dataset.k] = num();
+    else if (el.dataset.mp !== undefined) m.points[+el.dataset.mp][+el.dataset.k] = num();
+    else if (el.id === 'mTrigger') m.trigger = el.value === '' ? null : objects[+el.value];
+    else {
+      const field = { mBack: 'back', mAxis: 'axis', mSteps: 'steps', mAngle: 'angle', mHinge: 'hinge', mSeconds: 'seconds', mPause: 'pause', mDelay: 'delay',
+                      mReverse: 'reverse', mSmooth: 'smooth', mOnce: 'once' }[el.id];
+      m[field] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (field === 'steps' ? Math.round(num()) : num()) : el.value;
+    }
+    if (m.kind === 'slide' && m.back === 'start') m.back = 'same';
+    motionStart = performance.now();
+  });
+});
+for (const [id, change] of [['mAddSpot', m => m.points.push([...m.points.at(-1)].map((v, k) => v + (k === 0 ? 1000 : 0)))],
+                            ['mDropSpot', m => { if (m.points.length > 1) m.points.pop(); }]]) {
+  $(id).addEventListener('click', () => changeMotion(id, o => { change(o.userData.motion); $('mSpots').replaceChildren(); }));
+}
+
 function syncLightPreview() {                     // a fixed set of view lights, so materials never recompile
   const t = orbit.target, near = kind => objects.filter(o => o.userData.light?.kind === kind && o.userData.light.on && !o.userData.deleted)
     .sort((x, y) => x.position.distanceToSquared(t) - y.position.distanceToSquared(t));
@@ -733,6 +861,7 @@ function loadStarter() {
   actors = [{ i: null, name: 'PlayerStart', cls: 'PlayerStart', mesh: null, loc: [0, 0, RESPAWN_CLEARANCE], rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null, meshIndex: null }];
   palette = []; objects = [spawnObject(actors[0]), ballObject(ballOfNoOne(), false), baseSun()];
   spawnBall = null;
+  moversSaved = 0;
   zone = { i: null, bounds: STARTER_ZONE };
   ter = { tile: TILE, cell: CELL, sink: SINK, base: -SINK, tiles: new Map(), dirty: new Set() };
   group.add(starterGround, ...objects);           // the floor (unraised terrain stays hidden under it), the spawn and the ball
@@ -773,12 +902,12 @@ async function buildOnBlank() {
   const checkpoints = added.filter(o => o.userData.checkpoint).map(o => {
     readBack(o);
     const a = o.userData.actor;
-    return { kind: o.userData.checkpoint, loc: [...a.loc], rot: [...a.rot], ballOnTop: o.userData.ballOnTop, scale3d: [...a.scale3d], title: o.userData.title,
+    return { src: o, kind: o.userData.checkpoint, loc: [...a.loc], rot: [...a.rot], ballOnTop: o.userData.ballOnTop, scale3d: [...a.scale3d], title: o.userData.title,
              panel: !!o.userData.panel, lava: !!o.userData.lava, whole: !!o.userData.lava && same(a.scale3d.slice(0, 2), whole.slice(0, 2), 1e-3) };
   });
   const shapes = added.filter(o => o.userData.shape).map(o => {
     readBack(o);
-    return { key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d] };
+    return { key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d], motion: o.userData.motion };
   });
   const lights = added.filter(o => o.userData.newLight).map(o => {
     readBack(o);
@@ -796,14 +925,18 @@ async function buildOnBlank() {
   const touched = new Set();
   for (const [gx, gy, h] of heights) setHeight(gx + dx, gy + dy, h, touched);
   for (const t of touched) { refreshTile(t); ter.dirty.add(tileKey(t.tx, t.ty)); }
-  const hit = floorHit();
+  const hit = floorHit(), made = new Map();
   for (const c of checkpoints) {
     const [loc, scale3d] = c.whole && hit ? lavaValues(hit.object, hit.point.y) : [[c.loc[0] + dx * ter.cell, c.loc[1] + dy * ter.cell, c.loc[2] + floor], c.scale3d];
     const obj = makeCheckpoint(c.kind, loc, c.rot, c.ballOnTop, scale3d, c.lava);
+    made.set(c.src, obj);
     obj.userData.title = c.title ?? '';
     if (c.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
   }
-  for (const sh of shapes) placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
+  for (const sh of shapes) {
+    const obj = placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
+    if (sh.motion) obj.userData.motion = { ...copyMotion(sh.motion), trigger: made.get(sh.motion.trigger) ?? null };
+  }
   for (const l of lights) placeLight(l.light.kind, [l.loc[0] + dx * ter.cell, l.loc[1] + dy * ter.cell, l.loc[2] + floor], l.rot, l.light);
   start.loc = [starterSpawn.loc[0] + dx * ter.cell, starterSpawn.loc[1] + dy * ter.cell, starterSpawn.loc[2] + floor];
   start.rot = starterSpawn.rot;
@@ -911,6 +1044,13 @@ function loadMap(name, bytes, parsed, data) {
     const marker = cp.dest !== cp.i ? objects.find(o => o.userData.actor.i === cp.dest) : null;
     obj.userData.respawn = { valueVar: cp.valueVar, marker };
     if (marker) marker.userData.respawnFor = obj;  // follows its gate, never shown on its own
+  }
+  moversSaved = data.movers.length;
+  for (const { i, motion } of data.movers) {      // moving shapes: their motion, its trigger the checkpoint object
+    const o = objects.find(x => x.userData.actor.i === i);
+    if (!o) continue;
+    Object.assign(o.userData, { mover: true, motion: { ...motion, trigger: motion.trigger === null ? null : objects.find(x => x.userData.actor.i === motion.trigger) ?? null } });
+    o.userData.original.motion = motionKey(o);
   }
   for (const { i, material } of data.panels) {    // a checkpoint's visible panel sits exactly on it
     const panel = objects.find(o => o.userData.actor.i === i), at = panel?.userData.actor;
@@ -1073,6 +1213,7 @@ function showSelection() {
     $('selInfo').textContent = 'Nothing selected. Click an object in the view or in the Map list, or place one from the Add tab.';
     $('selEdit').hidden = true;
     showLightGuide(null);
+    showMotionGuide(null);
     return;
   }
   readBack(selected);
@@ -1119,6 +1260,8 @@ function showSelection() {
     $('lightOn').checked = l.on;
   }
   showLightGuide(selected);
+  showMotion(selected);
+  showMotionGuide(selected);
   $('duplicate').hidden = $('delete').hidden = !!selected.userData.spawn || !!selected.userData.ballSpawn || !!selected.userData.placeholder;   // one of each per map
   const can = abilities(selected);
   document.querySelectorAll('[data-mode]').forEach(b => { b.hidden = !can.modes.includes(b.dataset.mode); });
@@ -1199,6 +1342,10 @@ function popUndo() {
     u.obj.userData.deleted = false;
     u.obj.userData.copy ? added.push(u.obj) : removed.delete(u.obj);
     select(u.obj);
+  } else if (u.kind === 'motion') {
+    u.obj.userData.motion = u.motion;
+    markDirty(u.obj);
+    if (u.obj === selected) showSelection();
   } else if (u.kind === 'light') {
     u.obj.userData.light = u.light;
     refreshLight(u.obj);
@@ -1591,12 +1738,12 @@ function collectShapes() {                        // the open map's shapes join 
 }
 function copyObject(source, loc) {
   readBack(source);
-  const src = source.userData.actor, { checkpoint, shape, ballOnTop, lava, surface, newLight } = source.userData;
+  const src = source.userData.actor, { checkpoint, shape, ballOnTop, lava, surface, newLight, mover } = source.userData;
   const panel = source.userData.panel ? { material: source.userData.panel.material } : null;
   const a = { ...src, i: null, src: src.src ?? src.i, name: (src.mesh || src.name) + ' copy',
               loc: [...loc], rot: [...src.rot], scale3d: [...src.scale3d] };
   const obj = source.userData.light ? lightObject(a, settingsOf(source.userData.light)) : new THREE.Mesh(source.geometry, source.material);
-  obj.userData = { actor: a, copy: true, checkpoint, shape, ballOnTop, panel, lava, surface, light: obj.userData.light, newLight,
+  obj.userData = { actor: a, copy: true, checkpoint, shape, ballOnTop, panel, lava, surface, light: obj.userData.light, newLight, mover, motion: copyMotion(source.userData.motion),
                    ...(checkpoint ? { title: source.userData.title ?? '' } : {}) };
   if (checkpoint) obj.material = lookOf(obj);
   if (checkpoint) decorateCheckpoint(obj);
@@ -1685,7 +1832,7 @@ function aiErrors(step) {                         // what is wrong with a step b
   if ('remove' in step && !(Array.isArray(step.remove) && step.remove.every(id => typeof id === 'string'))) bad('remove', 'a list of ids');
   if (!('add' in step)) return out;
   if (!Array.isArray(step.add) || step.add.length > 2000) return [...out, 'add: a list of up to 2000 shapes, checkpoints and lights'];
-  const ids = new Set(), KEYS = { shape: ['id', 'shape', 'at', 'size', 'yaw', 'pitch', 'roll', 'surface'],
+  const ids = new Set(), KEYS = { shape: ['id', 'shape', 'at', 'size', 'yaw', 'pitch', 'roll', 'surface', 'motion'],
                                   checkpoint: ['id', 'checkpoint', 'at', 'size', 'yaw', 'gate', 'ballOnTop', 'visible', 'title'],
                                   light: ['id', 'light', 'at', 'yaw', 'pitch', 'color', 'brightness', 'radius', 'cone', 'core', 'shadows', 'on'] };
   step.add.forEach((e, n) => {
@@ -1711,6 +1858,14 @@ function aiErrors(step) {                         // what is wrong with a step b
     }
     if ('light' in e && ('radius' in e && !['point', 'spot'].includes(e.light) || ['cone', 'core'].some(k => k in e) && e.light !== 'spot')) bad(where, 'radius is for point and spot lights; cone and core for spot lights');
     for (const k of ['shadows', 'on']) if ('light' in e && k in e && typeof e[k] !== 'boolean') bad(where, `${k}: true or false`);
+    if ('shape' in e && 'motion' in e) {
+      const m = e.motion;
+      if (!m || typeof m !== 'object' || !Object.hasOwn(MOTIONS, m.kind)) bad(where, `motion: {"kind": one of ${Object.keys(MOTIONS).join(', ')}, ...settings}`);
+      else {
+        for (const err of motionErrors({ ...newMotion(m.kind), ...m, trigger: null }, LIMIT)) bad(where, `motion.${err}`);
+        if (m.trigger != null && typeof m.trigger !== 'string') bad(where, 'motion.trigger: a checkpoint id, or null to start with the map');
+      }
+    }
   });
   return out;
 }
@@ -1734,6 +1889,7 @@ function aiAdd(e) {
     const scale3d = e.size ? e.size.map((v, k) => v / (max[k] - min[k])) : [1, 1, 1];
     obj = placeShape(key, pivotFor(e.at, rot, shapeFoot(key, scale3d)), rot, scale3d, false);
     if (e.surface) { obj.userData.surface = surfaceRef(e.surface); obj.material = shapeLook(obj.userData.surface); }
+    if (e.motion) obj.userData.motion = { ...newMotion(e.motion.kind), ...JSON.parse(JSON.stringify(e.motion)) };   // a trigger id is resolved after the step's adds
   } else {
     if (!zone) throw new Error('this map has no trigger zone to copy for checkpoints');
     const b = zone.bounds, rot = [0, Math.round((e.yaw ?? 0) * DEG), 0], size = e.size ?? [2 * b[3], 2 * b[4], 2 * b[5]];
@@ -1786,6 +1942,13 @@ async function aiApply(step) {
     if ('timer' in step || 'deaths' in step) { hud = { timer: step.timer ?? hud.timer, deaths: step.deaths ?? hud.deaths }; renderHud(); }
     for (const id of step.remove ?? []) { const o = aiFind(id); o ? removeObject(o) : notes.push(`remove: no object "${id}"`); }
     for (const e of step.add ?? []) aiAdd(e);
+    for (const o of objects) {
+      const m = o.userData.motion;
+      if (typeof m?.trigger !== 'string') continue;
+      const c = aiFind(m.trigger);
+      m.trigger = c?.userData.checkpoint && !c.userData.lava ? c : null;
+      if (!m.trigger) notes.push(`${idOf(o)}: no checkpoint "${c ? idOf(c) : m.trigger}" to start it; it starts with the map`);
+    }
     if (step.lava) aiSetLava(step.lava);
     if (step.spawn) aiSpawn(step.spawn);
     if (step.ball) aiBall(step.ball, notes);
@@ -1824,6 +1987,7 @@ function aiEntry(o) {
     if (['spot', 'sun'].includes(l.kind)) Object.assign(e, { yaw: deg(a.rot[1]), pitch: deg(a.rot[0]) });
     return e;
   } else Object.assign(e, { kind: 'mesh', mesh: a.mesh || a.name });
+  if (u.motion) e.motion = { ...JSON.parse(motionKey(o)), trigger: u.motion.trigger && !u.motion.trigger.userData.deleted ? idOf(u.motion.trigger) : null };
   e.box = { min: fromThree(b.min).map(r1), max: fromThree(b.max).map(r1) };
   return e;
 }
@@ -1944,6 +2108,7 @@ function changes(obj) {                           // transform fields that diffe
   const want = obj.userData.panel, had = obj.userData.savedPanel;
   if (o && obj.userData.checkpoint && (!!want !== !!had || (want && had && want.material !== had.material))) e.panel = true;
   if (o && obj.userData.surface !== undefined && obj.userData.surface !== o.surface) e.surface = obj.userData.surface;
+  if (o && obj.userData.mover && motionKey(obj) !== o.motion) e.motion = true;   // the movers are written as a whole (changeSet)
   const l = obj.userData.light;
   if (l) {
     const set = LIGHT_FIELDS.filter(f => f in l && (!o?.light || JSON.stringify(l[f]) !== JSON.stringify(o.light[f])));
@@ -2040,13 +2205,13 @@ function updateDirty() {
 function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.className = kind; }
 
 function changeSet() {                            // [what build() applies, summary]
-  const edits = [...dirty].filter(o => !removed.has(o) && !o.userData.ballSpawn).map(o => ({ i: o.userData.actor.i, ...changes(o) }));
+  const edits = [...dirty].filter(o => !removed.has(o) && !o.userData.ballSpawn).map(o => { const { motion, ...e } = changes(o); return { i: o.userData.actor.i, ...e }; });
   const duplicates = added.filter(o => !o.userData.checkpoint && !o.userData.shape && !o.userData.newLight).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
   const lights = added.filter(o => o.userData.newLight).map(o => {
     const { loc, rot, light } = changes(o);
     return { kind: o.userData.light.kind, loc, rot, ...light };
   });
-  const shapes = added.filter(o => o.userData.shape).map(o => ({ key: o.userData.shape, ...changes(o), material: o.userData.surface ?? null }));
+  const shapes = added.filter(o => o.userData.shape).map(o => ({ key: o.userData.shape, ...changes(o), material: o.userData.surface ?? null, mover: !!o.userData.motion }));
   const shapeGeometry = Object.fromEntries([...new Set(shapes.map(s => s.key))].map(k => [k, asMeshInput(shapeData(k))]));
   const shapeMaterial = lastSurface;
   const checkpoints = added.filter(o => o.userData.checkpoint)
@@ -2095,15 +2260,24 @@ function changeSet() {                            // [what build() applies, summ
     return { tx, ty, heights: apron(tx, ty) };
   }) } : null;
   const lava = checkpoints.filter(c => c.lava).length;
+  // moving shapes, all of them whenever one is new, gone, turned, rescaled or set to move another way
+  const moving = objects.filter(o => o.userData.motion && !o.userData.deleted), newOnes = added.filter(o => o.userData.checkpoint);
+  const turned = o => { const e = changes(o); return e.motion || e.rot || e.scale3d; };
+  const trigger = t => !t || t.userData.deleted ? null : t.userData.copy ? { checkpoint: newOnes.indexOf(t) } : { i: t.userData.actor.i };
+  const movers = moving.some(o => o.userData.copy || turned(o)) || moving.filter(o => !o.userData.copy).length !== moversSaved ? moving.map(o => {
+    const { trigger: t, ...rest } = o.userData.motion, motion = { ...JSON.parse(JSON.stringify(rest)), trigger: trigger(t) };
+    return o.userData.shape ? { shape: added.filter(x => x.userData.shape).indexOf(o), motion }
+      : o.userData.copy ? { duplicate: added.filter(x => !x.userData.checkpoint && !x.userData.shape && !x.userData.newLight).indexOf(o), motion } : { i: o.userData.actor.i, motion };
+  }) : null;
   const summary = [moved && `${moved} moved`, lit && `${lit} lights set`, duplicates.length && `${duplicates.length} added`, lights.length && `${lights.length} new lights`,
                    shapes.length && `${shapes.length} shapes`, checkpoints.length > lava && `${checkpoints.length - lava} checkpoints`,
                    lava && `${lava} lava zones`,
                    terrain && `${terrain.tiles.length} terrain tiles`,
                    removed.size && `${removed.size} deleted`, respawns.length && `${respawns.length} respawn points`,
                    panels.length && `${panels.length} checkpoint panels`, ballSpawn && 'a ball spawn',
-                   lighting !== lightingSaved && `${LIGHTING[lighting]?.name.toLowerCase() ?? 'the map\'s own'} lighting`,
+                   lighting !== lightingSaved && `${LIGHTING[lighting]?.name.toLowerCase() ?? 'the map\'s own'} lighting`, movers && `${movers.length} moving shapes`,
                    hudChanged() && (hud.timer || hud.deaths ? `${[hud.timer && 'timer', hud.deaths && 'death counter'].filter(Boolean).join(' and ')} on screen` : 'nothing on screen')].filter(Boolean).join(', ') || 'no changes';
-  return [{ edits, duplicates, lights, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
+  return [{ edits, duplicates, lights, movers, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
             lighting: lighting !== lightingSaved ? lighting : null, hud: hudChanged() ? hud : null },
           fresh ? `new map, ${summary}` : summary];
 }

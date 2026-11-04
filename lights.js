@@ -12,8 +12,6 @@ export const LIGHT_KINDS = {
 export const LIGHT_FIELDS = ['color', 'brightness', 'on', 'shadows', 'radius', 'inner', 'outer'];
 const KIND_OF = { PointLightComponent: 'point', SpotLightComponent: 'spot', DirectionalLightComponent: 'sun', DominantDirectionalLightComponent: 'sun',
                   SkyLightComponent: 'sky' };
-const ACTOR = 0x0207000100000000n, INNER = 0x0007000100000000n;   // object flags as UDK sets them
-const PROBE = (0x0dn << 32n) | 0xffffffffn;       // the state frame's probe mask, as on The Path's and minigolf2's lights
 
 // {kind, component, color: [r, g, b], brightness, on, shadows, radius (point, spot), inner, outer (spot, degrees)}
 // of the light actor `i`, with the engine's defaults for what it leaves out; null when it is no light we can read.
@@ -58,22 +56,12 @@ export function setLight(add, i, settings) {     // new settings for the saved l
 
 // A new light actor of `kind` at `loc` facing `rot` (rotator units), set as `settings`; returns its export index.
 export function addLight(add, kind, loc, rot, settings) {
-  const pkg = add.pkg, K = LIGHT_KINDS[kind];
-  const actorClass = add.classRef(K.actor, 'Engine'), componentClass = add.classRef(K.component, 'Engine');
-  // the component's template, as in the class defaults: Engine.Default__<actor>.<component>0
-  const engine = add.findImport('Engine', 'Package') ?? add.addImport('Core', 'Package', 0, 'Engine');
-  const defaults = add.findImport(`Default__${K.actor}`, K.actor, engine) ?? add.addImport('Engine', K.actor, engine, `Default__${K.actor}`);
-  const template = add.findImport(`${K.component}0`, K.component, defaults) ?? add.addImport('Engine', K.component, defaults, `${K.component}0`);
-  const at = pkg.exports.length + add.added.length;   // the actor's export index; its component comes right after
-  const props = list => concat(...list, add.fname('None'));
+  const K = LIGHT_KINDS[kind], props = list => concat(...list, add.fname('None'));
   const guid = name => add.tag(name, 'StructProperty', crypto.getRandomValues(new Uint8Array(16)), 'Guid');
   const lit = add.tag('LightingChannels', 'StructProperty', props(['bInitialized', 'BSP', 'Static', 'Dynamic'].map(n => add.tag(n, 'BoolProperty', Uint8Array.of(1)))),
                       'LightingChannelContainer');
-  add.addObject(actorClass, pkg.levelIndex() + 1, K.actor, concat(pack('<iiQhi', actorClass, actorClass, PROBE, 0, -1), pack('<i', 0), props([
-    add.tag('LightComponent', 'ObjectProperty', pack('<i', at + 2)), add.tag('Location', 'StructProperty', pack('<3f', ...loc), 'Vector'),
-    add.tag('Rotation', 'StructProperty', pack('<3i', ...rot), 'Rotator'), add.tag('Tag', 'NameProperty', add.fname(K.actor))])), ACTOR, [], { netAt: 22 });
-  add.addObject(componentClass, at + 1, K.component, concat(pack('<ii', 0, 0), props([guid('LightGuid'), guid('LightmapGuid'),
-    ...Object.values(lightTags(add, kind, settings)), ...(kind === 'point' || kind === 'spot' ? [lit] : [])])), INNER, [], { netAt: 4, archetype: template });
-  add.levelListChange(refs => [...refs, at + 1]);
-  return at;
+  return add.addActor(K.actor, K.component, `${K.component}0`, component => [add.tag('LightComponent', 'ObjectProperty', pack('<i', component)),
+    add.tag('Location', 'StructProperty', pack('<3f', ...loc), 'Vector'), add.tag('Rotation', 'StructProperty', pack('<3i', ...rot), 'Rotator'),
+    add.tag('Tag', 'NameProperty', add.fname(K.actor))],
+    [guid('LightGuid'), guid('LightmapGuid'), ...Object.values(lightTags(add, kind, settings)), ...(kind === 'point' || kind === 'spot' ? [lit] : [])]);
 }

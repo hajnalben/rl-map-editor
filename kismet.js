@@ -80,7 +80,7 @@ function looksTagged(pkg, p) {                    // bytes at p start a property
 
 export const nodeProps = (pkg, e) => decode(pkg, pkg.netIndexAt(e) + 4, e.off + e.size)[0];   // any object's tagged properties
 
-const [I, F, B, O, N, S, A, T] = ['IntProperty', 'FloatProperty', 'BoolProperty', 'ObjectProperty', 'NameProperty', 'StrProperty', 'ArrayProperty', 'StructProperty'];
+const [I, F, B, O, N, S, A, T, E] = ['IntProperty', 'FloatProperty', 'BoolProperty', 'ObjectProperty', 'NameProperty', 'StrProperty', 'ArrayProperty', 'StructProperty', 'ByteProperty'];
 
 class Encoder {                                   // tagged-property writer; names go through the Additions
   constructor(add) { this.add = add; }
@@ -89,6 +89,7 @@ class Encoder {                                   // tagged-property writer; nam
     const head = concat(this.add.fname(name), this.add.fname(ptype));
     if (ptype === B) return concat(head, pack('<ii', 0, 0), Uint8Array.of(value ? 1 : 0));
     if (ptype === T) return this.add.tag(name, T, value[1], value[0]);   // [struct name, its bytes]: raw for atomic structs, else tagged properties
+    if (ptype === E) return concat(head, pack('<ii', 8, 0), this.add.fname(value[0]), this.add.fname(value[1]));   // [enum, value]
     const body = this.value(ptype, value);
     return concat(head, pack('<ii', body.length, 0), body);
   }
@@ -280,8 +281,8 @@ function writer(add) {
     if (!classes.has(name)) classes.set(name, add.classRef(name, PACKAGES[name] || 'Engine'));
     return classes.get(name);
   };
-  const node = (className, props) => {
-    const i = add.addObject(cls(className), parent, className, concat(pack('<i', 0), enc.props(props)));
+  const node = (className, props, tail = new Uint8Array(0)) => {
+    const i = add.addObject(cls(className), parent, className, concat(pack('<i', 0), enc.props(props), tail));
     nodes.push(i);
     return i;
   };
@@ -603,7 +604,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
 // "Time: M:SS" for that second. The timer freezes for good once the last checkpoint is the respawn point.
 // "Deaths: N" stays on screen until the next death redraws it; deaths are lava touches and resets, counted from a
 // second after the car first spawns (Free Play's own ball may land in lava at the start). The block hangs off events
-// named "HUD: ..." and reaches LastCheckpoint only by name, so all of it can be taken out again (hudNodes).
+// named "HUD: ..." and reaches LastCheckpoint only by name, so all of it can be taken out again (blockNodes).
 const HUD = 'HUD: ';
 export function hudOf(pkg) {                      // the {timer, deaths} a map shows, or null
   for (const k of liveNodes(pkg)) {
@@ -613,9 +614,9 @@ export function hudOf(pkg) {                      // the {timer, deaths} a map s
   }
   return null;
 }
-function hudNodes(pkg, live) {                    // the block: its events and everything they lead to or link
+function blockNodes(pkg, live, prefix) {          // a block: its events named `prefix`..., and everything they lead to or link
   const props = k => nodeProps(pkg, pkg.exports[k]);
-  const todo = [...live].filter(k => /^SeqEvent/.test(pkg.classOf(pkg.exports[k])) && String(props(k).ObjName ?? '').startsWith(HUD));
+  const todo = [...live].filter(k => /^SeqEvent/.test(pkg.classOf(pkg.exports[k])) && String(props(k).ObjName ?? '').startsWith(prefix));
   const seen = new Set(todo);
   while (todo.length) {
     const p = props(todo.pop());
@@ -630,7 +631,7 @@ function hudNodes(pkg, live) {                    // the block: its events and e
 // actor the last checkpoint makes the respawn point (null: there is none, and the timer never stops); `lava` the
 // lava zones ([{i, ball}]) whose touches count as deaths.
 export function setHud(add, { timer = false, deaths = false }, finish, lava) {
-  const pkg = add.pkg, seq = mainSequence(pkg), old = hudNodes(pkg, liveNodes(pkg));
+  const pkg = add.pkg, seq = mainSequence(pkg), old = blockNodes(pkg, liveNodes(pkg), HUD);
   if (old.size) add.appendRefs(seq, 'SequenceObjects', [], r => !old.has(r - 1));
   if (!timer && !deaths) return;
   const { parent, cls, node, nodes, refs, placed, vars } = writer(add);
@@ -725,6 +726,70 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
       ['VariableLinks', A, [varLink('Instigator', obj, ball ? [z.instigator] : [], x + 86, { writeable: true, delta: 54 })]],
       ...layout(2, parent, x, y, 131, 176, `${HUD}${ball ? 'ball' : 'car'} lava death`)]);
     placed(z, 'lava death');
+  });
+  add.appendRefs(seq, 'SequenceObjects', nodes.map(n => n + 1));
+}
+
+// Moving shapes (motion.js): per mover a Matinee (SeqAct_Interp) playing its InterpData's one move track on the
+// shape's InterpActor, as Leth's maps move their platforms; it loops unless the motion runs once. An event named
+// "Mover: ..." starts it: the map loading, or a touch (car or ball) of the checkpoint zone that triggers it, with a
+// Delay first when it waits. The motion's settings ride along as JSON in the Matinee's comment, so the editor reads
+// them back; all mover blocks are taken out and written anew whenever the movers change.
+const MOVER = 'Mover: ', GROUP = 'Mover';
+export function moversOf(pkg) {                   // [{i: actor, motion}] of the map's moving shapes
+  const out = [];
+  for (const k of blockNodes(pkg, liveNodes(pkg), MOVER)) {
+    if (pkg.classOf(pkg.exports[k]) !== 'SeqAct_Interp') continue;
+    const p = nodeProps(pkg, pkg.exports[k]), v = (p.VariableLinks || []).find(l => l.LinkDesc === GROUP)?.LinkedVariables?.[0];
+    if (v) out.push({ i: nodeProps(pkg, pkg.exports[v - 1]).ObjValue - 1, motion: JSON.parse(p.ObjComment) });
+  }
+  return out;
+}
+
+// Replace the map's movers with `movers` ([{actor, motion, keys, length}]: motionKeys' keys, the motion's trigger
+// the zone actor's export index or null).
+export function setMovers(add, movers) {
+  const pkg = add.pkg, seq = mainSequence(pkg), old = blockNodes(pkg, liveNodes(pkg), MOVER);
+  if (old.size) add.appendRefs(seq, 'SequenceObjects', [], r => !old.has(r - 1));
+  if (!movers.length) return;
+  const { enc, parent, cls, node, nodes, refs, placed, vars } = writer(add);
+  const obj = cls('SeqVar_Object');
+  movers.forEach(({ actor, motion, keys, length }, n) => {
+    const x = 40000 + 1000 * (n % 16), y = 20000 - 700 * Math.floor(n / 16), wait = motion.delay > 0, name = `${MOVER}${pkg.exports[actor].name}`;
+    const r = refs(['event', ...(wait ? ['wait'] : []), 'interp', 'data', 'target']), group = r.target + 1, track = r.target + 2;
+    const start = [[wait ? r.wait : r.interp, 0]];
+    if (motion.trigger !== null) {
+      node('SeqEvent_Touch', [['Originator', O, motion.trigger + 1], ['MaxTriggerCount', I, motion.once ? 1 : 0], ['ReTriggerDelay', F, 1.0], ['bPlayerOnly', B, false],
+        ['MaxWidth', I, 173], ['OutputLinks', A, [outputLink('Touched', start, y + 69, 14), outputLink('UnTouched', [], y + 90, 35), outputLink('Empty', [], y + 111, 56)]],
+        ['VariableLinks', A, [varLink('Instigator', obj, [], x + 86, { writeable: true, delta: 54 })]], ...layout(2, parent, x, y, 131, 176, name)]);
+    } else {
+      node('SeqEvent_LevelLoaded', [['MaxWidth', I, 136], ['InputLinks', A, []],
+        ['OutputLinks', A, [outputLink('Loaded and Visible', start, y + 14, 14), outputLink('Beginning of Level', [], y + 35, 35), outputLink('Level Reset', [], y + 56, 56)]],
+        ['VariableLinks', A, []], ...layout(3, parent, x, y, 98, 85, name)]);
+    }
+    if (wait) {
+      node('SeqAct_Delay', [['Duration', F, motion.delay], ['InputLinks', A, [inputLink(y + 14, 'Start', 14), inputLink(y + 35, 'Stop', 35), inputLink(y + 56, 'Pause', 56)]],
+        ['OutputLinks', A, [outputLink('Finished', [[r.interp, 0]], y + 19, 19), outputLink('Aborted', [], y + 51, 51)]],
+        ['VariableLinks', A, [varLink('Duration', cls('SeqVar_Float'), [], x + 225, { prop: 'Duration', delta: 25 })]], ...layout(1, parent, x + 200, y, 150, 77)]);
+    }
+    node('SeqAct_Interp', [...(motion.once ? [] : [['bLooping', B, true]]), ['ObjComment', S, JSON.stringify(motion)],
+      ['InputLinks', A, [['Play', 15], ['Reverse', 37], ['Stop', 59], ['Pause', 81], ['Change Dir', 103]].map(([d, k]) => inputLink(y + k, d, k))],
+      ['OutputLinks', A, [outputLink('Completed', [], y + 31, 31), outputLink('Reversed', [], y + 87, 87)]],
+      ['VariableLinks', A, [varLink('Data', cls('InterpData'), [r.data], x + 431, { maxVars: 1 }),
+                            varLink(GROUP, obj, [r.target], x + 496, { minVars: 0, delta: 63 }),
+                            varLink('PlayRate', cls('SeqVar_Float'), [], x + 550, { prop: 'PlayRate', minVars: 0, delta: 117 })]],
+      ...layout(2, parent, x + 400, y, 191, 173)], new Uint8Array(4));   // UDK saves 4 more bytes after its properties
+    node('InterpData', [['InterpLength', F, length], ['InterpGroups', A, [group]], ...layout(1, parent, x + 400, y + 220, 32, 32)]);
+    node('SeqVar_Object', vars(x + 480, y + 220, [['ObjValue', O, actor + 1]]));
+    placed(r, 'mover');
+    const point = (t, v, arrive, leave) => [['InVal', F, t], ['OutVal', T, ['Vector', pack('<3f', ...v)]], ['ArriveTangent', T, ['Vector', pack('<3f', ...arrive)]],
+                                         ['LeaveTangent', T, ['Vector', pack('<3f', ...leave)]], ['InterpMode', E, ['EInterpCurveMode', 'CIM_CurveBreak']]];
+    const curve = slot => ['InterpCurveVector', enc.props([['Points', A, keys.map(k => point(k.t, slot ? k.rot : k.pos, k.arrive[slot], k.leave[slot]))]])];
+    const sub = (className, outer, props) => add.addObject(cls(className), outer, className, concat(pack('<i', 0), enc.props(props))) + 1;
+    if (sub('InterpGroup', r.data, [['InterpTracks', A, [track]], ['GroupName', N, GROUP], ['GroupColor', T, ['Color', Uint8Array.of(140, 194, 0, 255)]]]) !== group
+        || sub('InterpTrackMove', group, [['PosTrack', T, curve(0)], ['EulerTrack', T, curve(1)],
+             ['LookupTrack', T, ['InterpLookupTrack', enc.props([['Points', A, keys.map(k => [['GroupName', N, 'None'], ['Time', F, k.t]])]])]],
+             ['MoveFrame', E, ['EInterpTrackMoveFrame', 'IMF_RelativeToInitial']]]) !== track) throw new Error('mover: object order');
   });
   add.appendRefs(seq, 'SequenceObjects', nodes.map(n => n + 1));
 }
