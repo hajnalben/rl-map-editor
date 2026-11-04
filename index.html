@@ -318,7 +318,7 @@ import { MOTIONS, eulerRotator, keysAt, motionErrors, motionKeys, newMotion, sca
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
 import { nameLook, surfaceLook, textureImage } from './looks.js';
-import { gameLook, gamePackage } from './game.js';
+import { gameIndex, gameLook, openGame } from './game.js';
 
 // Unreal is left-handed Z-up, Three.js right-handed Y-up: swapping Y and Z converts without mirroring.
 const UU = Math.PI / 32768;                       // rotator units to radians
@@ -1403,7 +1403,8 @@ function refreshSurfaces() {                      // terrain, new shapes and the
 async function gameTexturesFolder(ask) {
   let dir = await remembered('game').catch(() => null);
   if (dir && await dir.queryPermission({ mode: 'read' }) !== 'granted' && !(ask && await dir.requestPermission({ mode: 'read' }) === 'granted')) dir = null;
-  if (!dir && ask && window.showDirectoryPicker) {
+  if (!dir && ask && !window.showDirectoryPicker) throw new Error('Game textures need Chrome or Edge, which can open the game folder.');
+  if (!dir && ask) {
     setStatus('Pick the game folder TAGame/CookedPCConsole.', '');
     dir = await showDirectoryPicker({ id: 'rl-game', mode: 'read' });
     if (!await dir.getFileHandle('TAGame.upk').catch(() => null)) throw new Error(`${dir.name} isn't TAGame/CookedPCConsole in the game folder.`);
@@ -1411,28 +1412,44 @@ async function gameTexturesFolder(ask) {
   }
   return dir;
 }
+// Which game package holds each texture and material (gameIndex), kept until the game's files change
+let gameIndexMemo = null;
+async function gameTexturesIndex(dir, openFile) {
+  const names = [];
+  for await (const [name] of dir.entries()) if (/\.upk$/i.test(name) && !/_SF\.upk$/i.test(name)) names.push(name.slice(0, -4));
+  const stamp = `${names.length}:${(await (await dir.getFileHandle('TAGame.upk')).getFile()).lastModified}`;
+  if (gameIndexMemo?.stamp === stamp) return gameIndexMemo.index;
+  const saved = await remembered('gameIndex').catch(() => null);
+  const index = saved?.stamp === stamp ? new Map(saved.entries)
+    : await gameIndex(names.sort(), name => openFile(name), (k, n) => setStatus(`Finding the game's textures… ${k + 1} of ${n} packages`, ''));
+  if (saved?.stamp !== stamp) await remembered('gameIndex', { stamp, entries: [...index] }).catch(() => {});
+  gameIndexMemo = { stamp, index };
+  return index;
+}
 async function useGameLooks(ask) {               // read the looks of the game surfaces the map shows, then redraw them
   const map = pkg, dir = await gameTexturesFolder(ask);
   if (!dir) return ask || setStatus('Game textures: tick View > Game textures to let the editor read the game folder.', '');
   const want = [...gameWanted].filter(r => !gameLooks.has(r) && /^Material/.test(map.imports[-r - 1]?.cls ?? ''));
+  const read = file => async (offset, size) => new Uint8Array(await file.slice(offset, offset + size).arrayBuffer());
+  const openFile = name => dir.getFileHandle(`${name}.upk`).then(h => h.getFile()).then(f => openGame(read(f)));
   const opened = new Map(), open = name => {
-    if (!opened.has(name)) opened.set(name, dir.getFileHandle(`${name}.upk`).then(h => h.getFile()).then(f => f.arrayBuffer())
-      .then(b => gamePackage(new Uint8Array(b))).then(b => new Package(b)).catch(() => null));
-    return opened.get(name);
+    if (!opened.has(name.toLowerCase())) opened.set(name.toLowerCase(), openFile(name).catch(() => null));
+    return opened.get(name.toLowerCase());
   };
-  const cache = async (name, offset, size) => new Uint8Array(await (await (await dir.getFileHandle(`${name}.tfc`)).getFile()).slice(offset, offset + size).arrayBuffer());
+  const cache = async (name, offset, size) => read(await (await dir.getFileHandle(`${name}.tfc`)).getFile())(offset, size);
+  const index = want.length ? await gameTexturesIndex(dir, openFile) : null;
   for (const [k, r] of want.entries()) {
     setStatus(`Reading game textures… ${k + 1} of ${want.length}`, '');
     const path = [];
     for (let q = r; q < 0; q = map.imports[-q - 1].outer) path.unshift(map.imports[-q - 1].name);
-    const look = await gameLook(open, cache, path).catch(() => null);
+    const look = await gameLook(open, cache, path, index).catch(() => null);
     if (pkg !== map) return;                      // another map was opened meanwhile
     gameLooks.set(r, look);
   }
   for (const r of gameLooks.keys()) { surfaceCache.get(r)?.dispose(); surfaceCache.delete(r); }
   refreshSurfaces();
   const known = [...gameLooks.values()].filter(Boolean).length;
-  setStatus(`Game textures: ${known} of ${gameLooks.size} of the game's surfaces in this map${known < gameLooks.size ? ' (the others mix several textures in ways the editor can\'t show)' : ''}`, 'ok');
+  setStatus(`Game textures: ${known} of ${gameLooks.size} of the game's surfaces in this map${known < gameLooks.size ? '; the rest keep the editor\'s colours' : ''}`, 'ok');
 }
 
 function applyFilter() {
