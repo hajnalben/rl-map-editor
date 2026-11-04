@@ -133,6 +133,7 @@
           <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
           <label title="Labels that AI agents building the map refer to"><input type="checkbox" id="showIds"> Object ids</label>
           <label title="Moving shapes move in the view as they will in the game"><input type="checkbox" id="playMotion" checked> Play moving shapes</label>
+          <label title="Textures and colours of the game's own surfaces, read from the game folder (TAGame/CookedPCConsole)"><input type="checkbox" id="gameTextures"> Game textures</label>
         </div>
       </details>
       <details class="menu" id="lightingMenu">
@@ -317,6 +318,7 @@ import { MOTIONS, eulerRotator, keysAt, motionErrors, motionKeys, newMotion, sca
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
 import { nameLook, surfaceLook, textureImage } from './looks.js';
+import { gameLook, gamePackage } from './game.js';
 
 // Unreal is left-handed Z-up, Three.js right-handed Y-up: swapping Y and Z converts without mirroring.
 const UU = Math.PI / 32768;                       // rotator units to radians
@@ -1300,6 +1302,7 @@ function loadMap(name, bytes, parsed, data) {
     .flatMap(o => { const b = boxOf(o); return [b.min.x, b.max.x, b.min.z, b.max.z].map(Math.abs); })));
   updateDirty();
   loadMeshes();
+  if ($('gameTextures').checked) useGameLooks(false).catch(err => setStatus(err.message, 'warn'));
   objects.forEach(fitGhosts);                     // now that the ground under the checkpoints has its real shape
   setTimeout(collectShapes, 0);                   // after the map shows: its shapes join your library
   const start = actors.find(a => a.cls.startsWith('PlayerStart')) || actors[0];
@@ -1331,7 +1334,7 @@ function loadMeshes() {
     if (!m) continue;
     obj.geometry = m.geo;
     obj.userData.huge = undefined;
-    Object.assign(obj.userData, { parts: m.groups.length || 1, ownSurface: m.groups[0]?.material ?? null });
+    Object.assign(obj.userData, { parts: m.groups.length || 1, ownSurface: m.groups[0]?.material ?? null, groups: m.groups });
     if (!obj.userData.checkpoint) obj.material = meshLook(obj.userData.actor, m.groups);
   }
   if (selected) attachGizmo(selected);
@@ -1340,10 +1343,17 @@ function loadMeshes() {
 
 // Surfaces drawn the way the map shows them: its own textures, or a colour (see looks.js); the flat per-mesh colour
 // when nothing is known, as for most of the game's own surfaces.
-const surfaceCache = new Map(), textureCache = new Map();
+// Game surfaces (game.js): with View > Game textures, their texture and tint read from the game's own packages.
+const surfaceCache = new Map(), textureCache = new Map(), gameLooks = new Map(), gameWanted = new Set();
 function surfaceMaterial(ref, fallback) {
   if (!pkg || !ref) return fallback;
   if (ref === 'lava' && !surfaceCache.has(ref)) surfaceCache.set(ref, new THREE.MeshStandardMaterial({ color: '#ff4a1c', roughness: 0.8, flatShading: true }));
+  if (ref < 0) gameWanted.add(ref);
+  const game = gameLooks.get(ref);
+  if (game && !surfaceCache.has(ref)) {
+    surfaceCache.set(ref, new THREE.MeshStandardMaterial({ map: game.texture && imageTexture(game.texture), roughness: 0.8, metalness: 0.05, flatShading: true,
+      color: game.color ? new THREE.Color().setRGB(...game.color.map(c => Math.min(1, Math.max(0, c)))) : 0xffffff }));
+  }
   if (!surfaceCache.has(ref)) {
     const look = surfaceLook(pkg, ref), map = look.texture === null ? null : texture(look.texture);
     surfaceCache.set(ref, !map && !look.color ? null : new THREE.MeshStandardMaterial({
@@ -1355,18 +1365,22 @@ function surfaceMaterial(ref, fallback) {
 }
 function texture(i) {
   if (!textureCache.has(i)) {
-    const img = textureImage(pkg, i), t = img && new THREE.DataTexture(img.rgba, img.width, img.height);
-    if (t) Object.assign(t, { wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, colorSpace: THREE.SRGBColorSpace, generateMipmaps: true,
-                              minFilter: THREE.LinearMipmapLinearFilter, anisotropy: 4, needsUpdate: true });
-    textureCache.set(i, t);
+    const img = textureImage(pkg, i);
+    textureCache.set(i, img && imageTexture(img));
   }
   return textureCache.get(i);
 }
+function imageTexture(img) {
+  return Object.assign(new THREE.DataTexture(img.rgba, img.width, img.height), { wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
+    colorSpace: THREE.SRGBColorSpace, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, anisotropy: 4, needsUpdate: true });
+}
 function forgetSurfaces() {
-  for (const m of surfaceCache.values()) m?.dispose();
+  for (const m of surfaceCache.values()) { m?.map?.dispose(); m?.dispose(); }
   for (const t of textureCache.values()) t?.dispose();
   surfaceCache.clear();
   textureCache.clear();
+  gameLooks.clear();                              // its references are the map's
+  gameWanted.clear();
 }
 function meshLook(a, groups) {                    // a mesh actor's materials: per part, the component's surface or the mesh's own
   const own = materialFor(a), mats = (groups.length ? groups : [{ material: 0 }]).map((g, k) => surfaceMaterial(a.materials?.[k] || g.material, own));
@@ -1374,9 +1388,51 @@ function meshLook(a, groups) {                    // a mesh actor's materials: p
 }
 const terrainLook = () => surfaceMaterial($('terrainMat').options.length ? +$('terrainMat').value : 0, terrainMat);
 const shapeLook = (ref = lastSurface) => surfaceMaterial(ref, shapeMat);
-function refreshSurfaces() {                      // terrain and new shapes follow the surfaces picked for them
+function refreshSurfaces() {                      // terrain, new shapes and the map's meshes follow their surfaces
   for (const t of ter?.tiles.values() ?? []) t.mesh.material = terrainLook();
   for (const o of added) if (o.userData.shape) o.material = shapeLook(o.userData.surface);
+  for (const o of objects) {
+    if (!o.userData.groups || o.userData.checkpoint || o.userData.copy) continue;
+    o.material = o.userData.surface !== undefined && o.userData.surface !== o.userData.original?.surface
+      ? surfaceMaterial(o.userData.surface, materialFor(o.userData.actor)) : meshLook(o.userData.actor, o.userData.groups);
+  }
+}
+
+// The game folder, read-only, for game textures: remembered from Game > Load (or picked here); `ask` (a click)
+// may ask for permission or for the folder. Null when not allowed.
+async function gameTexturesFolder(ask) {
+  let dir = await remembered('game').catch(() => null);
+  if (dir && await dir.queryPermission({ mode: 'read' }) !== 'granted' && !(ask && await dir.requestPermission({ mode: 'read' }) === 'granted')) dir = null;
+  if (!dir && ask && window.showDirectoryPicker) {
+    setStatus('Pick the game folder TAGame/CookedPCConsole.', '');
+    dir = await showDirectoryPicker({ id: 'rl-game', mode: 'read' });
+    if (!await dir.getFileHandle('TAGame.upk').catch(() => null)) throw new Error(`${dir.name} isn't TAGame/CookedPCConsole in the game folder.`);
+    await remembered('game', dir).catch(() => {});   // storage blocked: asked again next time
+  }
+  return dir;
+}
+async function useGameLooks(ask) {               // read the looks of the game surfaces the map shows, then redraw them
+  const map = pkg, dir = await gameTexturesFolder(ask);
+  if (!dir) return ask || setStatus('Game textures: tick View > Game textures to let the editor read the game folder.', '');
+  const want = [...gameWanted].filter(r => !gameLooks.has(r) && /^Material/.test(map.imports[-r - 1]?.cls ?? ''));
+  const opened = new Map(), open = name => {
+    if (!opened.has(name)) opened.set(name, dir.getFileHandle(`${name}.upk`).then(h => h.getFile()).then(f => f.arrayBuffer())
+      .then(b => gamePackage(new Uint8Array(b))).then(b => new Package(b)).catch(() => null));
+    return opened.get(name);
+  };
+  const cache = async (name, offset, size) => new Uint8Array(await (await (await dir.getFileHandle(`${name}.tfc`)).getFile()).slice(offset, offset + size).arrayBuffer());
+  for (const [k, r] of want.entries()) {
+    setStatus(`Reading game textures… ${k + 1} of ${want.length}`, '');
+    const path = [];
+    for (let q = r; q < 0; q = map.imports[-q - 1].outer) path.unshift(map.imports[-q - 1].name);
+    const look = await gameLook(open, cache, path).catch(() => null);
+    if (pkg !== map) return;                      // another map was opened meanwhile
+    gameLooks.set(r, look);
+  }
+  for (const r of gameLooks.keys()) { surfaceCache.get(r)?.dispose(); surfaceCache.delete(r); }
+  refreshSurfaces();
+  const known = [...gameLooks.values()].filter(Boolean).length;
+  setStatus(`Game textures: ${known} of ${gameLooks.size} of the game's surfaces in this map${known < gameLooks.size ? ' (the others mix several textures in ways the editor can\'t show)' : ''}`, 'ok');
 }
 
 function applyFilter() {
@@ -2821,6 +2877,14 @@ for (const id of ['hudTimer', 'hudDeaths']) $(id).addEventListener('change', () 
   updateDirty();
 });
 $('showHuge').addEventListener('change', applyFilter);
+try { $('gameTextures').checked = localStorage.getItem('rlme.gameTextures') === '1'; } catch { /* storage blocked */ }
+$('gameTextures').addEventListener('change', e => {
+  try { localStorage.setItem('rlme.gameTextures', e.target.checked ? '1' : ''); } catch { /* storage blocked */ }
+  if (e.target.checked) return useGameLooks(true).catch(err => { e.target.checked = false; setStatus(err.name === 'AbortError' ? 'Game textures stay off.' : err.message, 'warn'); });
+  for (const r of gameLooks.keys()) { surfaceCache.get(r)?.dispose(); surfaceCache.delete(r); }
+  gameLooks.clear();
+  refreshSurfaces();
+});
 $('save').addEventListener('click', save);
 $('play').addEventListener('click', play);
 $('undo').addEventListener('click', popUndo);

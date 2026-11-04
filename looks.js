@@ -62,7 +62,12 @@ export function textureImage(pkg, i, max = 1024) {
     p += 16 + size + 8;
   }
   if (!pick) return null;
-  const { w, h, src } = pick;
+  return decodeTexture(pick.src, pick.w, pick.h, format);
+}
+
+// {width, height, rgba} of one mip's pixel data in `format` (a PF_ name), or null for a format this can't read
+export function decodeTexture(src, w, h, format) {
+  if (!BLOCK[format] && !PIXEL[format]) return null;
   return { width: w, height: h, rgba: BLOCK[format] ? decodeBlocks(src, w, h, format) : decodePixels(src, w, h, format) };
 }
 

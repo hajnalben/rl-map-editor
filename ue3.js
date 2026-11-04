@@ -8,7 +8,8 @@ export class Package {
   constructor(buffer) {
     this.data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     this.pos = 0;
-    const [tag, ver] = this.unpack('<IHHi');
+    const [tag, ver, licensee] = this.unpack('<IHHi');
+    this.wideOffsets = licensee >= 22;            // the game's own packages (game.js): 64-bit export offsets
     // 867 (an older UDK) reads and writes back as 868 does, checked on LethDribbleChallenge1
     if (tag !== 0x9E2A83C1 || (ver !== 868 && ver !== 867)) throw new Error('not a Rocket League workshop map (UE3 package version 867 or 868)');
     this.fstring();
@@ -47,7 +48,9 @@ export class Package {
       const [cls, , outer] = this.unpack('<3i');
       const nameRaw = unpackFrom('<ii', this.data, this.pos);
       const name = this.fname();
-      const [, flags, size, off, , nnet] = this.unpack('<iQiiIi');
+      const [, flags, size] = this.unpack('<iQi');
+      const off = this.wideOffsets ? Number(this.unpack('<q')[0]) : this.unpack('<i')[0];
+      const [, nnet] = this.unpack('<Ii');
       this.pos += 4 * nnet + 16 + 4;
       this.exports.push({ cls, outer, name, nameRaw, flags, size, off, entry: this.data.slice(start, this.pos) });
     }
