@@ -30,9 +30,6 @@
   input[type=number] { width: 100%; box-sizing: border-box; padding: 4px 6px; }
   input[type=checkbox] { padding: 0; }
   select, #paletteFilter, #filter { width: 100%; box-sizing: border-box; }
-  #palette { min-height: 160px; flex: 1; margin-top: 6px; }
-  #palette optgroup { color: var(--muted); font-style: normal; }
-  #palette option { color: var(--text); padding: 2px 4px; }
   button, summary { cursor: pointer; background: #232832; white-space: nowrap; }
   button:hover, summary:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
@@ -52,19 +49,19 @@
   .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
   .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
   .modes.two { grid-template-columns: repeat(2, 1fr); margin: 4px 0 10px; }
-  #outline { flex: 1; overflow: auto; margin-top: 6px; padding: 4px 0; background: #0f1114; border: 1px solid var(--border); border-radius: 6px; user-select: none; }
-  #outline summary { display: block; padding: 3px 8px; border: 0; border-radius: 0; background: none; color: var(--muted); }
-  #outline summary::before { content: '▸ '; } #outline details[open] > summary::before { content: '▾ '; }
-  #outline summary:hover { color: var(--text); }
-  #outline details details > summary { padding-left: 20px; }
-  #outline .item { padding: 2px 8px 2px 26px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #outline .item.top { padding-left: 8px; }
+  .tree { flex: 1; overflow: auto; margin-top: 6px; padding: 4px 0; background: #0f1114; border: 1px solid var(--border); border-radius: 6px; user-select: none; }
+  .tree summary { display: block; padding: 3px 8px; border: 0; border-radius: 0; background: none; color: var(--muted); }
+  .tree summary::before { content: '▸ '; } .tree details[open] > summary::before { content: '▾ '; }
+  .tree summary:hover { color: var(--text); }
+  .tree details details > summary { padding-left: 20px; }
+  .tree .item { padding: 2px 8px 2px 26px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tree .item.top { padding-left: 8px; }
   #surfaceRow { margin: 0 0 8px; }
   .row input.unused { visibility: hidden; }
-  #outline details details .item { padding-left: 40px; }
-  #outline .item:hover { background: #1c2129; }
-  #outline .item.sel { background: rgba(77, 163, 255, .18); color: var(--accent); }
-  #outline .empty { padding: 4px 10px; color: var(--muted); }
+  .tree details details .item { padding-left: 40px; }
+  .tree .item:hover { background: #1c2129; }
+  .tree .item.sel { background: rgba(77, 163, 255, .18); color: var(--accent); }
+  .tree .empty { padding: 4px 10px; color: var(--muted); }
   .row { display: grid; grid-template-columns: 62px 1fr 1fr 1fr; gap: 4px; align-items: center; margin-bottom: 4px; }
   .row span { color: var(--muted); }
   .tools-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 10px; }
@@ -166,12 +163,12 @@
     </div>
     <section class="fill" id="mapTab">
       <input id="filter" placeholder="Find objects: name, kind or shape">
-      <div id="outline" role="tree" aria-label="Objects in the map"></div>
+      <div id="outline" class="tree" role="tree" aria-label="Objects in the map"></div>
       <div id="count" class="muted" style="margin-top:6px"></div>
     </section>
     <section class="fill" id="addTab" hidden>
       <input id="paletteFilter" placeholder="Search shapes, checkpoints and lights">
-      <select id="palette" size="10"></select>
+      <div id="palette" class="tree" role="tree" aria-label="Things to place"></div>
       <div class="actions">
         <button id="add" class="primary" title="Place the picked shape or checkpoint where you're looking (or double-click it in the list)">Place</button>
       </div>
@@ -1893,33 +1890,50 @@ function endStroke() {
   orbit.enabled = true;
 }
 
+let picked = null, paletteOpen = new Set(['Checkpoints', 'Lights', 'Library']);
+try { paletteOpen = new Set(JSON.parse(localStorage.getItem('rlme.addOpen')) ?? paletteOpen); } catch { /* storage blocked */ }
+const SKIES = /sky ?dome|fog ?ring/i;
+function libraryShapes() {                        // without sky domes, and each shape once though many maps have it
+  const same = s => `${s.name}|${s.geometry.positions.length}|${s.geometry.tris.length}`, items = [...library.values()];
+  const seen = new Set(items.filter(s => s.source === mapName).map(same));
+  return items.filter(s => s.source !== mapName && !SKIES.test(s.name) && !seen.has(same(s)) && seen.add(same(s)));
+}
 function renderPalette() {
   const q = $('paletteFilter').value.trim().toLowerCase(), hit = text => text.toLowerCase().includes(q);
-  const group = (label, items) => {
-    if (!items.length) return null;
-    const g = Object.assign(document.createElement('optgroup'), { label });
-    g.append(...items.map(([value, textContent]) => Object.assign(document.createElement('option'), { value, textContent })));
-    return g;
+  const row = ([value, text, title = text]) => {
+    const el = Object.assign(document.createElement('div'), { className: value === picked ? 'item sel' : 'item', textContent: text, title });
+    el.dataset.value = value;
+    return el;
   };
-  // checkpoints need a trigger zone to copy, which the starter and most maps have
-  const checkpoints = [['cp:car', 'Car checkpoint · box'], ['cp:car:gate', 'Car checkpoint · gate'],
-                       ['cp:ball', 'Ball checkpoint · box'], ['cp:ball:gate', 'Ball checkpoint · gate']];
-  const lava = [['lava:ball', 'Lava · the ball resets'], ['lava:car', 'Lava · the car resets']];
-  const lights = Object.entries(LIGHT_KINDS).map(([k, v]) => [`light:${k}`, v.name]);
-  const zones = [['zone:box', 'Trigger zone · box'], ['zone:gate', 'Trigger zone · gate']];
-  $('palette').replaceChildren(...[
-    group('Checkpoints', zone ? checkpoints.filter(([, text]) => hit(text)) : []),
-    group('Floor is lava', zone ? lava.filter(([, text]) => hit(`${text} floor`)) : []),
-    group('Trigger zones (for scripts)', zone ? zones.filter(([, text]) => hit(`${text} script event`)) : []),
-    group('Lights', lights.filter(([, text]) => hit(`${text} lights`))),
-    group('This map', palette.filter(p => hit(p.mesh)).map(p => [`map:${p.template}`, `${p.mesh}  ×${p.count}`])),
-    group('Built-in', Object.keys(BUILT_IN).filter(hit).map(k => [`std:${k}`, k])),
-    group('From your maps', [...library.values()].filter(s => s.source !== mapName && hit(`${s.name} ${s.source}`))
-      .map(s => [`lib:${s.id}`, `${s.name} · ${s.source.replace(/\.(udk|upk)$/i, '')}`])),
-  ].filter(Boolean));
+  const fold = (key, text, fill) => {
+    const d = document.createElement('details');
+    d.open = !!q || paletteOpen.has(key);
+    d.dataset.key = key;
+    d.append(Object.assign(document.createElement('summary'), { textContent: text }));
+    if (d.open) fill(d);                          // closed folders stay empty until opened
+    return d;
+  };
+  const group = (label, items, count = '') => {
+    const found = items.filter(([, text]) => hit(`${label} ${text}`));
+    return found.length ? fold(label, `${label}${count && ` (${found.length})`}`, d => d.append(...found.map(row))) : null;
+  };
+  const maps = Map.groupBy(libraryShapes().filter(s => hit(`${s.source} ${s.name}`)), s => s.source.replace(/\.(udk|upk)$/i, ''));
+  const folders = [...maps].sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const zoned = list => zone ? list : [];         // these copy a trigger zone, which the starter and most maps have
+  const nodes = [
+    group('Checkpoints', zoned([['cp:car', 'Car · box'], ['cp:car:gate', 'Car · gate'], ['cp:ball', 'Ball · box'], ['cp:ball:gate', 'Ball · gate']])),
+    group('Floor is lava', zoned([['lava:ball', 'The ball resets'], ['lava:car', 'The car resets']])),
+    group('Trigger zones', zoned([['zone:box', 'Box', 'A zone for scripts'], ['zone:gate', 'Gate', 'A zone for scripts']])),
+    group('Lights', Object.entries(LIGHT_KINDS).map(([k, v]) => [`light:${k}`, v.name])),
+    group('Built-in shapes', Object.keys(BUILT_IN).map(k => [`std:${k}`, k])),
+    group('This map', palette.map(p => [`map:${p.template}`, `${p.mesh}  ×${p.count}`]), true),
+    folders.length ? fold('Library', `Library · ${folders.length} map${folders.length === 1 ? '' : 's'}`, d => d.append(...folders.map(([map, shapes]) =>
+      fold(`Library/${map}`, `${map} (${shapes.length})`, dd => dd.append(...shapes.map(s => row([`lib:${s.id}`, s.name, `${s.name} · ${map}`]))))))) : null,
+  ].filter(Boolean);
+  $('palette').replaceChildren(...(nodes.length ? nodes : [Object.assign(document.createElement('div'), { className: 'empty', textContent: 'No matches' })]));
 }
 function addFromPalette() {
-  const value = $('palette').value;
+  const value = picked;
   if (!value) return setStatus('Pick a shape in the list first.', 'warn');
   if (value.startsWith('cp:')) return addCheckpoint(value.split(':')[1], value.endsWith(':gate'));
   if (value.startsWith('lava:')) return addLava(value.slice(5));
@@ -2782,7 +2796,21 @@ $('add').addEventListener('click', addFromPalette);
 $('sculpt').addEventListener('click', () => setSculpt(!sculpting));
 document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 $('brushSize').addEventListener('input', showBrush);
-$('palette').addEventListener('dblclick', addFromPalette);
+$('palette').addEventListener('click', e => {
+  const el = e.target.closest('.item');
+  if (!el) return;
+  picked = el.dataset.value;
+  $('palette').querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel'));
+  el.classList.add('sel');
+});
+$('palette').addEventListener('dblclick', e => { if (e.target.closest('.item')) addFromPalette(); });
+$('palette').addEventListener('toggle', e => {    // remember open folders, except ones a search opened
+  const d = e.target, key = d.dataset?.key;
+  if (!key || $('paletteFilter').value.trim() || d.open === paletteOpen.has(key)) return;
+  if (d.open) paletteOpen.add(key); else paletteOpen.delete(key);
+  try { localStorage.setItem('rlme.addOpen', JSON.stringify([...paletteOpen])); } catch { /* storage blocked */ }
+  if (d.open) renderPalette();
+}, true);
 function showTab(tab) {                           // the left panel: what's in the map, or what to add
   document.querySelectorAll('[data-tab]').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
