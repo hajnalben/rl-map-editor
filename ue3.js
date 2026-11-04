@@ -310,6 +310,7 @@ export class Additions {
     this.nextNumber = new Map();                  // name index -> next free FName number
     this.newNames = [];
     this.newImports = [];                         // raw import table entries
+    this.importInfo = [];                         // and what each one is: {cls, outer, name}
     this.bulkAt = new Map();                      // added object position -> inline bulk headers storing a file offset
   }
 
@@ -327,9 +328,10 @@ export class Additions {
 
   fname(text) { return pack('<ii', ...this.name(text)); }
 
-  findImport(name, cls) {                         // Unreal names are case-insensitive ("tagame")
-    const k = this.pkg.imports.findIndex(imp => imp.name.toLowerCase() === name.toLowerCase() && imp.cls === cls);
-    return k >= 0 ? -(k + 1) : null;
+  findImport(name, cls, outer = null) {           // Unreal names are case-insensitive ("tagame"); `outer` null: in anything
+    const match = imp => imp.name.toLowerCase() === name.toLowerCase() && imp.cls === cls && (outer === null || imp.outer === outer);
+    const k = this.pkg.imports.findIndex(match), n = this.importInfo.findIndex(match);
+    return k >= 0 ? -(k + 1) : n >= 0 ? -(this.pkg.imports.length + n + 1) : null;
   }
 
   classRef(className, packageName) {              // reference to a script class, importing it when the map never used it
@@ -344,19 +346,21 @@ export class Additions {
 
   addImport(classPackage, className, outer, name) {
     this.newImports.push(concat(this.fname(classPackage), this.fname(className), pack('<i', outer), this.fname(name)));
+    this.importInfo.push({ cls: className, outer, name });
     return -(this.pkg.imports.length + this.newImports.length);
   }
 
-  // A brand-new plain object (no state frame or component header, e.g. a Kismet node) whose blob starts with a
-  // NetIndex placeholder; returns its export index. bulkAt lists offsets of inline bulk headers in the blob,
-  // whose absolute file offset gets filled in on save.
-  addObject(classRef, outerRef, baseName, blob, flags = 0x0007000100000000n, bulkAt = []) {
+  // A brand-new object whose blob holds a NetIndex placeholder at `netAt` (0 for a plain object such as a Kismet
+  // node, after the state frame or component header otherwise); returns its export index. bulkAt lists offsets of
+  // inline bulk headers in the blob, whose absolute file offset gets filled in on save. `archetype`: the object
+  // reference of its template, for a component the class defaults' one.
+  addObject(classRef, outerRef, baseName, blob, flags = 0x0007000100000000n, bulkAt = [], { netAt = 0, archetype = 0 } = {}) {
     const [index] = this.name(baseName);
     const entry = concat(pack('<3i', classRef, 0, outerRef), pack('<ii', index, this.uniqueNumber(index)),
-      pack('<iQiiIi', 0, flags, 0, 0, 0, 0), new Uint8Array(16), pack('<I', 0));
+      pack('<iQiiIi', archetype, flags, 0, 0, 0, 0), new Uint8Array(16), pack('<I', 0));
     const added = this.pkg.exports.length + this.added.length;
     blob = blob.slice();
-    packInto('<i', blob, 0, added);
+    packInto('<i', blob, netAt, added);
     if (bulkAt.length) this.bulkAt.set(this.added.length, [...bulkAt]);
     this.added.push([entry, blob]);
     return added;

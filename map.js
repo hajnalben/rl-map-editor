@@ -6,6 +6,7 @@ import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain } from
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
 import { compact } from './compact.js';
+import { LIGHT_FIELDS, addLight, lightOf, setLight } from './lights.js';
 
 export function describe(pkg) {
   const all = pkg.levelActors(), ground = terrain(pkg, all);
@@ -18,6 +19,7 @@ export function describe(pkg) {
   for (const a of actors) {                       // surfaces the mesh component puts on the mesh's parts (0: the mesh's own)
     const c = meshComponent(pkg, a.i), p = c === null ? null : pkg.prop(pkg.exports[c], 'Materials');
     a.materials = p ? [...unpackFrom(`<${unpackFrom('<i', pkg.data, p[2])[0]}i`, pkg.data, p[2] + 4)] : [];
+    a.light = lightOf(pkg, a.i);
   }
   const panels = actors.filter(a => /^CheckpointPanel/.test(a.mesh || '')).map(a => ({ i: a.i, material: a.materials[0] || null }));
   const tint = pkg.tintable(), spawn = actors.find(a => a.cls.startsWith('PlayerStart'))?.i ?? null;
@@ -44,9 +46,9 @@ function mapLights(pkg) {                         // the sun and sky lights: [{a
   }
   return out;
 }
-function setLighting(add, mood) {                 // `mood`: a LIGHTING key, or 'map' for the lights as the map had them
+function setLighting(add, mood, skip) {           // `mood`: a LIGHTING key, or 'map' for the lights as the map had them
   const pkg = add.pkg, next = LIGHTING[mood];
-  for (const l of mapLights(pkg)) {
+  for (const l of mapLights(pkg).filter(l => !skip.has(l.actor))) {
     const p = nodeProps(pkg, pkg.exports[l.component]), was = LIGHTING[l.mood];
     const bgra = Array.isArray(p.LightColor) ? p.LightColor : [255, 255, 255, 0], tint = t => t ? [t[2], t[1], t[0]] : [255, 255, 255];
     const color = bgra.slice(0, 3).map((v, k) => Math.max(0, Math.min(255, Math.round(v * 255 / tint(was?.tint)[k] * tint(next?.tint)[k] / 255))));
@@ -90,14 +92,17 @@ const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its che
 // `lighting` sets the mood of the sun and sky lights (a LIGHTING key, or 'map' for as the map had them).
 // `hud` ({timer, deaths}) sets the timer and death counter; a map that has them gets them again, so they follow its
 // last checkpoint and lava zones.
+// `lights` are new lights ([{kind, loc, rot, ...settings}], see lights.js); an edit or duplicate with `light`
+// ({setting: value}) sets those on a saved light or its copy. A sun or sky light set by hand leaves the mood.
 // `checkpoints` entries with `lava` are lava zones (see addCheckpoints). `ballSpawn` ({loc}) gives the ball a spawn
 // of its own (a map that has one moves its marker through `edits`). A panel material of 'lava' is a red copy
 // of the map's tintable surface (describe().tintable), added once.
 export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false,
-                                shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], surfaces = [], ballSpawn = null, lighting = null, hud = null }) {
+                                shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], surfaces = [], ballSpawn = null, lighting = null, hud = null,
+                                lights = [] }) {
   const pkg = new Package(source.slice());
   const before = pkg.levelList().length;
-  let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [];
+  let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [], copies = [];
   const missing = pkg.apply(edits);
   // ball checkpoints switched between ball in front / on top: their mode variable (UDK leaves an IntValue of 0 out)
   const zoneList = checkpointZones(pkg), zones = new Map(zoneList.map(z => [z.i, z])), unsetModes = [];
@@ -121,8 +126,8 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     }
     if (fresh) add.clearRefs(mainSequence(pkg), 'SequenceObjects');
     for (const [i, values] of missing) add.setValues(i, values);
-    if (lighting) setLighting(add, lighting);
-    for (const dup of duplicates) add.duplicate(dup.src, [0, 0, 0], editValues(dup));
+    if (lighting) setLighting(add, lighting, new Set(edits.filter(e => e.light && ('color' in e.light || 'brightness' in e.light)).map(e => e.i)));
+    copies = duplicates.map(dup => add.duplicate(dup.src, [0, 0, 0], editValues(dup)));
     for (const i of removes) add.remove(i);
     for (const r of markers) {
       const marker = add.duplicate(pkg.zoneTemplate().i, [0, 0, 0], editValues(r.marker));
@@ -149,6 +154,20 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     }
     out = add.save();
   }
+  // lights on their own pass: a light's actor may have been rewritten above (moved, or its mood)
+  const lightEdits = [...edits.filter(e => e.light).map(e => [e.i, e.light]), ...duplicates.map((d, k) => [copies[k], d.light]).filter(([, l]) => l)];
+  let newLights = [];
+  if (lightEdits.length || lights.length) {
+    const p = new Package(out), add = new Additions(p);
+    for (const [i, settings] of lightEdits) {
+      setLight(add, i, settings);
+      if (/^(sun|sky)$/.test(lightOf(p, i).kind) && ('color' in settings || 'brightness' in settings)) {
+        add.setProps(i, { Tag: add.tag('Tag', 'NameProperty', add.fname(p.classOf(p.exports[i]))) });
+      }
+    }
+    newLights = lights.map(l => addLight(add, l.kind, l.loc, l.rot ?? [0, 0, 0], l));
+    out = add.save();
+  }
   const hudWanted = hud ?? hudOf(new Package(out));
   if (hudWanted) {                                // after everything else, so it sees the final checkpoints and lava
     const p = new Package(out), add = new Additions(p);
@@ -159,7 +178,18 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   if (packed.length < out.length) out = packed;
 
   const saved = new Package(out), actors = saved.levelActors(), byIndex = new Map(actors.map(a => [a.i, a]));
-  if (lighting) check(mapLights(saved).every(l => l.mood === (LIGHTING[lighting] ? lighting : null)), 'lighting');
+  const setByHand = new Set(lightEdits.map(([i]) => i));
+  if (lighting) check(mapLights(saved).every(l => setByHand.has(l.actor) || newLights.includes(l.actor) || l.mood === (LIGHTING[lighting] ? lighting : null)), 'lighting');
+  const lightIs = (i, want, kind = null) => {
+    const l = lightOf(saved, i), near = (a, b) => Math.abs(a - b) <= 1e-4 * Math.max(1, Math.abs(b));
+    return l && (!kind || l.kind === kind) && LIGHT_FIELDS.every(f => !(f in want) || !(f in l)
+      || (f === 'color' ? want.color.every((v, k) => v === l.color[k]) : typeof want[f] === 'number' ? near(l[f], want[f]) : l[f] === want[f]));
+  };
+  for (const [i, settings] of lightEdits) check(lightIs(i, settings), `${saved.exports[i].name} light`);
+  newLights.forEach((i, k) => {
+    const a = byIndex.get(i);
+    check(lightIs(i, lights[k], lights[k].kind) && a && a.loc.every((v, j) => Math.abs(v - lights[k].loc[j]) < 0.01), `new light ${k + 1}`);
+  });
   if (hudWanted) {
     const got = hudOf(saved);
     check(hudWanted.timer || hudWanted.deaths ? got?.timer === !!hudWanted.timer && got?.deaths === !!hudWanted.deaths : got === null, 'timer and death counter');
@@ -169,7 +199,8 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     const m = saved.levelActors().find(a => a.i === ballSpawnMarker(saved));
     check(m && m.loc.every((v, k) => Math.abs(v - ballSpawn.loc[k]) < 0.01), 'ball spawn');
   }
-  check(saved.levelList().length === before + duplicates.length + checkpoints.length + markersAdded + shapes.length + panels.length + tilesAdded - removes.length - tilesRemoved, 'level actor count');
+  check(saved.levelList().length === before + duplicates.length + checkpoints.length + markersAdded + shapes.length + panels.length + tilesAdded + lights.length
+        - removes.length - tilesRemoved, 'level actor count');
   const savedZones = new Map(checkpointZones(saved).map(z => [z.i, z])), savedLava = new Map(lavaZones(saved).map(z => [z.i, z]));
   triggers.forEach((t, k) => {
     const c = checkpoints[k], z = (c.lava ? savedLava : savedZones).get(t);

@@ -47,7 +47,7 @@ A step is an object with any of these fields:
   deaths: true,                // on screen "Deaths: N": lava touches and resets
   spawn: { at: [x, y, z], yaw: 0 },   // where the car starts: a point on a surface
   ball: "roof",                // "roof" (on the car), {at: [x, y, z]} (on the surface there), or "start" (the game's default)
-  add: [ /* shapes and checkpoints, below */ ],
+  add: [ /* shapes, checkpoints and lights, below */ ],
   remove: ["pad3"]             // ids to delete
 }
 ```
@@ -97,6 +97,28 @@ and the car and the ball bounce off it.
 - When a checkpoint becomes the respawn point, its `title` (up to 60 characters, e.g. `"The Stairs"`) shows on screen
   for 2 seconds; without one it shows "Checkpoint N", numbered in the order checkpoints were added. Titles that
   name the regions of a course read well.
+
+### Lights
+
+```js
+{ id: "lamp1", light: "point", at: [x, y, z], color: "#ffaa44", brightness: 2, radius: 2000, shadows: false, on: true }
+```
+
+| light | what it is | fields besides `at`, `color`, `brightness`, `shadows`, `on` | new one |
+|---|---|---|---|
+| `point` | a bulb shining every way, fading out to `radius` | `radius` | brightness 2, radius 2000 |
+| `spot` | a cone along `yaw` and `pitch` (−90 points straight down); full brightness inside `core`, fading out to `cone` (degrees from its middle) | `radius`, `cone`, `core`, `yaw`, `pitch` | brightness 3, radius 3000, cone 30, core 15, pitch −90 |
+| `sun` | light from far away along `yaw` and `pitch`; where it stands doesn't matter | `yaw`, `pitch` | brightness 0.5, pitch −45 |
+| `sky` | even light from all around | | brightness 0.3 |
+
+- `at` is where the light itself is, not a point on the ground. A point or spot light lights what is within `radius`
+  of it, so put it a few hundred units over a pad, or along a course every 1500–3000.
+- Brightness 1 is a plain light; most maps' suns are 0.3 to 1.3 and the blank map's add up to about 2. Coloured
+  point lights of 2–10 show well. Shadows cost frame rate; leave them off unless one light matters.
+- The map's own lights are in `state().objects` with `kind: "light"`; an `add` with one's id replaces it. `lighting`
+  tints the suns and sky lights as a whole.
+- `look()` shows point and spot lights as they light the view (up to 12 points and 4 spots near the middle of
+  the view).
 
 ### Lava
 

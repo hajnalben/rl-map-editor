@@ -38,7 +38,7 @@
   button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
   button.active { border-color: var(--accent); color: var(--accent); background: rgba(77, 163, 255, .14); }
   button:disabled { opacity: .45; cursor: default; }
-  button[hidden], select[hidden], label[hidden], section[hidden] { display: none; }
+  button[hidden], select[hidden], label[hidden], section[hidden], .row[hidden] { display: none; }
   details.menu { position: relative; }
   details.menu > summary { list-style: none; }
   details.menu > summary::-webkit-details-marker { display: none; }
@@ -149,7 +149,7 @@
   <aside id="left">
     <div class="tabs" role="tablist">
       <button role="tab" data-tab="map" class="active" aria-selected="true" title="What's in the map">Map</button>
-      <button role="tab" data-tab="add" aria-selected="false" title="Shapes, checkpoints and lava to place">Add</button>
+      <button role="tab" data-tab="add" aria-selected="false" title="Shapes, checkpoints, lava and lights to place">Add</button>
     </div>
     <section class="fill" id="mapTab">
       <input id="filter" placeholder="Find objects: name, kind or shape">
@@ -157,7 +157,7 @@
       <div id="count" class="muted" style="margin-top:6px"></div>
     </section>
     <section class="fill" id="addTab" hidden>
-      <input id="paletteFilter" placeholder="Search shapes and checkpoints">
+      <input id="paletteFilter" placeholder="Search shapes, checkpoints and lights">
       <select id="palette" size="10"></select>
       <div class="actions">
         <button id="add" class="primary" title="Place the picked shape or checkpoint where you're looking (or double-click it in the list)">Place</button>
@@ -198,6 +198,15 @@
             <button data-ball="front" title="The new ball appears ahead of the car, the way the checkpoint faces">In front</button>
             <button data-ball="top" title="The new ball drops onto the car's roof">On the car</button>
           </div>
+        </div>
+        <div id="lightEdit" hidden>
+          <label class="field">Colour <input type="color" id="lightColor"></label>
+          <label class="field" title="1 is a plain light; most maps' suns are 0.3 to 1.3">Brightness <input type="number" id="lightBrightness" min="0" max="100" step="0.1"></label>
+          <label class="field" id="lightRadiusRow" title="How far it reaches">Radius <input type="number" id="lightRadius" min="10" max="100000" step="50"></label>
+          <label class="field" id="lightOuterRow" title="From the middle of the cone to its edge">Cone° <input type="number" id="lightOuter" min="1" max="89" step="1"></label>
+          <label class="field" id="lightInnerRow" title="Full brightness inside this angle, fading out to the cone's edge">Core° <input type="number" id="lightInner" min="0" max="89" step="1"></label>
+          <label title="Shadows from many lights can cost frame rate"><input type="checkbox" id="lightShadows"> Casts shadows</label>
+          <label><input type="checkbox" id="lightOn"> On</label>
         </div>
         <label class="field" id="surfaceRow">Surface <select id="surface" title="What it looks like in game"></select></label>
         <div class="row" id="locRow"><span>Location</span><input type="number" data-f="loc" data-k="0"><input type="number" data-f="loc" data-k="1"><input type="number" data-f="loc" data-k="2"></div>
@@ -263,6 +272,7 @@ import { Package } from './ue3.js';
 import { blankMap } from './blank.js';
 import { LIGHTING, build, describe, isOriginalGameMap, shapes } from './map.js';
 import { BALL_AHEAD, BALL_FRONT_LIFT, BALL_LIFT, BALL_TOP_AHEAD } from './kismet.js';
+import { LIGHT_FIELDS, LIGHT_KINDS } from './lights.js';
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
 import { nameLook, surfaceLook, textureImage } from './looks.js';
@@ -377,6 +387,7 @@ renderer.setAnimationLoop(() => {
   if (stroke) sculptStep(dt);
   flyCamera(dt);
   orbit.update();
+  syncLightPreview();
   renderer.render(scene, camera);
   drawLabels();
 });
@@ -550,6 +561,77 @@ function ballObject(a, placed) {
   return obj;
 }
 const ballOfNoOne = () => ({ i: null, name: 'Ball spawn', cls: 'BallSpawn', mesh: null, loc: [0, 0, 0], rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null, meshIndex: null });
+
+// Lights: a marker in the light's colour (faint when off); selected, its reach, its cone, or the way a sun shines.
+// Point and spot lights also light the view: the ones nearest to where you look, as many as the view has lights for.
+const lightGeo = new THREE.SphereGeometry(45, 16, 8);
+const LIGHT_AIM = { point: [0, 0, 0], spot: [-16384, 0, 0], sun: [-8192, 8192, 0], sky: [0, 0, 0] };   // a spot shines straight down
+const LIGHT_LIFT = { point: 400, spot: 1000, sun: 3000, sky: 3000 };   // how far over the point you look at a new one goes
+const NEW_LIGHT = {
+  point: { color: [255, 255, 255], brightness: 2, radius: 2000, shadows: false, on: true },
+  spot: { color: [255, 255, 255], brightness: 3, radius: 3000, inner: 15, outer: 30, shadows: false, on: true },
+  sun: { color: [255, 255, 255], brightness: 0.5, shadows: false, on: true },
+  sky: { color: [255, 255, 255], brightness: 0.3, shadows: false, on: true },
+};
+const settingsOf = light => Object.fromEntries(['kind', ...LIGHT_FIELDS].filter(f => f in light).map(f => [f, structuredClone(light[f])]));
+function lightObject(a, light) {
+  const obj = new THREE.Mesh(lightGeo, new THREE.MeshBasicMaterial({ transparent: true }));
+  obj.userData = { actor: a, light };
+  refreshLight(obj);
+  applyActor(obj);
+  return obj;
+}
+function refreshLight(obj) {
+  const l = obj.userData.light;
+  obj.material.color.setRGB(...l.color.map(v => v / 255), THREE.SRGBColorSpace);
+  obj.material.opacity = l.on ? 1 : 0.35;
+}
+function placeLight(kind, loc, rot = LIGHT_AIM[kind], light = structuredClone({ kind, ...NEW_LIGHT[kind] })) {
+  const a = { i: null, name: LIGHT_KINDS[kind].name, cls: LIGHT_KINDS[kind].actor, mesh: null, loc: [...loc], rot: [...rot], scale3d: [1, 1, 1], scale: 1, bounds: null, meshIndex: null };
+  const obj = lightObject(a, light);
+  Object.assign(obj.userData, { copy: true, newLight: true });
+  placeNew(obj);
+  return obj;
+}
+const guideMat = new THREE.MeshBasicMaterial({ color: 0xffd24a, wireframe: true, transparent: true, opacity: 0.25, depthWrite: false });
+const lightGuide = new THREE.Group();
+scene.add(lightGuide);
+function showLightGuide(obj) {
+  for (const c of lightGuide.children) c.dispose ? c.dispose() : c.geometry.dispose();
+  lightGuide.clear();
+  const l = obj?.userData.light;
+  if (!l) return;
+  lightGuide.position.copy(obj.position);
+  lightGuide.quaternion.copy(obj.quaternion);
+  if (l.kind === 'point') lightGuide.add(new THREE.Mesh(new THREE.SphereGeometry(l.radius, 24, 12), guideMat));
+  if (l.kind === 'spot') {                        // apex at the light, opening along its local +X (Unreal's forward)
+    const h = l.radius, cone = new THREE.ConeGeometry(h * Math.tan(l.outer * Math.PI / 180), h, 24, 1, true).translate(0, -h / 2, 0).rotateZ(Math.PI / 2);
+    lightGuide.add(new THREE.Mesh(cone, guideMat));
+  }
+  if (l.kind === 'sun') lightGuide.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 1500, 0xffd24a, 300, 150));
+}
+const previewPoints = Array.from({ length: 12 }, () => { const p = new THREE.PointLight(0xffffff, 0, 1, 0); scene.add(p); return p; });
+const previewSpots = Array.from({ length: 4 }, () => { const s = new THREE.SpotLight(0xffffff, 0, 1, 0.5, 0, 0); scene.add(s, s.target); return s; });
+function syncLightPreview() {                     // a fixed set of view lights, so materials never recompile
+  const t = orbit.target, near = kind => objects.filter(o => o.userData.light?.kind === kind && o.userData.light.on && !o.userData.deleted)
+    .sort((x, y) => x.position.distanceToSquared(t) - y.position.distanceToSquared(t));
+  const fill = (pool, list, aim) => pool.forEach((p, k) => {
+    const o = list[k], l = o?.userData.light;
+    p.intensity = l ? l.brightness : 0;
+    if (!l) return;
+    p.position.copy(o.position);
+    p.color.setRGB(...l.color.map(v => v / 255), THREE.SRGBColorSpace);
+    p.distance = l.radius;
+    aim?.(p, o, l);
+  });
+  fill(previewPoints, near('point'));
+  fill(previewSpots, near('spot'), (p, o, l) => {
+    p.angle = Math.min(l.outer, 89) * Math.PI / 180;
+    p.penumbra = l.outer > 0 ? Math.min(1, Math.max(0, 1 - l.inner / l.outer)) : 0;
+    p.target.position.copy(o.position).add(new THREE.Vector3(1, 0, 0).applyQuaternion(o.quaternion));
+    p.target.updateMatrixWorld();
+  });
+}
 function placeBallStart() {
   const ball = ballObj(), start = spawnActor(), a = ball?.userData.actor;
   if (!ball || (gizmo.dragging && selected === ball)) return;
@@ -698,6 +780,10 @@ async function buildOnBlank() {
     readBack(o);
     return { key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d] };
   });
+  const lights = added.filter(o => o.userData.newLight).map(o => {
+    readBack(o);
+    return { loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], light: settingsOf(o.userData.light) };
+  });
   readBack(objects.find(o => o.userData.spawn));
   readBack(ballObj());
   const name = saveName, mood = lighting, screen = hud, starterSpawn = structuredClone(spawnActor()), starterBall = ballObj().userData.placed ? [...ballObj().userData.actor.loc] : null;
@@ -718,6 +804,7 @@ async function buildOnBlank() {
     if (c.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
   }
   for (const sh of shapes) placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
+  for (const l of lights) placeLight(l.light.kind, [l.loc[0] + dx * ter.cell, l.loc[1] + dy * ter.cell, l.loc[2] + floor], l.rot, l.light);
   start.loc = [starterSpawn.loc[0] + dx * ter.cell, starterSpawn.loc[1] + dy * ter.cell, starterSpawn.loc[2] + floor];
   start.rot = starterSpawn.rot;
   applyActor(spawn);
@@ -794,6 +881,12 @@ function loadMap(name, bytes, parsed, data) {
       const ball = group.add(ballObject(a, true)).children.at(-1);
       ball.userData.onRoof = !!spawnAt && [roofSpot(actors.find(x => x.cls.startsWith('PlayerStart'))), [spawnAt[0], spawnAt[1], spawnAt[2] + BALL_LIFT]].some(at => same(a.loc, at, 1));   // or straight over it, as saved before
       return ball;
+    }
+    if (a.light) {
+      const obj = lightObject(a, settingsOf(a.light));
+      obj.userData.original = { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale, light: settingsOf(a.light) };
+      group.add(obj);
+      return obj;
     }
     const obj = new THREE.Mesh(geometryFor(a.bounds), materialFor(a));
     obj.userData.actor = a;
@@ -954,6 +1047,7 @@ function abilities(o) {
   if (u.placeholder) return { modes: [], yawOnly: false };
   if (u.ballSpawn) return { modes: ['translate'], yawOnly: false };
   if (u.spawn) return { modes: ['translate', 'rotate'], yawOnly: true };
+  if (u.light) return { modes: ['spot', 'sun'].includes(u.light.kind) ? ['translate', 'rotate'] : ['translate'], yawOnly: false };
   return { modes: u.actor.bounds || isVolume(u.actor) ? ['translate', 'rotate', 'scale'] : ['translate', 'rotate'], yawOnly: false };
 }
 function setMode(mode) {
@@ -978,13 +1072,14 @@ function showSelection() {
   if (!selected) {
     $('selInfo').textContent = 'Nothing selected. Click an object in the view or in the Map list, or place one from the Add tab.';
     $('selEdit').hidden = true;
+    showLightGuide(null);
     return;
   }
   readBack(selected);
   selBox.setFromObject(selected);
   const a = selected.userData.actor, isNew = a.i === null;
   $('selInfo').innerHTML = selected.userData.placeholder
-    ? `<div class="kv"><b>Sun</b> <span class="muted">(comes with the blank map)</span></div><div class="kv muted">A new map gets three sun lights: a key light, a soft fill and one from above. Lighting ▾ in the toolbar sets their mood.</div>`
+    ? `<div class="kv"><b>Sun</b> <span class="muted">(comes with the blank map)</span></div><div class="kv muted">A new map gets three sun lights: a key light, a soft fill and one from above. Lighting ▾ in the toolbar sets their mood; the Add tab has more lights.</div>`
     : selected.userData.spawn
     ? `<div class="kv"><b>Spawn</b> <span class="muted">${a.name}</span></div><div class="kv muted">Where your car starts, facing the way it points, and comes back to on resets until you reach a checkpoint. Drag it anywhere: it settles just above the ground under it.</div>`
     : selected.userData.ballSpawn
@@ -1003,8 +1098,27 @@ function showSelection() {
         : `Becomes your respawn point when your car ${isGate(a) ? 'passes through' : 'drives or flies into'} it.`}
         After a reset the car appears ${isGate(a) ? `just past the gate (${GATE_PAST} units)` : 'inside it'}, on the ground when it reaches some, facing the arrow${selected.userData.checkpoint === 'ball'
         ? `, with the new ball ${selected.userData.ballOnTop ? 'just over the roof' : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
+    : selected.userData.light
+    ? `<div class="kv"><b>${LIGHT_KINDS[selected.userData.light.kind].name}</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${{
+        point: 'Shines every way, fading out to its radius.',
+        spot: 'Shines a cone the way it points: rotate it to aim. Full brightness inside the core, fading out to the cone\'s edge.',
+        sun: 'Light from far away, the way the arrow points; where it stands doesn\'t matter.',
+        sky: 'Even light from all around; where it stands doesn\'t matter.',
+      }[selected.userData.light.kind]}</div>`
     : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
   $('selEdit').hidden = false;
+  const l = selected.userData.light;
+  $('lightEdit').hidden = !l;
+  if (l) {
+    $('lightRadiusRow').hidden = !('radius' in l);
+    $('lightOuterRow').hidden = $('lightInnerRow').hidden = l.kind !== 'spot';
+    const shown = { lightColor: '#' + l.color.map(v => v.toString(16).padStart(2, '0')).join(''), lightBrightness: +l.brightness.toFixed(3),
+                    lightRadius: Math.round(l.radius ?? 0), lightOuter: +(l.outer ?? 0).toFixed(1), lightInner: +(l.inner ?? 0).toFixed(1) };
+    for (const [id, v] of Object.entries(shown)) if (document.activeElement !== $(id)) $(id).value = v;
+    $('lightShadows').checked = l.shadows;
+    $('lightOn').checked = l.on;
+  }
+  showLightGuide(selected);
   $('duplicate').hidden = $('delete').hidden = !!selected.userData.spawn || !!selected.userData.ballSpawn || !!selected.userData.placeholder;   // one of each per map
   const can = abilities(selected);
   document.querySelectorAll('[data-mode]').forEach(b => { b.hidden = !can.modes.includes(b.dataset.mode); });
@@ -1052,6 +1166,23 @@ document.querySelectorAll('#selEdit input[data-f]').forEach(inp => inp.addEventL
   showSelection();
 }));
 
+const LIGHT_INPUTS = { lightColor: 'color', lightBrightness: 'brightness', lightRadius: 'radius', lightOuter: 'outer', lightInner: 'inner', lightShadows: 'shadows', lightOn: 'on' };
+for (const [id, field] of Object.entries(LIGHT_INPUTS)) $(id).addEventListener(id === 'lightColor' ? 'input' : 'change', () => {
+  const l = selected?.userData.light, el = $(id);
+  if (!l) return;
+  const v = el.type === 'checkbox' ? el.checked : el.type === 'color' ? [1, 3, 5].map(k => parseInt(el.value.slice(k, k + 2), 16))
+    : Math.min(+el.max, Math.max(+el.min, parseFloat(el.value)));
+  if (Number.isNaN(v)) return;
+  const last = undo.at(-1);                       // dragging through colours is one step to undo
+  if (!(last?.kind === 'light' && last.obj === selected && last.field === field)) undo.push({ kind: 'light', obj: selected, field, light: structuredClone(l) });
+  l[field] = v;
+  if (field === 'outer') l.inner = Math.min(l.inner, v);
+  if (field === 'inner') l.outer = Math.max(l.outer, v);
+  refreshLight(selected);
+  markDirty(selected);
+  showSelection();
+});
+
 function pushUndo(obj) {
   if (!obj) return;
   undo.push({ kind: 'move', obj, state: { pos: obj.position.clone(), quat: obj.quaternion.clone(), scale: obj.scale.clone() } });
@@ -1068,6 +1199,11 @@ function popUndo() {
     u.obj.userData.deleted = false;
     u.obj.userData.copy ? added.push(u.obj) : removed.delete(u.obj);
     select(u.obj);
+  } else if (u.kind === 'light') {
+    u.obj.userData.light = u.light;
+    refreshLight(u.obj);
+    markDirty(u.obj);
+    if (u.obj === selected) showSelection();
   } else if (u.kind === 'sculpt') {
     for (const [key, heights] of u.before) {
       const t = ter.tiles.get(key);
@@ -1381,9 +1517,11 @@ function renderPalette() {
   const checkpoints = [['cp:car', 'Car checkpoint · box'], ['cp:car:gate', 'Car checkpoint · gate'],
                        ['cp:ball', 'Ball checkpoint · box'], ['cp:ball:gate', 'Ball checkpoint · gate']];
   const lava = [['lava:ball', 'Lava · the ball resets'], ['lava:car', 'Lava · the car resets']];
+  const lights = Object.entries(LIGHT_KINDS).map(([k, v]) => [`light:${k}`, v.name]);
   $('palette').replaceChildren(...[
     group('Checkpoints', zone ? checkpoints.filter(([, text]) => hit(text)) : []),
     group('Floor is lava', zone ? lava.filter(([, text]) => hit(`${text} floor`)) : []),
+    group('Lights', lights.filter(([, text]) => hit(`${text} lights`))),
     group('This map', palette.filter(p => hit(p.mesh)).map(p => [`map:${p.template}`, `${p.mesh}  ×${p.count}`])),
     group('Built-in', Object.keys(BUILT_IN).filter(hit).map(k => [`std:${k}`, k])),
     group('From your maps', [...library.values()].filter(s => s.source !== mapName && hit(`${s.name} ${s.source}`))
@@ -1395,6 +1533,10 @@ function addFromPalette() {
   if (!value) return setStatus('Pick a shape in the list first.', 'warn');
   if (value.startsWith('cp:')) return addCheckpoint(value.split(':')[1], value.endsWith(':gate'));
   if (value.startsWith('lava:')) return addLava(value.slice(5));
+  if (value.startsWith('light:')) {
+    const kind = value.slice(6), loc = fromThree(orbit.target);
+    return placeLight(kind, [loc[0], loc[1], loc[2] + LIGHT_LIFT[kind]]);
+  }
   if (!value.startsWith('map:')) return placeShape(value, fromThree(orbit.target));
   const template = objects.find(o => !o.userData.copy && o.userData.actor.i === +value.slice(4));
   if (template) copyObject(template, fromThree(orbit.target));
@@ -1449,12 +1591,13 @@ function collectShapes() {                        // the open map's shapes join 
 }
 function copyObject(source, loc) {
   readBack(source);
-  const src = source.userData.actor, { checkpoint, shape, ballOnTop, lava, surface } = source.userData;
+  const src = source.userData.actor, { checkpoint, shape, ballOnTop, lava, surface, newLight } = source.userData;
   const panel = source.userData.panel ? { material: source.userData.panel.material } : null;
   const a = { ...src, i: null, src: src.src ?? src.i, name: (src.mesh || src.name) + ' copy',
               loc: [...loc], rot: [...src.rot], scale3d: [...src.scale3d] };
-  const obj = new THREE.Mesh(source.geometry, source.material);
-  obj.userData = { actor: a, copy: true, checkpoint, shape, ballOnTop, panel, lava, surface, ...(checkpoint ? { title: source.userData.title ?? '' } : {}) };
+  const obj = source.userData.light ? lightObject(a, settingsOf(source.userData.light)) : new THREE.Mesh(source.geometry, source.material);
+  obj.userData = { actor: a, copy: true, checkpoint, shape, ballOnTop, panel, lava, surface, light: obj.userData.light, newLight,
+                   ...(checkpoint ? { title: source.userData.title ?? '' } : {}) };
   if (checkpoint) obj.material = lookOf(obj);
   if (checkpoint) decorateCheckpoint(obj);
   placeNew(obj);
@@ -1498,7 +1641,7 @@ const pivotFor = (at, rot, foot) => rotated(rot, foot).map((v, k) => at[k] - v);
 const footOf = (a, foot) => rotated(a.rot, foot).map((v, k) => r1(a.loc[k] + v));
 
 let aiCount = 0;
-const idOf = o => o.userData.aiId ??= o.userData.copy ? `${o.userData.lava ? 'lava' : o.userData.checkpoint ? 'checkpoint' : 'shape'}#${++aiCount}` : `map#${o.userData.actor.i}`;
+const idOf = o => o.userData.aiId ??= o.userData.copy ? `${o.userData.lava ? 'lava' : o.userData.checkpoint ? 'checkpoint' : o.userData.light ? 'light' : 'shape'}#${++aiCount}` : `map#${o.userData.actor.i}`;
 const surfaceKey = name => name.replace(/^MAT_|_(INST|MIC|MAT|Mat)$/g, '');
 const aiSurfaces = () => new Map([...$('surface').options].map(op => [op.value === 'lava' ? 'lava' : surfaceKey(op.text), surfaceValue(op.value)]));
 const surfaceRef = name => [...aiSurfaces()].find(([k]) => k.toLowerCase() === surfaceKey(name).toLowerCase())?.[1];
@@ -1513,12 +1656,12 @@ function aiFloor() {                              // the widest flat solid the m
   }
   return best;
 }
-function aiObjects() {                            // [floor, what an agent works with: shapes, meshes, checkpoints, lava]
+function aiObjects() {                            // [floor, what an agent works with: shapes, meshes, checkpoints, lava, lights]
   const floor = aiFloor();
   return [floor, objects.filter(o => {
     const u = o.userData;
     return o !== floor && !u.deleted && !u.respawnFor && !u.spawn && !u.ballSpawn && !u.placeholder
-      && (u.checkpoint || (u.actor.bounds && !isVolume(u.actor) && !u.huge));
+      && (u.checkpoint || u.light || (u.actor.bounds && !isVolume(u.actor) && !u.huge));
   })];
 }
 const aiFind = id => aiObjects()[1].find(o => idOf(o) === id);
@@ -1541,12 +1684,13 @@ function aiErrors(step) {                         // what is wrong with a step b
   if ('ball' in step && !['start', 'roof'].includes(step.ball) && !isVec(step.ball?.at)) bad('ball', '"start", "roof" or {"at": [x, y, z]}');
   if ('remove' in step && !(Array.isArray(step.remove) && step.remove.every(id => typeof id === 'string'))) bad('remove', 'a list of ids');
   if (!('add' in step)) return out;
-  if (!Array.isArray(step.add) || step.add.length > 2000) return [...out, 'add: a list of up to 2000 shapes and checkpoints'];
+  if (!Array.isArray(step.add) || step.add.length > 2000) return [...out, 'add: a list of up to 2000 shapes, checkpoints and lights'];
   const ids = new Set(), KEYS = { shape: ['id', 'shape', 'at', 'size', 'yaw', 'pitch', 'roll', 'surface'],
-                                  checkpoint: ['id', 'checkpoint', 'at', 'size', 'yaw', 'gate', 'ballOnTop', 'visible', 'title'] };
+                                  checkpoint: ['id', 'checkpoint', 'at', 'size', 'yaw', 'gate', 'ballOnTop', 'visible', 'title'],
+                                  light: ['id', 'light', 'at', 'yaw', 'pitch', 'color', 'brightness', 'radius', 'cone', 'core', 'shadows', 'on'] };
   step.add.forEach((e, n) => {
-    const where = `add[${n}]${typeof e?.id === 'string' ? ` (${e.id})` : ''}`, kind = e && ['shape', 'checkpoint'].filter(k => k in e);
-    if (!kind || kind.length !== 1) return bad(where, 'an object with either "shape" or "checkpoint"');
+    const where = `add[${n}]${typeof e?.id === 'string' ? ` (${e.id})` : ''}`, kind = e && ['shape', 'checkpoint', 'light'].filter(k => k in e);
+    if (!kind || kind.length !== 1) return bad(where, 'an object with one of "shape", "checkpoint" or "light"');
     for (const k of Object.keys(e)) if (!KEYS[kind[0]].includes(k)) bad(where, `unknown field "${k}" for a ${kind[0]}`);
     if ('id' in e && !(typeof e.id === 'string' && /^[\w-]{1,40}$/.test(e.id))) bad(where, 'id: up to 40 letters, digits, - or _');
     else if ('id' in e && ids.has(e.id)) bad(where, 'id used twice in this step');
@@ -1560,6 +1704,13 @@ function aiErrors(step) {                         // what is wrong with a step b
     for (const k of ['gate', 'ballOnTop']) if (k in e && typeof e[k] !== 'boolean') bad(where, `${k}: true or false`);
     if ('visible' in e && !['boolean', 'string'].includes(typeof e.visible)) bad(where, 'visible: true, false or a surface name');
     if ('title' in e && !(typeof e.title === 'string' && e.title.length <= 60)) bad(where, 'title: up to 60 characters');
+    if ('light' in e && !Object.hasOwn(LIGHT_KINDS, e.light)) bad(where, `light: one of ${Object.keys(LIGHT_KINDS).join(', ')}`);
+    if ('color' in e && !(typeof e.color === 'string' && /^#[0-9a-f]{6}$/i.test(e.color))) bad(where, 'color: "#rrggbb"');
+    for (const [k, lo, hi] of [['brightness', 0, 100], ['radius', 10, LIMIT], ['cone', 1, 89], ['core', 0, 89]]) {
+      if (k in e && !(isNum(e[k]) && e[k] >= lo && e[k] <= hi)) bad(where, `${k}: a number from ${lo} to ${hi}`);
+    }
+    if ('light' in e && ('radius' in e && !['point', 'spot'].includes(e.light) || ['cone', 'core'].some(k => k in e) && e.light !== 'spot')) bad(where, 'radius is for point and spot lights; cone and core for spot lights');
+    for (const k of ['shadows', 'on']) if ('light' in e && k in e && typeof e[k] !== 'boolean') bad(where, `${k}: true or false`);
   });
   return out;
 }
@@ -1571,7 +1722,13 @@ function aiAdd(e) {
   const old = e.id && aiFind(e.id);
   if (old) removeObject(old);
   let obj;
-  if ('shape' in e) {
+  if ('light' in e) {
+    const hex = e.color ?? '#ffffff', settings = { kind: e.light, ...NEW_LIGHT[e.light], color: [1, 3, 5].map(k => parseInt(hex.slice(k, k + 2), 16)) };
+    for (const [k, f] of [['brightness', 'brightness'], ['radius', 'radius'], ['cone', 'outer'], ['core', 'inner'], ['shadows', 'shadows'], ['on', 'on']]) if (k in e) settings[f] = e[k];
+    if (e.light === 'spot') settings.inner = Math.min(settings.inner, settings.outer);
+    const aim = LIGHT_AIM[e.light], rot = ['spot', 'sun'].includes(e.light) ? [Math.round((e.pitch ?? aim[0] / DEG) * DEG), Math.round((e.yaw ?? aim[1] / DEG) * DEG), 0] : [0, 0, 0];
+    obj = placeLight(e.light, e.at, rot, settings);
+  } else if ('shape' in e) {
     const key = `std:${AI_SHAPES[e.shape.toLowerCase()]}`, [min, max] = shapeBox(key);
     const rot = [e.pitch ?? 0, e.yaw ?? 0, e.roll ?? 0].map(d => Math.round(d * DEG));
     const scale3d = e.size ? e.size.map((v, k) => v / (max[k] - min[k])) : [1, 1, 1];
@@ -1658,6 +1815,14 @@ function aiEntry(o) {
     const [min, max] = shapeBox(u.shape);
     Object.assign(e, { kind: u.shape.slice(4).toLowerCase(), at: footOf(a, shapeFoot(u.shape, a.scale3d)), size: a.scale3d.map((v, k) => r1(v * (max[k] - min[k]))),
                        yaw: deg(a.rot[1]), pitch: deg(a.rot[0]), roll: deg(a.rot[2]), surface: surfaceName(u.surface ?? lastSurface) });
+  } else if (u.light) {
+    const l = u.light;
+    Object.assign(e, { kind: 'light', light: l.kind, at: a.loc.map(r1), color: '#' + l.color.map(v => v.toString(16).padStart(2, '0')).join(''),
+                       brightness: Math.round(l.brightness * 100) / 100, shadows: l.shadows, on: l.on });
+    if ('radius' in l) e.radius = Math.round(l.radius);
+    if (l.kind === 'spot') Object.assign(e, { cone: r1(l.outer), core: r1(l.inner) });
+    if (['spot', 'sun'].includes(l.kind)) Object.assign(e, { yaw: deg(a.rot[1]), pitch: deg(a.rot[0]) });
+    return e;
   } else Object.assign(e, { kind: 'mesh', mesh: a.mesh || a.name });
   e.box = { min: fromThree(b.min).map(r1), max: fromThree(b.max).map(r1) };
   return e;
@@ -1670,7 +1835,7 @@ function aiWarnings() {                           // what keeps the map from pla
   else if (lava && under.object === floor) out.push('spawn: the car starts on the lava floor; stand it on a shape');
   for (const o of list) {
     const u = o.userData;
-    if (u.lava) continue;
+    if (u.lava || u.light) continue;
     if (u.checkpoint) {
       const spot = (respawnValues(o) ?? u.actor).loc, hit = groundHit([spot[0], spot[1], spot[2] + 1], RESPAWN_CLEARANCE + 50);
       if (!hit) out.push(`${idOf(o)}: nothing under its respawn spot [${spot.map(Math.round)}]; a reset drops the car from there`);
@@ -1710,7 +1875,7 @@ async function aiLook(view = 'top', { labels = true } = {}) {
   $('showIds').checked = labels;
   const s = spawnActor(), [ahead, right] = ueAxes(s.rot).map(toThree), up = new THREE.Vector3(0, 1, 0), tan = Math.tan(camera.fov * Math.PI / 360);
   const box = new THREE.Box3().expandByPoint(toThree(s.loc)).expandByPoint(toThree(ballObj().userData.actor.loc));
-  for (const o of aiObjects()[1]) if (!o.userData.lava) box.union(boxOf(o));
+  for (const o of aiObjects()[1]) if (!o.userData.lava && !['sun', 'sky'].includes(o.userData.light?.kind)) box.union(boxOf(o));   // far-off suns don't count
   const of = target ? boxOf(target) : box, centre = of.getCenter(new THREE.Vector3()), size = of.getSize(new THREE.Vector3());
   const place = () => {
     let from, at;
@@ -1734,6 +1899,7 @@ async function aiLook(view = 'top', { labels = true } = {}) {
   place();
   reframe = place;
   $('legendText').textContent = view === 'top' ? 'top view · +X → · +Y ↓' : '';
+  syncLightPreview();
   renderer.render(scene, camera);                 // now: a hidden page gets no animation frames
   drawLabels();
   await nextFrame();
@@ -1778,6 +1944,11 @@ function changes(obj) {                           // transform fields that diffe
   const want = obj.userData.panel, had = obj.userData.savedPanel;
   if (o && obj.userData.checkpoint && (!!want !== !!had || (want && had && want.material !== had.material))) e.panel = true;
   if (o && obj.userData.surface !== undefined && obj.userData.surface !== o.surface) e.surface = obj.userData.surface;
+  const l = obj.userData.light;
+  if (l) {
+    const set = LIGHT_FIELDS.filter(f => f in l && (!o?.light || JSON.stringify(l[f]) !== JSON.stringify(o.light[f])));
+    if (set.length) e.light = Object.fromEntries(set.map(f => [f, l[f]]));
+  }
   return e;
 }
 function markDirty(obj) {
@@ -1870,14 +2041,19 @@ function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.
 
 function changeSet() {                            // [what build() applies, summary]
   const edits = [...dirty].filter(o => !removed.has(o) && !o.userData.ballSpawn).map(o => ({ i: o.userData.actor.i, ...changes(o) }));
-  const duplicates = added.filter(o => !o.userData.checkpoint && !o.userData.shape).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
+  const duplicates = added.filter(o => !o.userData.checkpoint && !o.userData.shape && !o.userData.newLight).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
+  const lights = added.filter(o => o.userData.newLight).map(o => {
+    const { loc, rot, light } = changes(o);
+    return { kind: o.userData.light.kind, loc, rot, ...light };
+  });
   const shapes = added.filter(o => o.userData.shape).map(o => ({ key: o.userData.shape, ...changes(o), material: o.userData.surface ?? null }));
   const shapeGeometry = Object.fromEntries([...new Set(shapes.map(s => s.key))].map(k => [k, asMeshInput(shapeData(k))]));
   const shapeMaterial = lastSurface;
   const checkpoints = added.filter(o => o.userData.checkpoint)
     .map(o => ({ ...changes(o), ball: o.userData.checkpoint === 'ball', lava: !!o.userData.lava,
                  respawn: o.userData.lava ? null : respawnValues(o) }));
-  const removes = [...removed].map(o => o.userData.actor.i), moved = edits.length, respawns = [], panels = [];
+  const removes = [...removed].map(o => o.userData.actor.i), respawns = [], panels = [];
+  const lit = edits.filter(e => e.light).length, moved = edits.filter(e => Object.keys(e).some(k => k !== 'i' && k !== 'light')).length;
   const surfaces = edits.filter(e => 'surface' in e).map(e => ({ i: e.i, material: e.surface }));
   const panelAt = (o, material) => {
     readBack(o);
@@ -1919,7 +2095,7 @@ function changeSet() {                            // [what build() applies, summ
     return { tx, ty, heights: apron(tx, ty) };
   }) } : null;
   const lava = checkpoints.filter(c => c.lava).length;
-  const summary = [moved && `${moved} moved`, duplicates.length && `${duplicates.length} added`,
+  const summary = [moved && `${moved} moved`, lit && `${lit} lights set`, duplicates.length && `${duplicates.length} added`, lights.length && `${lights.length} new lights`,
                    shapes.length && `${shapes.length} shapes`, checkpoints.length > lava && `${checkpoints.length - lava} checkpoints`,
                    lava && `${lava} lava zones`,
                    terrain && `${terrain.tiles.length} terrain tiles`,
@@ -1927,7 +2103,7 @@ function changeSet() {                            // [what build() applies, summ
                    panels.length && `${panels.length} checkpoint panels`, ballSpawn && 'a ball spawn',
                    lighting !== lightingSaved && `${LIGHTING[lighting]?.name.toLowerCase() ?? 'the map\'s own'} lighting`,
                    hudChanged() && (hud.timer || hud.deaths ? `${[hud.timer && 'timer', hud.deaths && 'death counter'].filter(Boolean).join(' and ')} on screen` : 'nothing on screen')].filter(Boolean).join(', ') || 'no changes';
-  return [{ edits, duplicates, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
+  return [{ edits, duplicates, lights, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
             lighting: lighting !== lightingSaved ? lighting : null, hud: hudChanged() ? hud : null },
           fresh ? `new map, ${summary}` : summary];
 }
