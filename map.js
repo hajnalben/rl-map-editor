@@ -8,6 +8,7 @@ import { unpackFrom } from './bytes.js';
 import { compact } from './compact.js';
 import { LIGHT_FIELDS, addLight, lightOf, setLight } from './lights.js';
 import { motionKeys, scaledBox } from './motion.js';
+import { scriptOf, setScript } from './rules.js';
 
 export function describe(pkg) {
   const all = pkg.levelActors(), ground = terrain(pkg, all);
@@ -25,7 +26,7 @@ export function describe(pkg) {
   const panels = actors.filter(a => /^CheckpointPanel/.test(a.mesh || '')).map(a => ({ i: a.i, material: a.materials[0] || null }));
   const tint = pkg.tintable(), spawn = actors.find(a => a.cls.startsWith('PlayerStart'))?.i ?? null;
   return { actors, palette: pkg.palette(actors), zone: pkg.zoneTemplate(), checkpoints: checkpointZones(pkg), lava: lavaZones(pkg), materials: pkg.materials(), panels,
-           spawnBall: spawnBall(pkg, spawn), ballSpawn: ballSpawnMarker(pkg), lights: mapLights(pkg).map(l => l.mood), hud: hudOf(pkg), movers: moversOf(pkg),
+           spawnBall: spawnBall(pkg, spawn), ballSpawn: ballSpawnMarker(pkg), lights: mapLights(pkg).map(l => l.mood), hud: hudOf(pkg), movers: moversOf(pkg), script: scriptOf(pkg),
            tintable: tint && pkg.exports[tint[0]].name, terrain: { tile: TILE, cell: CELL, sink: SINK, base: ground.base, material: ground.material, tiles } };
 }
 
@@ -98,15 +99,18 @@ const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its che
 // `movers` ([{i | shape: k | duplicate: k, motion}], see motion.js) is every moving shape the map should have, given
 // when they change: a saved one, `shapes[k]` (written as a mover), or the copy `duplicates[k]`. A motion's trigger
 // is {i} (a saved checkpoint zone), {checkpoint: k} (`checkpoints[k]`) or null.
+// `triggerZones` ([{loc, rot, scale3d}]) are new trigger zones for scripts. `script` ({source, plan, names}, see script.js;
+// names {name: {i} | {shape | checkpoint | zone | light | duplicate: k}}) replaces the map's script; an empty
+// source takes it out. Shapes a script moves, shows or hides must be movers (InterpActors).
 // `checkpoints` entries with `lava` are lava zones (see addCheckpoints). `ballSpawn` ({loc}) gives the ball a spawn
 // of its own (a map that has one moves its marker through `edits`). A panel material of 'lava' is a red copy
 // of the map's tintable surface (describe().tintable), added once.
 export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false,
                                 shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], surfaces = [], ballSpawn = null, lighting = null, hud = null,
-                                lights = [], movers = null }) {
+                                lights = [], movers = null, triggerZones = [], script = null }) {
   const pkg = new Package(source.slice());
   const before = pkg.levelList().length;
-  let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [], copies = [], shapeActors = [];
+  let tilesAdded = 0, tilesRemoved = 0, out = pkg.data, triggers = [], copies = [], shapeActors = [], zoneActors = [];
   const missing = pkg.apply(edits);
   // ball checkpoints switched between ball in front / on top: their mode variable (UDK leaves an IntValue of 0 out)
   const zoneList = checkpointZones(pkg), zones = new Map(zoneList.map(z => [z.i, z])), unsetModes = [];
@@ -120,7 +124,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   }
   const markers = respawns.filter(r => r.marker);
   for (const r of respawns) if (!r.marker) pkg.set(pkg.exports[r.valueVar], 'ObjValue', '<i', r.zone + 1);
-  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || surfaces.length || ballSpawn || lighting || titles.length) {
+  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || surfaces.length || ballSpawn || lighting || titles.length || triggerZones.length) {
     const add = new Additions(pkg);
     let lava = null;
     const surface = m => m === 'lava' ? (lava ??= lavaSurface(add)) : m;
@@ -133,6 +137,8 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     if (lighting) setLighting(add, lighting, new Set(edits.filter(e => e.light && ('color' in e.light || 'brightness' in e.light)).map(e => e.i)));
     copies = duplicates.map(dup => add.duplicate(dup.src, [0, 0, 0], editValues(dup)));
     for (const i of removes) add.remove(i);
+    if (triggerZones.length && !pkg.zoneTemplate()) throw new Error('this map has no trigger zone to copy for trigger zones');
+    zoneActors = triggerZones.map(z => add.duplicate(pkg.zoneTemplate().i, [0, 0, 0], editValues(z)));
     for (const r of markers) {
       const marker = add.duplicate(pkg.zoneTemplate().i, [0, 0, 0], editValues(r.marker));
       pkg.set(pkg.exports[r.valueVar], 'ObjValue', '<i', marker + 1);
@@ -184,6 +190,24 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     }));
     out = add.save();
   }
+  let scriptNames = null;
+  if (script) {                                   // after the movers: clips and hidden shapes need the shapes as InterpActors
+    const p = new Package(out), add = new Additions(p), placed = new Map(p.levelActors().map(a => [a.i, a]));
+    const at = r => 'i' in r ? r.i : 'shape' in r ? shapeActors[r.shape] : 'checkpoint' in r ? triggers[r.checkpoint] : 'zone' in r ? zoneActors[r.zone]
+      : 'light' in r ? newLights[r.light] : copies[r.duplicate];
+    scriptNames = Object.fromEntries(Object.entries(script.names).map(([name, r]) => [name, at(r)]));
+    const mover = name => {
+      const a = placed.get(scriptNames[name]);
+      if (!a || a.cls !== 'InterpActor') throw new Error(`script: "${name}" can't move; only shapes added in the editor can (add it as a new shape)`);
+      return a;
+    };
+    const plan = { ...script.plan, clips: script.plan.clips.map(c => { const a = mover(c.target); return { ...c, ...motionKeys(c.motion, a.rot, scaledBox(a.bounds, a.scale3d, a.scale)) }; }) };
+    const homes = {};
+    const walk = list => list.forEach(x => { if (x.do === 'show' || x.do === 'hide') homes[x.shape] = mover(x.shape).loc; walk(x.then ?? []); walk(x.otherwise ?? []); });
+    plan.rules.forEach(r => walk(r.actions));
+    setScript(add, script.source.trim() ? { source: script.source, plan, names: scriptNames, homes } : null);
+    out = add.save();
+  }
   const hudWanted = hud ?? hudOf(new Package(out));
   if (hudWanted) {                                // after everything else, so it sees the final checkpoints and lava
     const p = new Package(out), add = new Additions(p);
@@ -206,6 +230,10 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     const a = byIndex.get(i);
     check(lightIs(i, lights[k], lights[k].kind) && a && a.loc.every((v, j) => Math.abs(v - lights[k].loc[j]) < 0.01), `new light ${k + 1}`);
   });
+  if (script) {
+    const got = scriptOf(saved);
+    check(script.source.trim() ? got?.source === script.source && got.nodes.length > 0 && JSON.stringify(got.names) === JSON.stringify(scriptNames) : got === null, 'script');
+  }
   if (moving) {
     const got = new Map(moversOf(saved).map(m => [m.i, JSON.stringify(m.motion)]));
     check(got.size === moving.length && moving.every(m => got.get(m.actor) === JSON.stringify(m.motion)), 'moving shapes');
@@ -219,7 +247,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     const m = saved.levelActors().find(a => a.i === ballSpawnMarker(saved));
     check(m && m.loc.every((v, k) => Math.abs(v - ballSpawn.loc[k]) < 0.01), 'ball spawn');
   }
-  check(saved.levelList().length === before + duplicates.length + checkpoints.length + markersAdded + shapes.length + panels.length + tilesAdded + lights.length
+  check(saved.levelList().length === before + duplicates.length + checkpoints.length + markersAdded + shapes.length + panels.length + tilesAdded + lights.length + triggerZones.length
         - removes.length - tilesRemoved, 'level actor count');
   const savedZones = new Map(checkpointZones(saved).map(z => [z.i, z])), savedLava = new Map(lavaZones(saved).map(z => [z.i, z]));
   triggers.forEach((t, k) => {

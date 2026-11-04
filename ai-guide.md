@@ -9,7 +9,7 @@ wrong. Nothing leaves the user's computer. Saving the map, or loading it into th
 | Call | What it does |
 |---|---|
 | `await mapAI.help()` | This guide. |
-| `await mapAI.apply(step)` | Changes the map (see Steps). Returns `{ok: true, objects, warnings}`, or `{ok: false, errors}`. A step with errors changes nothing. |
+| `await mapAI.apply(step)` | Changes the map (see Steps; `script` sets the map's script, see Scripts). Returns `{ok: true, objects, warnings}`, or `{ok: false, errors}`. A step with errors changes nothing. |
 | `mapAI.state()` | The map as it is now: floor height, surfaces, lighting, lava, spawn, ball, every object (id, kind, `at`, `size`, rotation, world `box`, and where a reset at each checkpoint puts the car), plus warnings. |
 | `mapAI.ground(x, y)` | The top surface at x, y: `{z, on}` (`on` is an object id, `"floor"` or `"terrain"`), or `null`. |
 | `await mapAI.look(view)` | Points the editor camera and labels objects with their ids. **Take a screenshot afterwards.** `view` is `"top"` (the whole map from above), `"overview"` (at an angle from behind the spawn), `"spawn"` (behind the car, looking ahead), an object id (close-up), or `{from: [x, y, z], at: [x, y, z]}`. The bar in the corner is the scale at the middle of the view. Add `{labels: false}` as a second argument to hide the labels. |
@@ -48,7 +48,8 @@ A step is an object with any of these fields:
   spawn: { at: [x, y, z], yaw: 0 },   // where the car starts: a point on a surface
   ball: "roof",                // "roof" (on the car), {at: [x, y, z]} (on the surface there), or "start" (the game's default)
   add: [ /* shapes, checkpoints and lights, below */ ],
-  remove: ["pad3"]             // ids to delete
+  remove: ["pad3"],            // ids to delete
+  script: "on(start, text('Go!'))"   // the map's script (see Scripts), run after the step's other changes
 }
 ```
 
@@ -148,6 +149,74 @@ standing on a platform that slides under another shape gets pushed off.
   tints the suns and sky lights as a whole.
 - `look()` shows point and spot lights as they light the view (up to 12 points and 4 spots near the middle of
   the view).
+
+### Trigger zones
+
+```js
+{ id: "pad", zone: "box", at: [x, y, z], size: [x, y, z], yaw: 0, visible: false }
+```
+
+A box (`"box"`) or 20-thick doorway (`"gate"`) that does nothing by itself: scripts react to the car or ball going
+in or out. Sized and placed like checkpoints; `visible` shows a glass panel in the game.
+
+## Scripts
+
+A map's script is JavaScript that says what happens when: `apply({script: "..."})`, or the editor's **Script**
+panel. It runs once in the editor and is written into the map as Kismet, which is all the game runs. So it reacts to
+events, but only with what it set up beforehand: nothing follows the car around, and code doesn't run while you play.
+Objects are found by their id (the inspector's Name).
+
+```js
+const lift = shape('lift'), pad = zone('pad'), gate = checkpoint('gate1'), lamp = light('lamp');
+const up = lift.clip({ kind: 'slide', to: [0, 0, 600], seconds: 2 });          // a movement, played on demand
+const bob = lift.clip(3, t => ({ move: [0, 0, 80 * Math.sin(t * 2 * Math.PI / 3)] }), { loop: true });
+const open = flag('open'), hits = counter('hits');
+
+on(start, bob.play, text('Welcome!', 3, { color: '#40c0ff' }));
+on(pad.enter('car'), up.play, open.set(true));
+on(pad.leave(), up.reverse);
+on(gate.reached, emit('bridge'), once(text('First time here')));
+on(signal('bridge'), lamp.toggle, wait(2, lamp.off));
+on(every(5), when(open.is(true), launch('car', [0, 0, 900])).else(text('closed', 1)));
+on(pressed('jump'), hits.add(1), when(hits.atLeast(3), text('Three jumps!'), hits.set(0)));
+on(reset, up.stop, open.set(false));
+```
+
+`on(event, ...reactions)`: reactions run in order, right away; `wait` and `when` run theirs on the side.
+
+| events | when |
+|---|---|
+| `start` | the map starts |
+| `after(s)`, `every(s)` | s seconds after the start; every s seconds |
+| `zone(id).enter(by)`, `.leave(by)` | the car, ball or either (`"car"`, `"ball"`, `"any"`, the default) goes in or out |
+| `checkpoint(id).enter(by)`, `.leave(by)`, `.reached` | the same for a checkpoint; `reached`: it becomes the respawn point |
+| `reset` | the car respawns (a reset, lava, falling; not the first spawn) |
+| `lava(by)` | the car touches car lava, or the ball touches ball lava |
+| `pressed(button)` | a fresh press of `jump`, `boost`, `handbrake`, `ballcam`, `reset`, `chat1`…`chat4` |
+| `signal(name)` | `emit(name)` ran |
+| `goal(team)` | a goal: `"blue"`, `"orange"` or `"any"` (maps with goals) |
+| `clip.finished`, `clip.reversed` | a clip got to its end, or back to its start |
+
+| reactions | what they do |
+|---|---|
+| `clip.play`, `.reverse`, `.stop`, `.pause`, `.flip` | play a movement from its start (or on, if looping), back, stop it, pause or go on, turn around |
+| `text(message, seconds = 2, {size, at, color})` | on screen; `size` 2, `at` [x, y] pixels from the middle of the screen ([-80, -300]), `color` "#rrggbb" |
+| `light(id).on`, `.off`, `.toggle` | point and spot lights (the switchable kind) |
+| `shape(id).hide`, `.show` | gone (moved far below, so nothing hits it) and back |
+| `launch(what, [x, y, z])` | sets the velocity of `"car"` or `"it"` (what set off a zone, checkpoint or lava event) |
+| `teleport(what, id, {stop: true})` | moves `"car"` or `"it"` to an object, stopped unless `stop: false` |
+| `emit(name)` | sets off `signal(name)` |
+| `wait(s, ...reactions)` | those, s seconds later |
+| `when(test, ...reactions).else(...reactions)` | only if the test holds |
+| `once(...reactions)` | only the first time |
+| `flag(name, initial)`: `.set(v)`, `.toggle` / `.is(v)` | an on/off switch and its test |
+| `counter(name, initial)`: `.add(n)`, `.set(n)` / `.is(n)`, `.atLeast(n)`, `.below(n)` | a whole number and its tests |
+
+Clips: `shape(id).clip(motion, {loop})` takes a motion as in "Moving shapes" (kind slide, spin, path, swing);
+`shape(id).clip(seconds, t => ({move: [x, y, z], turn: [yaw, pitch, roll]}), {loop})` is any movement over time:
+`move` in world units from where the shape stands, `turn` in degrees about its middle, sampled 30 times a second.
+A clip plays from wherever the shape is when it starts. Shapes a script moves, shows or hides must be added in the
+editor (they are written as movers).
 
 ### Lava
 

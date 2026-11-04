@@ -82,6 +82,17 @@
   #ask::backdrop { background: rgba(0, 0, 0, .5); }
   #ask p { margin: 0 0 10px; }
   #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #scriptPanel { position: absolute; left: 0; right: 0; bottom: 0; height: 45%; display: flex; flex-direction: column; background: #15171c; border-top: 1px solid #2a2f38; z-index: 5; }
+  #scriptPanel[hidden] { display: none; }
+  .script-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; } .script-head .grow { flex: 1; }
+  #scriptStatus.warn { color: #ff8a7a; }
+  .script-head a { color: var(--accent); }
+  .script-body { flex: 1; display: flex; min-height: 0; gap: 8px; padding: 0 10px 10px; }
+  #scriptSource { flex: 1; resize: none; font: 12px/1.5 ui-monospace, Menlo, monospace; background: #0d0f12; color: #e6e6e6; border: 1px solid #2a2f38; border-radius: 6px; padding: 8px; tab-size: 2; }
+  #scriptEvents { width: 230px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+  #scriptEvents button { text-align: left; font: 11px ui-monospace, Menlo, monospace; }
+  #scriptTexts { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #scriptTexts > div { position: absolute; transform: translate(-50%, -50%); font-weight: 700; text-shadow: 0 1px 3px #000; white-space: nowrap; }
   #labels[hidden] { display: none; }
   #labels > span { position: absolute; left: 0; top: 0; padding: 0 5px; border-radius: 4px; background: rgba(0, 0, 0, .7); color: #fff; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; }
   #legend { position: absolute; left: 10px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 6px; background: rgba(0, 0, 0, .7); font-size: 12px; }
@@ -119,7 +130,7 @@
       <details class="menu">
         <summary>View ▾</summary>
         <div class="items">
-          <label><input type="checkbox" id="showCheckpoints" checked> Checkpoints and lava</label>
+          <label><input type="checkbox" id="showCheckpoints" checked> Checkpoints, lava and trigger zones</label>
           <label><input type="checkbox" id="showVolumes"> Other trigger zones</label>
           <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
           <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
@@ -131,6 +142,7 @@
         <summary title="The mood of the map's sun and sky lights">Lighting ▾</summary>
         <div class="items" id="lightingItems"></div>
       </details>
+      <button id="scriptButton" title="Events and what they set off, in JavaScript">Script</button>
       <details class="menu" id="screenMenu">
         <summary title="Text the map shows on screen while you play">On screen ▾</summary>
         <div class="items">
@@ -168,6 +180,15 @@
 
   <main id="view">
     <div id="loading">Loading…</div>
+    <div id="scriptTexts"></div>
+    <section id="scriptPanel" hidden>
+      <div class="script-head"><b>Script</b> <span id="scriptStatus" class="muted"></span><span class="grow"></span>
+        <a href="ai-guide.md#scripts" target="_blank" title="The script API">API</a>
+        <button id="scriptRun" class="primary" title="Run the script: check it and use it from now on (⌘Enter)">Apply</button>
+        <button id="scriptClose" title="Close">✕</button></div>
+      <div class="script-body"><textarea id="scriptSource" spellcheck="false" placeholder="const pad = zone('pad');&#10;on(pad.enter('car'), text('Hello!', 2));"></textarea>
+        <div id="scriptEvents"><span class="muted">Preview: set off an event</span><button id="scriptStart" title="Back to the start, then the map-start events">▶ Start over</button><div id="scriptFire" style="display:contents"></div></div></div>
+    </section>
     <div id="labels" hidden><div id="legend"><span id="legendText"></span><span id="scaleBar"></span><span id="scaleText"></span></div></div>
     <input type="file" id="file" accept=".udk,.upk" hidden>
   </main>
@@ -177,6 +198,7 @@
       <h2>Inspector</h2>
       <div id="selInfo" class="muted">Nothing selected. Click an object in the view or in the Map list, or place one from the Add tab.</div>
       <div id="selEdit" hidden style="margin-top:10px">
+        <label class="field" id="nameRow" title="What the Script and AI agents call it: letters, digits, - and _">Name <input id="objName" maxlength="40" spellcheck="false"></label>
         <div class="modes">
           <button data-mode="translate" title="Move it in the view (1)">Move</button>
           <button data-mode="rotate" title="Rotate it in the view (2)">Rotate</button>
@@ -292,6 +314,7 @@ import { blankMap } from './blank.js';
 import { LIGHTING, build, describe, isOriginalGameMap, shapes } from './map.js';
 import { BALL_AHEAD, BALL_FRONT_LIFT, BALL_LIFT, BALL_TOP_AHEAD } from './kismet.js';
 import { LIGHT_FIELDS, LIGHT_KINDS } from './lights.js';
+import { planNames, runScript } from './script.js';
 import { MOTIONS, eulerRotator, keysAt, motionErrors, motionKeys, newMotion, scaledBox, ueAxes } from './motion.js';
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
@@ -402,9 +425,9 @@ renderer.setAnimationLoop(() => {
   flyCamera(dt);
   orbit.update();
   syncLightPreview();
-  const posed = $('playMotion').checked && !gizmo.dragging ? poseMovers() : [];
+  const posed = $('playMotion').checked && !gizmo.dragging ? poseMovers(dt) : [];
   renderer.render(scene, camera);
-  for (const [o, p, q] of posed) { o.position.copy(p); o.quaternion.copy(q); }
+  for (const [o, p, q] of posed) { o.position.copy(p); o.quaternion.copy(q); o.visible = true; }
   drawLabels();
 });
 
@@ -465,12 +488,12 @@ function renderLighting() {
 let saveName = 'my-map.udk';                      // suggested file name for Save as
 let mapName = null, source = null, pkg = null, actors = [], palette = [], zone = null, objects = [], selected = null;
 let moversSaved = 0;                              // how many moving shapes the open map has
-const CHECKPOINT_COLORS = { car: 0x3ddc84, ball: 0xff9f43, lava: 0xff3b1f };
+const CHECKPOINT_COLORS = { car: 0x3ddc84, ball: 0xff9f43, lava: 0xff3b1f, zone: 0xb47cff };
 const checkpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
   [k, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.28, depthWrite: false })]));
 const shownCheckpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
   [k, new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.8, roughness: 0.6 })]));
-const lookOf = obj => (obj.userData.panel ? shownCheckpointMats : checkpointMats)[obj.userData.lava ? 'lava' : obj.userData.checkpoint];
+const lookOf = obj => (obj.userData.panel ? shownCheckpointMats : checkpointMats)[obj.userData.lava ? 'lava' : obj.userData.zone ? 'zone' : obj.userData.checkpoint];
 // see-through glass when the map has some, so a gate shows without hiding the view; for lava something fiery.
 // 'lava' is a red copy of a surface, made when the map is saved.
 const fiery = name => /lava|magma|fire|ember|orange/i.test(name) || /(?<![a-z])red|Red/.test(name);   // not "Colored"
@@ -639,17 +662,23 @@ const motionKey = o => {                          // what the map would store, t
 const canMove = o => !!o.userData.shape || !!o.userData.mover;   // new shapes, and moving shapes the map has
 const moverBox = o => scaledBox(o.userData.actor.bounds, [o.scale.x, o.scale.z, o.scale.y]);
 let motionStart = performance.now();
-function poseMovers() {                           // moves them for one frame; returns how to put them back
+function poseMovers(dt) {                         // moves them (and the script's clips) for one frame; returns how to put them back
+  advanceClips(dt);
   const time = (performance.now() - motionStart) / 1000, posed = [];
   for (const o of objects) {
-    const m = o.userData.motion;
-    if (!m || o.userData.deleted || !o.visible) continue;
-    const { keys, length } = motionKeys(m, quatToUe(o.quaternion), moverBox(o));
-    const t = Math.max(0, time - m.delay) % (m.once ? length + 1.5 : length);   // one that runs once replays after a breather
-    const { pos, rot } = keysAt(keys, t);
+    const m = o.userData.motion, clips = preview.clips.filter(c => c.o === o && c.started), hide = preview.hidden.has(o);
+    if ((!m && !clips.length && !hide) || o.userData.deleted || !o.visible) continue;
     posed.push([o, o.position.clone(), o.quaternion.clone()]);
-    o.position.add(toThree(pos).applyQuaternion(o.quaternion));
-    o.quaternion.multiply(ueToQuat(eulerRotator(rot)));
+    const poses = clips.map(c => keysAt(c.keys, c.t));
+    if (m) {
+      const { keys, length } = motionKeys(m, quatToUe(o.quaternion), moverBox(o));
+      poses.unshift(keysAt(keys, Math.max(0, time - m.delay) % (m.once ? length + 1.5 : length)));   // one that runs once replays after a breather
+    }
+    for (const { pos, rot } of poses) {
+      o.position.add(toThree(pos).applyQuaternion(o.quaternion));
+      o.quaternion.multiply(ueToQuat(eulerRotator(rot)));
+    }
+    if (hide) o.visible = false;
   }
   return posed;
 }
@@ -740,8 +769,151 @@ for (const [id, change] of [['mAddSpot', m => m.points.push([...m.points.at(-1)]
   $(id).addEventListener('click', () => changeMotion(id, o => { change(o.userData.motion); $('mSpots').replaceChildren(); }));
 }
 
+// The Script (script.js): run here into a plan, which saving writes as Kismet (rules.js). A script that comes with an
+// opened map is shown, not run, until you apply it: it is code from that map. The preview plays the plan's reactions
+// in the view when you set off its events; launches and teleports only say so.
+let script = { source: '', plan: null, error: null }, scriptSaved = '';
+const ownName = o => o.userData.aiId && !/^(shape|checkpoint|lava|light|zone|map)#\d+$/.test(o.userData.aiId) ? o.userData.aiId : null;
+const byName = name => objects.find(o => !o.userData.deleted && idOf(o) === name);
+function scriptKind(o) {                          // what a script may do with `o`
+  const u = o.userData;
+  return u.lava ? 'lava' : u.checkpoint ? 'checkpoint' : u.zone ? 'zone' : u.light ? 'light' : canMove(o) ? 'shape' : u.actor.bounds && !isVolume(u.actor) ? 'mesh' : 'object';
+}
+function runPlan() {
+  try { script.plan = runScript(script.source, name => { const o = byName(name); return o ? scriptKind(o) : null; }); script.error = null; }
+  catch (err) { script.plan = null; script.error = err.message; }
+  renderScript();
+  resetPreview();
+  updateDirty();
+}
+function scriptMoves() {                          // shapes the plan moves, shows or hides: written as movers
+  const out = new Set();
+  for (const [name, need] of script.plan ? planNames(script.plan) : []) if (need === 'moves' && byName(name)) out.add(byName(name));
+  return out;
+}
+function scriptChange() {                         // the script for build(), or null to leave the map's as it is
+  if (script.plan && script.source === scriptSaved && !dirty.size && !removed.size && !added.length) return null;   // unchanged, and so is what it names
+  if (!script.plan) return !script.source.trim() && scriptSaved.trim() ? { source: '', plan: { clips: [], flags: [], counters: [], rules: [] }, names: {} } : null;
+  const list = test => added.filter(test), names = {};
+  const kinds = [['shape', o => o.userData.shape], ['checkpoint', o => o.userData.checkpoint], ['zone', o => o.userData.zone], ['light', o => o.userData.newLight],
+                 ['duplicate', o => !o.userData.checkpoint && !o.userData.shape && !o.userData.newLight && !o.userData.zone]];
+  for (const name of planNames(script.plan).keys()) {
+    const o = byName(name);
+    if (!o) throw new Error(`Script: nothing is named "${name}" any more; apply the script again`);
+    const [kind, test] = o.userData.copy ? kinds.find(([, t]) => t(o)) : [];
+    names[name] = kind ? { [kind]: list(test).indexOf(o) } : { i: o.userData.actor.i };
+  }
+  return { source: script.source, plan: script.plan, names };
+}
+const eventLabel = e => ({ start: 'start', reset: 'reset', enter: `${e.zone ?? e.checkpoint} entered by ${e.by}`, leave: `${e.zone ?? e.checkpoint} left by ${e.by}`,
+  reached: `${e.checkpoint} reached`, after: `after ${e.seconds} s`, every: `every ${e.seconds} s`, pressed: `${e.button} pressed`, signal: `signal ${e.name}`,
+  lava: `lava (${e.by})`, goal: `goal (${e.team})`, finished: `${e.clip} finished`, reversed: `${e.clip} back at its start` })[e.on];
+function renderScript() {
+  if (document.activeElement !== $('scriptSource')) $('scriptSource').value = script.source;
+  const p = script.plan;
+  $('scriptStatus').textContent = script.error ?? (p ? `${p.rules.length} rules, ${p.clips.length} movements; saved with the map`
+    : script.source.trim() ? 'Not run yet: Apply runs it (it is code from this map)' : 'No script');
+  $('scriptStatus').className = script.error ? 'warn' : 'muted';
+  const seen = new Map();
+  for (const r of p?.rules ?? []) if (!['finished', 'reversed', 'after', 'every'].includes(r.event.on)) seen.set(JSON.stringify(r.event), r.event);
+  $('scriptFire').replaceChildren(...[...seen.values()].map(e => Object.assign(document.createElement('button'), {
+    textContent: eventLabel(e), onclick: () => fire(x => JSON.stringify(x) === JSON.stringify(e) || (e.on === 'enter' && x.on === 'enter' && x.zone === e.zone && x.by === 'any')) })));
+}
+const preview = { flags: new Map(), counters: new Map(), clips: [], lights: new Map(), hidden: new Set(), timers: [], once: new Set() };
+function resetPreview() {
+  preview.timers.forEach(t => { clearTimeout(t); clearInterval(t); });
+  Object.assign(preview, { flags: new Map(), counters: new Map(), clips: [], lights: new Map(), hidden: new Set(), timers: [], once: new Set() });
+  $('scriptTexts').replaceChildren();
+  const p = script.plan;
+  if (!p) return;
+  for (const f of p.flags) preview.flags.set(f.id, f.value);
+  for (const c of p.counters) preview.counters.set(c.id, c.value);
+  for (const c of p.clips) {
+    const o = byName(c.target), track = motionKeys(c.motion, quatToUe(o.quaternion), moverBox(o));
+    preview.clips.push({ id: c.id, o, loop: c.loop, ...track, t: 0, dir: 1, playing: false, started: false });
+  }
+}
+function startPreview() {
+  resetPreview();
+  if (!script.plan) return setStatus(script.error ? 'Fix the script first.' : 'Apply the script first.', 'warn');
+  fire(e => e.on === 'start');
+  for (const r of script.plan.rules) {
+    if (r.event.on === 'after') preview.timers.push(setTimeout(() => run(r.actions, null), r.event.seconds * 1000));
+    if (r.event.on === 'every') preview.timers.push(setInterval(() => run(r.actions, null), r.event.seconds * 1000));
+  }
+}
+function fire(match, it = null) { for (const r of script.plan?.rules ?? []) if (match(r.event)) run(r.actions, it); }
+function run(actions, it) { for (const a of actions) react(a, it); }
+function react(a, it) {
+  const clip = preview.clips.find(c => c.id === a.clip), named = name => byName(name);
+  switch (a.do) {
+    case 'play': if (!clip.loop && clip.t >= clip.length) clip.t = 0; Object.assign(clip, { started: true, playing: true, dir: 1 }); break;
+    case 'reverse': Object.assign(clip, { started: true, playing: true, dir: -1 }); break;
+    case 'stop': clip.playing = false; break;
+    case 'pause': clip.playing = !clip.playing && clip.started; break;
+    case 'flip': clip.dir = -clip.dir; break;
+    case 'text': showText(a); break;
+    case 'light': { const o = named(a.light), on = preview.lights.get(o) ?? o.userData.light.on; preview.lights.set(o, a.to === 'toggle' ? !on : a.to === 'on'); break; }
+    case 'show': preview.hidden.delete(named(a.shape)); break;
+    case 'hide': preview.hidden.add(named(a.shape)); break;
+    case 'launch': case 'teleport': showText({ text: `(${a.do} ${a.what}${a.to ? ' to ' + a.to : ''}: only in the game)`, seconds: 1.5, size: 1, at: [0, 300], color: [170, 170, 170] }); break;
+    case 'emit': fire(e => e.on === 'signal' && e.name === a.name, it); break;
+    case 'set': preview.flags.set(a.flag, a.value); break;
+    case 'toggle': preview.flags.set(a.flag, !preview.flags.get(a.flag)); break;
+    case 'add': preview.counters.set(a.counter, preview.counters.get(a.counter) + a.by); break;
+    case 'count': preview.counters.set(a.counter, a.value); break;
+    case 'wait': preview.timers.push(setTimeout(() => run(a.then, it), a.seconds * 1000)); break;
+    case 'when': {
+      const t = a.test, n = preview.counters.get(t.counter);
+      const yes = t.flag ? preview.flags.get(t.flag) === t.is : t.op === '==' ? n === t.value : t.op === '>=' ? n >= t.value : n < t.value;
+      run(yes ? a.then : a.otherwise, it);
+      break;
+    }
+    case 'once': if (!preview.once.has(a.id)) { preview.once.add(a.id); run(a.then, it); } break;
+  }
+}
+function showText({ text, seconds, size, at, color }) {   // as the game draws it: offset from the middle of a 1080-high screen
+  const k = view.clientHeight / 1080, el = Object.assign(document.createElement('div'), { textContent: text });
+  Object.assign(el.style, { left: `calc(50% + ${at[0] * k}px)`, top: `calc(50% + ${at[1] * k}px)`, fontSize: `${12 * size * Math.max(k, 0.5)}px`, color: `rgb(${color.join(',')})` });
+  $('scriptTexts').append(el);
+  preview.timers.push(setTimeout(() => el.remove(), seconds * 1000));
+}
+function advanceClips(dt) {                       // clips the preview plays; reaching an end sets off finished/reversed
+  for (const c of preview.clips) {
+    if (!c.playing) continue;
+    c.t += dt * c.dir;
+    if (c.dir > 0 && c.t >= c.length) {
+      if (c.loop) c.t %= c.length;
+      else { c.t = c.length; c.playing = false; fire(e => e.on === 'finished' && e.clip === c.id); }
+    } else if (c.dir < 0 && c.t <= 0) {
+      if (c.loop) c.t = c.length + (c.t % c.length);
+      else { c.t = 0; c.playing = false; fire(e => e.on === 'reversed' && e.clip === c.id); }
+    }
+  }
+}
+$('scriptButton').addEventListener('click', () => { $('scriptPanel').hidden = !$('scriptPanel').hidden; if (!$('scriptPanel').hidden) $('scriptSource').focus(); });
+$('scriptClose').addEventListener('click', () => { $('scriptPanel').hidden = true; });
+$('scriptSource').addEventListener('input', e => { script.source = e.target.value; script.plan = null; script.error = null; renderScript(); updateDirty(); });
+$('scriptSource').addEventListener('keydown', e => {
+  e.stopPropagation();                            // typing isn't a shortcut
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); runPlan(); }
+  if (e.key === 'Tab') { e.preventDefault(); document.execCommand('insertText', false, '  '); }
+});
+$('scriptRun').addEventListener('click', runPlan);
+$('scriptStart').addEventListener('click', startPreview);
+$('objName').addEventListener('change', e => {
+  const o = selected, v = e.target.value.trim();
+  if (!o) return;
+  if (!/^[\w-]{1,40}$/.test(v)) return setStatus('A name is 1 to 40 letters, digits, - or _.', 'warn'), showSelection();
+  if (objects.some(x => x !== o && !x.userData.deleted && idOf(x) === v)) return setStatus(`Something else is already named ${v}.`, 'warn'), showSelection();
+  o.userData.aiId = v;
+  labelTargets = null;
+  scheduleOutline();
+  if (script.plan) runPlan();                     // names may now resolve differently
+});
+
 function syncLightPreview() {                     // a fixed set of view lights, so materials never recompile
-  const t = orbit.target, near = kind => objects.filter(o => o.userData.light?.kind === kind && o.userData.light.on && !o.userData.deleted)
+  const t = orbit.target, near = kind => objects.filter(o => o.userData.light?.kind === kind && (preview.lights.get(o) ?? o.userData.light.on) && !o.userData.deleted)
     .sort((x, y) => x.position.distanceToSquared(t) - y.position.distanceToSquared(t));
   const fill = (pool, list, aim) => pool.forEach((p, k) => {
     const o = list[k], l = o?.userData.light;
@@ -792,7 +964,7 @@ function settleBall(obj) {                        // let go over the spawn car: 
 
 const dirty = new Set(), removed = new Set(), added = [], undo = [];
 let fresh = false;                                // a new map started from the open one: its scripts get emptied on save
-const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0) + (lighting !== lightingSaved) + hudChanged();
+const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0) + (lighting !== lightingSaved) + hudChanged() + (script.source !== scriptSaved);
 const group = new THREE.Group();
 scene.add(group);
 const selBox = new THREE.BoxHelper(undefined, 0xffd24a);
@@ -862,6 +1034,10 @@ function loadStarter() {
   palette = []; objects = [spawnObject(actors[0]), ballObject(ballOfNoOne(), false), baseSun()];
   spawnBall = null;
   moversSaved = 0;
+  script = { source: '', plan: null, error: null };
+  scriptSaved = '';
+  renderScript();
+  resetPreview();
   zone = { i: null, bounds: STARTER_ZONE };
   ter = { tile: TILE, cell: CELL, sink: SINK, base: -SINK, tiles: new Map(), dirty: new Set() };
   group.add(starterGround, ...objects);           // the floor (unraised terrain stays hidden under it), the spawn and the ball
@@ -902,17 +1078,22 @@ async function buildOnBlank() {
   const checkpoints = added.filter(o => o.userData.checkpoint).map(o => {
     readBack(o);
     const a = o.userData.actor;
-    return { src: o, kind: o.userData.checkpoint, loc: [...a.loc], rot: [...a.rot], ballOnTop: o.userData.ballOnTop, scale3d: [...a.scale3d], title: o.userData.title,
+    return { src: o, id: o.userData.aiId, kind: o.userData.checkpoint, loc: [...a.loc], rot: [...a.rot], ballOnTop: o.userData.ballOnTop, scale3d: [...a.scale3d], title: o.userData.title,
              panel: !!o.userData.panel, lava: !!o.userData.lava, whole: !!o.userData.lava && same(a.scale3d.slice(0, 2), whole.slice(0, 2), 1e-3) };
   });
   const shapes = added.filter(o => o.userData.shape).map(o => {
     readBack(o);
-    return { key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d], motion: o.userData.motion };
+    return { id: o.userData.aiId, key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d], motion: o.userData.motion };
   });
   const lights = added.filter(o => o.userData.newLight).map(o => {
     readBack(o);
-    return { loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], light: settingsOf(o.userData.light) };
+    return { id: o.userData.aiId, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], light: settingsOf(o.userData.light) };
   });
+  const zones = added.filter(o => o.userData.zone).map(o => {
+    readBack(o);
+    return { id: o.userData.aiId, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d], panel: !!o.userData.panel };
+  });
+  const scriptSource = script.source, scriptRan = !!script.plan;
   readBack(objects.find(o => o.userData.spawn));
   readBack(ballObj());
   const name = saveName, mood = lighting, screen = hud, starterSpawn = structuredClone(spawnActor()), starterBall = ballObj().userData.placed ? [...ballObj().userData.actor.loc] : null;
@@ -930,14 +1111,23 @@ async function buildOnBlank() {
     const [loc, scale3d] = c.whole && hit ? lavaValues(hit.object, hit.point.y) : [[c.loc[0] + dx * ter.cell, c.loc[1] + dy * ter.cell, c.loc[2] + floor], c.scale3d];
     const obj = makeCheckpoint(c.kind, loc, c.rot, c.ballOnTop, scale3d, c.lava);
     made.set(c.src, obj);
+    obj.userData.aiId = c.id;
     obj.userData.title = c.title ?? '';
     if (c.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
   }
   for (const sh of shapes) {
     const obj = placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
+    obj.userData.aiId = sh.id;
     if (sh.motion) obj.userData.motion = { ...copyMotion(sh.motion), trigger: made.get(sh.motion.trigger) ?? null };
   }
-  for (const l of lights) placeLight(l.light.kind, [l.loc[0] + dx * ter.cell, l.loc[1] + dy * ter.cell, l.loc[2] + floor], l.rot, l.light);
+  for (const l of lights) placeLight(l.light.kind, [l.loc[0] + dx * ter.cell, l.loc[1] + dy * ter.cell, l.loc[2] + floor], l.rot, l.light).userData.aiId = l.id;
+  for (const z of zones) {
+    const obj = makeZone([z.loc[0] + dx * ter.cell, z.loc[1] + dy * ter.cell, z.loc[2] + floor], z.rot, z.scale3d);
+    obj.userData.aiId = z.id;
+    if (z.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
+  }
+  script.source = scriptSource;
+  if (scriptRan) runPlan();
   start.loc = [starterSpawn.loc[0] + dx * ter.cell, starterSpawn.loc[1] + dy * ter.cell, starterSpawn.loc[2] + floor];
   start.rot = starterSpawn.rot;
   applyActor(spawn);
@@ -1045,6 +1235,17 @@ function loadMap(name, bytes, parsed, data) {
     obj.userData.respawn = { valueVar: cp.valueVar, marker };
     if (marker) marker.userData.respawnFor = obj;  // follows its gate, never shown on its own
   }
+  script = { source: data.script?.source ?? '', plan: null, error: null };
+  scriptSaved = script.source;
+  for (const [name, i] of Object.entries(data.script?.names ?? {})) {   // the names the script uses: trigger zones and moving shapes among them
+    const o = objects.find(x => x.userData.actor.i === i);
+    if (!o) continue;
+    o.userData.aiId = name;
+    if (o.userData.actor.cls === 'TriggerVolume' && !o.userData.checkpoint && !o.userData.lava) { o.userData.zone = true; o.material = lookOf(o); }
+    if (o.userData.actor.cls === 'InterpActor') o.userData.mover = true;
+  }
+  renderScript();
+  resetPreview();
   moversSaved = data.movers.length;
   for (const { i, motion } of data.movers) {      // moving shapes: their motion, its trigger the checkpoint object
     const o = objects.find(x => x.userData.actor.i === i);
@@ -1054,7 +1255,7 @@ function loadMap(name, bytes, parsed, data) {
   }
   for (const { i, material } of data.panels) {    // a checkpoint's visible panel sits exactly on it
     const panel = objects.find(o => o.userData.actor.i === i), at = panel?.userData.actor;
-    const owner = at && objects.find(o => o.userData.checkpoint && same(o.userData.actor.loc, at.loc, 1) && same(o.userData.actor.rot, at.rot, 1));
+    const owner = at && objects.find(o => (o.userData.checkpoint || o.userData.zone) && same(o.userData.actor.loc, at.loc, 1) && same(o.userData.actor.rot, at.rot, 1));
     if (!owner) continue;
     owner.userData.panel = { material };
     owner.userData.savedPanel = { obj: panel, material };
@@ -1160,7 +1361,7 @@ function applyFilter() {
     obj.visible = !obj.userData.deleted && !obj.userData.respawnFor
       && ($('showHuge').checked || !obj.userData.huge)
       && (!q || `${a.name} ${a.cls} ${a.mesh || ''}`.toLowerCase().includes(q))
-      && (obj.userData.ballSpawn || !isVolume(a) || $(obj.userData.checkpoint ? 'showCheckpoints' : 'showVolumes').checked)
+      && (obj.userData.ballSpawn || !isVolume(a) || $(obj.userData.checkpoint || obj.userData.zone ? 'showCheckpoints' : 'showVolumes').checked)
       && ($('showMarkers').checked || !!a.bounds || !!obj.userData.spawn || !!obj.userData.ballSpawn);
     shown += obj.visible;
   }
@@ -1239,6 +1440,8 @@ function showSelection() {
         : `Becomes your respawn point when your car ${isGate(a) ? 'passes through' : 'drives or flies into'} it.`}
         After a reset the car appears ${isGate(a) ? `just past the gate (${GATE_PAST} units)` : 'inside it'}, on the ground when it reaches some, facing the arrow${selected.userData.checkpoint === 'ball'
         ? `, with the new ball ${selected.userData.ballOnTop ? 'just over the roof' : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
+    : selected.userData.zone
+    ? `<div class="kv"><b>Trigger zone</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">Sets off script events when the car or ball goes in or out: zone('${idOf(selected)}').enter('car'), .leave(). Nothing happens unless the Script uses it.</div>`
     : selected.userData.light
     ? `<div class="kv"><b>${LIGHT_KINDS[selected.userData.light.kind].name}</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${{
         point: 'Shines every way, fading out to its radius.',
@@ -1248,6 +1451,8 @@ function showSelection() {
       }[selected.userData.light.kind]}</div>`
     : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
   $('selEdit').hidden = false;
+  $('nameRow').hidden = !!(selected.userData.spawn || selected.userData.ballSpawn || selected.userData.placeholder);
+  if (document.activeElement !== $('objName')) $('objName').value = idOf(selected);
   const l = selected.userData.light;
   $('lightEdit').hidden = !l;
   if (l) {
@@ -1269,7 +1474,7 @@ function showSelection() {
   $('rotRow').hidden = !can.modes.includes('rotate');
   $('scaleRow').hidden = !can.modes.includes('scale');
   document.querySelectorAll('#rotRow input').forEach(inp => inp.classList.toggle('unused', can.yawOnly && inp.dataset.k !== '1'));
-  $('cpPanel').hidden = !selected.userData.checkpoint;
+  $('cpPanel').hidden = !selected.userData.checkpoint && !selected.userData.zone;
   $('cpShape').hidden = !selected.userData.checkpoint || !!selected.userData.lava;
   $('panelOn').checked = !!selected.userData.panel;
   $('cpTitleRow').hidden = !selected.userData.checkpoint || !!selected.userData.lava;
@@ -1434,6 +1639,14 @@ function makeCheckpoint(kind, loc, rot, ballOnTop = false, scale3d = [1, 1, 1], 
   obj.userData = { actor: a, copy: true, checkpoint: kind, ballOnTop, panel: null, lava, title: '' };
   obj.material = lookOf(obj);
   decorateCheckpoint(obj);
+  placeNew(obj);
+  return obj;
+}
+function makeZone(loc, rot = [0, 0, 0], scale3d = [1, 1, 1]) {   // a trigger zone for scripts: a checkpoint's box, without the checkpoint
+  const a = { i: null, name: 'Trigger zone', cls: 'TriggerVolume', mesh: null, loc, rot, scale3d: [...scale3d], scale: 1, bounds: zone.bounds };
+  const obj = new THREE.Mesh(geometryFor(zone.bounds));
+  obj.userData = { actor: a, copy: true, zone: true, panel: null };
+  obj.material = lookOf(obj);
   placeNew(obj);
   return obj;
 }
@@ -1665,9 +1878,11 @@ function renderPalette() {
                        ['cp:ball', 'Ball checkpoint · box'], ['cp:ball:gate', 'Ball checkpoint · gate']];
   const lava = [['lava:ball', 'Lava · the ball resets'], ['lava:car', 'Lava · the car resets']];
   const lights = Object.entries(LIGHT_KINDS).map(([k, v]) => [`light:${k}`, v.name]);
+  const zones = [['zone:box', 'Trigger zone · box'], ['zone:gate', 'Trigger zone · gate']];
   $('palette').replaceChildren(...[
     group('Checkpoints', zone ? checkpoints.filter(([, text]) => hit(text)) : []),
     group('Floor is lava', zone ? lava.filter(([, text]) => hit(`${text} floor`)) : []),
+    group('Trigger zones (for scripts)', zone ? zones.filter(([, text]) => hit(`${text} script event`)) : []),
     group('Lights', lights.filter(([, text]) => hit(`${text} lights`))),
     group('This map', palette.filter(p => hit(p.mesh)).map(p => [`map:${p.template}`, `${p.mesh}  ×${p.count}`])),
     group('Built-in', Object.keys(BUILT_IN).filter(hit).map(k => [`std:${k}`, k])),
@@ -1680,6 +1895,12 @@ function addFromPalette() {
   if (!value) return setStatus('Pick a shape in the list first.', 'warn');
   if (value.startsWith('cp:')) return addCheckpoint(value.split(':')[1], value.endsWith(':gate'));
   if (value.startsWith('lava:')) return addLava(value.slice(5));
+  if (value.startsWith('zone:')) {
+    if (!zone) return setStatus('This map has no trigger zone to copy.', 'warn');
+    const loc = fromThree(orbit.target);
+    loc[2] += zone.bounds[5] - 50;
+    return makeZone(loc, [0, 0, 0], [value.endsWith('gate') ? GATE / (2 * zone.bounds[3]) : 1, 1, 1]);
+  }
   if (value.startsWith('light:')) {
     const kind = value.slice(6), loc = fromThree(orbit.target);
     return placeLight(kind, [loc[0], loc[1], loc[2] + LIGHT_LIFT[kind]]);
@@ -1788,7 +2009,7 @@ const pivotFor = (at, rot, foot) => rotated(rot, foot).map((v, k) => at[k] - v);
 const footOf = (a, foot) => rotated(a.rot, foot).map((v, k) => r1(a.loc[k] + v));
 
 let aiCount = 0;
-const idOf = o => o.userData.aiId ??= o.userData.copy ? `${o.userData.lava ? 'lava' : o.userData.checkpoint ? 'checkpoint' : o.userData.light ? 'light' : 'shape'}#${++aiCount}` : `map#${o.userData.actor.i}`;
+const idOf = o => o.userData.aiId ??= o.userData.copy ? `${o.userData.lava ? 'lava' : o.userData.checkpoint ? 'checkpoint' : o.userData.light ? 'light' : o.userData.zone ? 'zone' : 'shape'}#${++aiCount}` : `map#${o.userData.actor.i}`;
 const surfaceKey = name => name.replace(/^MAT_|_(INST|MIC|MAT|Mat)$/g, '');
 const aiSurfaces = () => new Map([...$('surface').options].map(op => [op.value === 'lava' ? 'lava' : surfaceKey(op.text), surfaceValue(op.value)]));
 const surfaceRef = name => [...aiSurfaces()].find(([k]) => k.toLowerCase() === surfaceKey(name).toLowerCase())?.[1];
@@ -1808,7 +2029,7 @@ function aiObjects() {                            // [floor, what an agent works
   return [floor, objects.filter(o => {
     const u = o.userData;
     return o !== floor && !u.deleted && !u.respawnFor && !u.spawn && !u.ballSpawn && !u.placeholder
-      && (u.checkpoint || u.light || (u.actor.bounds && !isVolume(u.actor) && !u.huge));
+      && (u.checkpoint || u.light || u.zone || (u.actor.bounds && !isVolume(u.actor) && !u.huge));
   })];
 }
 const aiFind = id => aiObjects()[1].find(o => idOf(o) === id);
@@ -1820,7 +2041,7 @@ const aiLava = () => {
 function aiErrors(step) {                         // what is wrong with a step before anything changes
   if (!step || typeof step !== 'object' || Array.isArray(step)) return ['a step is an object, such as {"add": [...]}'];
   const out = [], bad = (where, what) => out.push(`${where}: ${what}`);
-  const FIELDS = ['new', 'name', 'lighting', 'lava', 'timer', 'deaths', 'spawn', 'ball', 'add', 'remove'];
+  const FIELDS = ['new', 'name', 'lighting', 'lava', 'timer', 'deaths', 'spawn', 'ball', 'add', 'remove', 'script'];
   for (const k of Object.keys(step)) if (!FIELDS.includes(k)) bad(k, `unknown field; a step has ${FIELDS.join(', ')}`);
   if ('new' in step && typeof step.new !== 'boolean') bad('new', 'true or false');
   if ('name' in step && !(typeof step.name === 'string' && /^[\w -]{1,60}$/.test(step.name))) bad('name', 'up to 60 letters, digits, spaces, - or _');
@@ -1830,14 +2051,17 @@ function aiErrors(step) {                         // what is wrong with a step b
   if ('spawn' in step && !(isVec(step.spawn?.at) && (!('yaw' in step.spawn) || isNum(step.spawn.yaw)))) bad('spawn', '{"at": [x, y, z], "yaw": degrees}');
   if ('ball' in step && !['start', 'roof'].includes(step.ball) && !isVec(step.ball?.at)) bad('ball', '"start", "roof" or {"at": [x, y, z]}');
   if ('remove' in step && !(Array.isArray(step.remove) && step.remove.every(id => typeof id === 'string'))) bad('remove', 'a list of ids');
+  if ('script' in step && !(typeof step.script === 'string' && step.script.length <= 50000)) bad('script', 'the whole script as one string (JavaScript, see "Scripts")');
   if (!('add' in step)) return out;
   if (!Array.isArray(step.add) || step.add.length > 2000) return [...out, 'add: a list of up to 2000 shapes, checkpoints and lights'];
   const ids = new Set(), KEYS = { shape: ['id', 'shape', 'at', 'size', 'yaw', 'pitch', 'roll', 'surface', 'motion'],
                                   checkpoint: ['id', 'checkpoint', 'at', 'size', 'yaw', 'gate', 'ballOnTop', 'visible', 'title'],
-                                  light: ['id', 'light', 'at', 'yaw', 'pitch', 'color', 'brightness', 'radius', 'cone', 'core', 'shadows', 'on'] };
+                                  light: ['id', 'light', 'at', 'yaw', 'pitch', 'color', 'brightness', 'radius', 'cone', 'core', 'shadows', 'on'],
+                                  zone: ['id', 'zone', 'at', 'size', 'yaw', 'visible'] };
   step.add.forEach((e, n) => {
-    const where = `add[${n}]${typeof e?.id === 'string' ? ` (${e.id})` : ''}`, kind = e && ['shape', 'checkpoint', 'light'].filter(k => k in e);
-    if (!kind || kind.length !== 1) return bad(where, 'an object with one of "shape", "checkpoint" or "light"');
+    const where = `add[${n}]${typeof e?.id === 'string' ? ` (${e.id})` : ''}`, kind = e && ['shape', 'checkpoint', 'light', 'zone'].filter(k => k in e);
+    if (!kind || kind.length !== 1) return bad(where, 'an object with one of "shape", "checkpoint", "light" or "zone"');
+    if ('zone' in e && !['box', 'gate'].includes(e.zone)) bad(where, 'zone: "box" or "gate"');
     for (const k of Object.keys(e)) if (!KEYS[kind[0]].includes(k)) bad(where, `unknown field "${k}" for a ${kind[0]}`);
     if ('id' in e && !(typeof e.id === 'string' && /^[\w-]{1,40}$/.test(e.id))) bad(where, 'id: up to 40 letters, digits, - or _');
     else if ('id' in e && ids.has(e.id)) bad(where, 'id used twice in this step');
@@ -1877,7 +2101,13 @@ function aiAdd(e) {
   const old = e.id && aiFind(e.id);
   if (old) removeObject(old);
   let obj;
-  if ('light' in e) {
+  if ('zone' in e) {
+    if (!zone) throw new Error('this map has no trigger zone to copy');
+    const b = zone.bounds, rot = [0, Math.round((e.yaw ?? 0) * DEG), 0], size = e.size ?? [2 * b[3], 2 * b[4], 2 * b[5]];
+    const scale3d = [e.zone === 'gate' ? GATE : size[0], size[1], size[2]].map((v, k) => v / (2 * b[3 + k]));
+    obj = makeZone(pivotFor(e.at, rot, zoneFoot(b, scale3d)), rot, scale3d);
+    if (e.visible) { obj.userData.panel = { material: e.visible === true ? null : surfaceRef(e.visible) }; obj.material = lookOf(obj); }
+  } else if ('light' in e) {
     const hex = e.color ?? '#ffffff', settings = { kind: e.light, ...NEW_LIGHT[e.light], color: [1, 3, 5].map(k => parseInt(hex.slice(k, k + 2), 16)) };
     for (const [k, f] of [['brightness', 'brightness'], ['radius', 'radius'], ['cone', 'outer'], ['core', 'inner'], ['shadows', 'shadows'], ['on', 'on']]) if (k in e) settings[f] = e[k];
     if (e.light === 'spot') settings.inner = Math.min(settings.inner, settings.outer);
@@ -1952,6 +2182,11 @@ async function aiApply(step) {
     if (step.lava) aiSetLava(step.lava);
     if (step.spawn) aiSpawn(step.spawn);
     if (step.ball) aiBall(step.ball, notes);
+    if ('script' in step) {
+      script.source = step.script;
+      runPlan();
+      if (script.error) return { ok: false, errors: [`script: ${script.error} (the rest of the step was applied)`] };
+    }
     objects.forEach(fitGhosts);
     select(null);
     applyFilter();
@@ -1967,6 +2202,10 @@ function aiEntry(o) {
   readBack(o);
   const u = o.userData, a = u.actor, b = boxOf(o), e = { id: idOf(o) };
   if (u.lava) Object.assign(e, { kind: 'lava', resets: u.checkpoint });
+  else if (u.zone) {
+    const s = a.scale3d.map(v => v * a.scale);
+    Object.assign(e, { kind: 'zone', at: footOf(a, zoneFoot(a.bounds, s)), yaw: deg(a.rot[1]), size: s.map((v, k) => r1(2 * a.bounds[3 + k] * v)), visible: !!u.panel });
+  }
   else if (u.checkpoint) {
     const s = a.scale3d.map(v => v * a.scale);
     Object.assign(e, { kind: 'checkpoint', checkpoint: u.checkpoint, at: footOf(a, zoneFoot(a.bounds, s)), yaw: deg(a.rot[1]),
@@ -1999,7 +2238,7 @@ function aiWarnings() {                           // what keeps the map from pla
   else if (lava && under.object === floor) out.push('spawn: the car starts on the lava floor; stand it on a shape');
   for (const o of list) {
     const u = o.userData;
-    if (u.lava || u.light) continue;
+    if (u.lava || u.light || u.zone) continue;
     if (u.checkpoint) {
       const spot = (respawnValues(o) ?? u.actor).loc, hit = groundHit([spot[0], spot[1], spot[2] + 1], RESPAWN_CLEARANCE + 50);
       if (!hit) out.push(`${idOf(o)}: nothing under its respawn spot [${spot.map(Math.round)}]; a reset drops the car from there`);
@@ -2021,6 +2260,7 @@ function aiState() {
     spawn: { at: [s.loc[0], s.loc[1], s.loc[2] - RESPAWN_CLEARANCE].map(r1), yaw: deg(s.rot[1]) },
     ball: { start: ball.userData.placed ? ball.userData.onRoof ? 'roof' : 'placed' : 'start', centre: ball.userData.actor.loc.map(r1) },
     objects: list.map(aiEntry), warnings: aiWarnings(),
+    script: { source: script.source, error: script.error, ran: !!script.plan, rules: script.plan?.rules.map(r => eventLabel(r.event)) ?? [] },
   };
 }
 function aiGround(x, y) {
@@ -2124,13 +2364,14 @@ function markDirty(obj) {
   updateDirty();
 }
 // The Map list: every object grouped by kind, shapes by their mesh; it follows the selection.
-const GROUPS = ['Spawn', 'Checkpoints', 'Lava', 'Shapes', 'Lights & atmosphere', 'Volumes', 'Other'];   // the spawn: a row of its own
+const GROUPS = ['Spawn', 'Checkpoints', 'Lava', 'Trigger zones', 'Shapes', 'Lights & atmosphere', 'Volumes', 'Other'];   // the spawn: a row of its own
 const openGroups = new Set(['Checkpoints', 'Lava', 'Shapes']);
 let outlinePending = false, revealing = null;
 function groupOf(o) {                             // [group, sub-group or null]
   const a = o.userData.actor;
   if (o.userData.lava) return ['Lava', null];
   if (o.userData.checkpoint) return ['Checkpoints', null];
+  if (o.userData.zone) return ['Trigger zones', null];
   if (o.userData.spawn || o.userData.ballSpawn) return ['Spawn', null];
   if (/Light|Fog|PostProcess|SceneCapture/.test(a.cls)) return ['Lights & atmosphere', null];   // scene captures make reflections
   if (isVolume(a)) return ['Volumes', null];
@@ -2157,6 +2398,8 @@ function renderOutline() {                        // • marks what isn't saved 
   const label = o => {
     if (o.userData.spawn) return `Spawn · ${where(o)}`;
     if (o.userData.ballSpawn) return `${o.userData.placed ? 'Ball spawn' : 'Ball start'} · ${where(o)}`;
+    const name = ownName(o);
+    if (name) return `${name} · ${where(o)}`;
     if (!o.userData.checkpoint) return `${o.userData.actor.name} · ${where(o)}`;
     const kind = `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${o.userData.lava ? 'lava' : isGate(o.userData.actor) ? 'gate' : 'checkpoint'}`;
     numbers[kind] = (numbers[kind] || 0) + 1;
@@ -2205,13 +2448,18 @@ function updateDirty() {
 function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.className = kind; }
 
 function changeSet() {                            // [what build() applies, summary]
+  if (!script.plan && script.source.trim() && script.source !== scriptSaved) {   // written here and not applied yet: it is yours, so run it
+    runPlan();
+    if (script.error) throw new Error(`Script: ${script.error}`);
+  }
   const edits = [...dirty].filter(o => !removed.has(o) && !o.userData.ballSpawn).map(o => { const { motion, ...e } = changes(o); return { i: o.userData.actor.i, ...e }; });
-  const duplicates = added.filter(o => !o.userData.checkpoint && !o.userData.shape && !o.userData.newLight).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
+  const duplicates = added.filter(o => !o.userData.checkpoint && !o.userData.shape && !o.userData.newLight && !o.userData.zone).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
+  const triggerZones = added.filter(o => o.userData.zone).map(o => { const { loc, rot, scale3d } = changes(o); return { loc, rot, scale3d }; });
   const lights = added.filter(o => o.userData.newLight).map(o => {
     const { loc, rot, light } = changes(o);
     return { kind: o.userData.light.kind, loc, rot, ...light };
   });
-  const shapes = added.filter(o => o.userData.shape).map(o => ({ key: o.userData.shape, ...changes(o), material: o.userData.surface ?? null, mover: !!o.userData.motion }));
+  const shapes = added.filter(o => o.userData.shape).map(o => ({ key: o.userData.shape, ...changes(o), material: o.userData.surface ?? null, mover: !!o.userData.motion || scriptMoves().has(o) }));
   const shapeGeometry = Object.fromEntries([...new Set(shapes.map(s => s.key))].map(k => [k, asMeshInput(shapeData(k))]));
   const shapeMaterial = lastSurface;
   const checkpoints = added.filter(o => o.userData.checkpoint)
@@ -2225,9 +2473,9 @@ function changeSet() {                            // [what build() applies, summ
     const a = o.userData.actor;
     return { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale, material: material ?? panelSurface(o.userData.lava) };
   };
-  for (const o of added) if (o.userData.checkpoint && o.userData.panel) panels.push(panelAt(o, o.userData.panel.material));
+  for (const o of added) if ((o.userData.checkpoint || o.userData.zone) && o.userData.panel) panels.push(panelAt(o, o.userData.panel.material));
   for (const o of objects) {                      // saved checkpoints: their panel follows them, or appears or goes
-    if (!o.userData.checkpoint || o.userData.copy) continue;
+    if (!(o.userData.checkpoint || o.userData.zone) || o.userData.copy) continue;
     const want = o.userData.panel, had = o.userData.savedPanel;
     if (o.userData.deleted || !want) { if (had) removes.push(had.obj.userData.actor.i); continue; }
     if (!had) { panels.push(panelAt(o, want.material)); continue; }
@@ -2267,9 +2515,9 @@ function changeSet() {                            // [what build() applies, summ
   const movers = moving.some(o => o.userData.copy || turned(o)) || moving.filter(o => !o.userData.copy).length !== moversSaved ? moving.map(o => {
     const { trigger: t, ...rest } = o.userData.motion, motion = { ...JSON.parse(JSON.stringify(rest)), trigger: trigger(t) };
     return o.userData.shape ? { shape: added.filter(x => x.userData.shape).indexOf(o), motion }
-      : o.userData.copy ? { duplicate: added.filter(x => !x.userData.checkpoint && !x.userData.shape && !x.userData.newLight).indexOf(o), motion } : { i: o.userData.actor.i, motion };
+      : o.userData.copy ? { duplicate: added.filter(x => !x.userData.checkpoint && !x.userData.shape && !x.userData.newLight && !x.userData.zone).indexOf(o), motion } : { i: o.userData.actor.i, motion };
   }) : null;
-  const summary = [moved && `${moved} moved`, lit && `${lit} lights set`, duplicates.length && `${duplicates.length} added`, lights.length && `${lights.length} new lights`,
+  const summary = [moved && `${moved} moved`, lit && `${lit} lights set`, duplicates.length && `${duplicates.length} added`, lights.length && `${lights.length} new lights`, triggerZones.length && `${triggerZones.length} trigger zones`, script.source !== scriptSaved && (script.source.trim() ? 'the script' : 'no script'),
                    shapes.length && `${shapes.length} shapes`, checkpoints.length > lava && `${checkpoints.length - lava} checkpoints`,
                    lava && `${lava} lava zones`,
                    terrain && `${terrain.tiles.length} terrain tiles`,
@@ -2277,7 +2525,7 @@ function changeSet() {                            // [what build() applies, summ
                    panels.length && `${panels.length} checkpoint panels`, ballSpawn && 'a ball spawn',
                    lighting !== lightingSaved && `${LIGHTING[lighting]?.name.toLowerCase() ?? 'the map\'s own'} lighting`, movers && `${movers.length} moving shapes`,
                    hudChanged() && (hud.timer || hud.deaths ? `${[hud.timer && 'timer', hud.deaths && 'death counter'].filter(Boolean).join(' and ')} on screen` : 'nothing on screen')].filter(Boolean).join(', ') || 'no changes';
-  return [{ edits, duplicates, lights, movers, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
+  return [{ edits, duplicates, lights, movers, triggerZones, script: scriptChange(), checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
             lighting: lighting !== lightingSaved ? lighting : null, hud: hudChanged() ? hud : null },
           fresh ? `new map, ${summary}` : summary];
 }
@@ -2410,7 +2658,7 @@ renderer.domElement.addEventListener('pointerup', e => {
   ray.setFromCamera(pointer, camera);
   const hits = ray.intersectObjects(objects.filter(o => o.visible), false);
   // the nearest shape or checkpoint; other zones (lava over the whole floor, huge volumes) only when nothing else is there
-  const clickable = o => !isVolume(o.userData.actor) || (o.userData.checkpoint && !o.userData.lava);
+  const clickable = o => !isVolume(o.userData.actor) || (o.userData.checkpoint && !o.userData.lava) || o.userData.zone;
   const hit = hits.find(h => clickable(h.object)) || hits[0];
   select(hit ? hit.object : null);
 });
@@ -2515,7 +2763,7 @@ $('paletteFilter').addEventListener('input', renderPalette);
 $('delete').addEventListener('click', deleteSelected);
 $('restore').addEventListener('click', restore);
 $('panelOn').addEventListener('change', e => {
-  if (!selected?.userData.checkpoint) return;
+  if (!selected?.userData.checkpoint && !selected?.userData.zone) return;
   selected.userData.panel = e.target.checked ? { material: selected.userData.savedPanel?.material ?? panelSurface(selected.userData.lava) } : null;
   selected.material = lookOf(selected);
   markDirty(selected);

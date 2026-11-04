@@ -88,6 +88,15 @@ export function motionKeys(m, rot, box) {
     }, off || uneven ? Math.max(1, Math.ceil(Math.abs(b - a) / 15)) : 1);
   };
   const [cx, cy, cz, , , ez] = box;
+  if (m.kind === 'samples') {                     // a script's time function: [{t, move (world), turn: [yaw, pitch, roll]}], turning about the middle
+    const pivot = [cx, cy, cz], at = s => { const e = [s.turn[2], s.turn[1], s.turn[0]], move = local(s.move), off = turned(e, pivot);
+                                            return [move.map((v, k) => v + pivot[k] - off[k]), e]; };
+    const pts = m.samples.map(at), slope = (k, j) => { const a = Math.max(0, k - 1), b = Math.min(pts.length - 1, k + 1), d = m.samples[b].t - m.samples[a].t;
+                                                       return pts[b][j].map((v, n) => d > 0 ? (v - pts[a][j][n]) / d : 0); };
+    keys.length = 0;
+    pts.forEach(([pos, r], k) => { const tan = [slope(k, 0), slope(k, 1)]; keys.push({ t: m.samples[k].t, pos, rot: r, arrive: tan, leave: tan }); });
+    return { length: keys.at(-1).t, keys };
+  }
   if (m.kind === 'slide' || m.kind === 'path') {
     const spots = [ZERO, ...(m.kind === 'slide' ? [m.to] : m.points).map(local)];
     const route = m.back === 'jump' ? spots : m.back === 'start' ? [...spots, ZERO] : [...spots, ...spots.slice(0, -1).reverse()];

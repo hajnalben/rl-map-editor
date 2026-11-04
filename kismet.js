@@ -80,7 +80,7 @@ function looksTagged(pkg, p) {                    // bytes at p start a property
 
 export const nodeProps = (pkg, e) => decode(pkg, pkg.netIndexAt(e) + 4, e.off + e.size)[0];   // any object's tagged properties
 
-const [I, F, B, O, N, S, A, T, E] = ['IntProperty', 'FloatProperty', 'BoolProperty', 'ObjectProperty', 'NameProperty', 'StrProperty', 'ArrayProperty', 'StructProperty', 'ByteProperty'];
+export const [I, F, B, O, N, S, A, T, E] = ['IntProperty', 'FloatProperty', 'BoolProperty', 'ObjectProperty', 'NameProperty', 'StrProperty', 'ArrayProperty', 'StructProperty', 'ByteProperty'];
 
 class Encoder {                                   // tagged-property writer; names go through the Additions
   constructor(add) { this.add = add; }
@@ -110,30 +110,31 @@ class Encoder {                                   // tagged-property writer; nam
 }
 
 // Link records exactly as UDK 2015 saves them (every field, in this order).
-const inputLink = (y, desc = 'In', delta = 11) => [['LinkDesc', S, desc], ['bHasImpulse', B, false], ['QueuedActivations', I, 0], ['bDisabled', B, false],
+export const inputLink = (y, desc = 'In', delta = 11) => [['LinkDesc', S, desc], ['bHasImpulse', B, false], ['QueuedActivations', I, 0], ['bDisabled', B, false],
   ['bDisabledPIE', B, false], ['LinkedOp', O, 0], ['DrawY', I, y], ['bHidden', B, false],
   ['ActivateDelay', F, 0.0], ['bClampedMax', B, false], ['bClampedMin', B, false], ['OverrideDelta', I, delta]];
 
 // targets: node refs, or [ref, input index] to enter a node through another input than its first
-const outputLink = (desc, targets, y, delta = 11) => [['Links', A, targets.map(t => [t].flat()).map(([t, k = 0]) => [['LinkedOp', O, t], ['InputLinkIdx', I, k]])],
+export const outputLink = (desc, targets, y, delta = 11) => [['Links', A, targets.map(t => [t].flat()).map(([t, k = 0]) => [['LinkedOp', O, t], ['InputLinkIdx', I, k]])],
   ['LinkDesc', S, desc], ['bHasImpulse', B, false], ['bDisabled', B, false], ['bDisabledPIE', B, false], ['LinkedOp', O, 0],
   ['ActivateDelay', F, 0.0], ['DrawY', I, y], ['bHidden', B, false], ['bClampedMax', B, false],
   ['bClampedMin', B, false], ['OverrideDelta', I, delta]];
 
-const varLink = (desc, expected, linked, x, { prop = 'None', writeable = false, hidden = false, delta = 16, minVars = 1, maxVars = 255, any = false } = {}) => [
+export const varLink = (desc, expected, linked, x, { prop = 'None', writeable = false, hidden = false, delta = 16, minVars = 1, maxVars = 255, any = false } = {}) => [
   ['ExpectedType', O, expected], ['LinkedVariables', A, linked], ['LinkDesc', S, desc], ['LinkVar', N, 'None'],
   ['PropertyName', N, prop], ['bWriteable', B, writeable], ['bSequenceNeverReadsOnlyWritesToThisVar', B, false],
   ['bModifiesLinkedObject', B, false], ['bHidden', B, hidden], ['MinVars', I, minVars], ['MaxVars', I, maxVars],
   ['DrawX', I, x], ['bAllowAnyType', B, any], ['bClampedMax', B, false], ['bClampedMin', B, false],
   ['OverrideDelta', I, delta]];
 
-const layout = (version, parent, x, y, w, h, name = null) => [['ObjInstanceVersion', I, version], ['ParentSequence', O, parent],
+export const layout = (version, parent, x, y, w, h, name = null) => [['ObjInstanceVersion', I, version], ['ParentSequence', O, parent],
   ['ObjPosX', I, x], ['ObjPosY', I, y], ...(name ? [['ObjName', S, name]] : []), ['DrawWidth', I, w], ['DrawHeight', I, h]];
 
 // on-screen text (SeqAct_DrawText's DrawTextInfo), set like the messages in Lethamyr's maps; `at` is its offset from
 // the middle of the screen (checkpoint titles by default)
-export const textInfo = (add, text, at = [-80, -300]) => new Encoder(add).props([['MessageText', S, text], ['MessageFontScale', T, ['Vector2D', pack('<2f', 2, 2)]],
-                                                                                 ['MessageOffset', T, ['Vector2D', pack('<2f', ...at)]]]);
+export const textInfo = (add, text, at = [-80, -300], size = 2, color = null) => new Encoder(add).props([['MessageText', S, text],
+  ['MessageFontScale', T, ['Vector2D', pack('<2f', size, size)]], ['MessageOffset', T, ['Vector2D', pack('<2f', ...at)]],
+  ...(color ? [['MessageColor', T, ['Color', Uint8Array.of(color[2], color[1], color[0], 255)]]] : [])]);
 
 export function mainSequence(pkg) {
   const level = pkg.levelIndex() + 1;
@@ -142,7 +143,7 @@ export function mainSequence(pkg) {
 
 
 // Nodes the main sequence runs. Maps keep nodes taken out of it (a fresh start empties it), so lookups skip those.
-function liveNodes(pkg) {
+export function liveNodes(pkg) {
   const seq = mainSequence(pkg);
   if (seq < 0) return new Set();                  // a map without Kismet
   const refs = nodeProps(pkg, pkg.exports[seq]).SequenceObjects;
@@ -275,7 +276,7 @@ export const BALL_TOP_AHEAD = 40;                 // a ball on the car sits this
 // Returns the new trigger indices.
 // Kismet nodes added to the main sequence: node(class, props) adds one; refs(names) gives the references the next
 // nodes will get, in order, so they can link to each other before they exist; placed() checks that order held.
-function writer(add) {
+export function writer(add) {
   const pkg = add.pkg, enc = new Encoder(add), parent = mainSequence(pkg) + 1, classes = new Map(), nodes = [];
   const cls = name => {
     if (!classes.has(name)) classes.set(name, add.classRef(name, PACKAGES[name] || 'Engine'));
