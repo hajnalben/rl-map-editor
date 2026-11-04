@@ -541,7 +541,18 @@ export class Additions {
     let length = head.length;
     const place = blob => { tail.push(blob); length += blob.length; return length - blob.length; };
     const entries = pkg.exports.map(e => e.entry.slice());
-    for (const [i, blob] of this.replaced) packInto('<ii', entries[i], 32, blob.length, place(blob));   // SerialSize, SerialOffset
+    for (const [i, blob] of this.replaced) {
+      const e = pkg.exports[i], at = place(blob), shift = blob.length - e.size;
+      // an inline bulk data header holds its data's file offset (as compact.js finds them): re-point the ones of an
+      // object whose properties grew, such as a mesh given a BodySetup
+      for (let q = 0; q + 16 <= e.size; q++) {
+        const was = e.off + q + 16;
+        if (unpackFrom('<i', pkg.data, e.off + q + 12)[0] === was && q + shift + 16 <= blob.length && unpackFrom('<i', blob, q + shift + 12)[0] === was) {
+          packInto('<i', blob, q + shift + 12, at + q + shift + 16);
+        }
+      }
+      packInto('<ii', entries[i], 32, blob.length, at);   // SerialSize, SerialOffset
+    }
     this.added.forEach(([entry, blob], n) => {
       for (const at of this.bulkAt.get(n) || []) packInto('<i', blob, at + 12, length + at + 16);
       packInto('<ii', entry, 32, blob.length, place(blob));

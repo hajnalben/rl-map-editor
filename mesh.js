@@ -1,5 +1,6 @@
 // StaticMesh native data for UE3 v868 maps: read, write, collision tree, and sculpted terrain tiles.
 import { concat, pack, pyDist, pyRound, pySum, unpackFrom } from './bytes.js';
+import { convexElemBytes, convexPieces, meshGeometry } from './shapes.js';
 
 const LEAF_TRIS = 5;                              // most triangles per kDOP leaf
 const RAW_TRI = 372;                              // FStaticMeshTriangle: corners, 3x8 UVs, colors, ids, 3x3 tangents, 2 flags
@@ -340,6 +341,22 @@ export function toMover(add, i, values, material = null) {
   const at = moverActor(add, pkg.get(e, 'StaticMesh', '<i')[0], material === null ? own : [Math.trunc(material)], values, pkg.get(e, 'PhysMaterialOverride', '<i')?.[0] ?? 0);
   add.remove(i);
   return at;
+}
+
+const PHYS_DATA_VERSION = 34079889;               // RB_BodySetup.PreCachedPhysDataVersion as Leth's maps save it
+
+// Moving shapes collide only by simple collision: mesh `i`, written with exact per-triangle collision, gets convex
+// pieces of itself (convexPieces) in a body setup, as Leth's moving platforms have, and is switched to them. The game
+// cooks the pieces when the map loads. Meshes still actors share then collide by the pieces too.
+export function moverCollision(add, i) {
+  const tag = (name, type, body, struct) => add.tag(name, type, body, struct);
+  const elems = convexPieces(meshGeometry(add.pkg, i)).map(h => convexElemBytes(h, tag, add.fname('None')));
+  const agg = tag('AggGeom', 'StructProperty', concat(tag('ConvexElems', 'ArrayProperty', concat(pack('<i', elems.length), ...elems)), add.fname('None')), 'KAggregateGeom');
+  const body = add.addObject(add.classRef('RB_BodySetup', 'Engine'), i + 1, 'RB_BodySetup',
+    concat(pack('<i', 0), tag('PreCachedPhysDataVersion', 'IntProperty', pack('<i', PHYS_DATA_VERSION)), agg, add.fname('None'), pack('<i', 0)), 0x0007000000000000n);
+  add.setProps(i, { UseSimpleRigidBodyCollision: tag('UseSimpleRigidBodyCollision', 'BoolProperty', Uint8Array.of(1)),
+                    BodySetup: tag('BodySetup', 'ObjectProperty', pack('<i', body + 1)) });
+  return elems.length;
 }
 
 // Write sculpted terrain tiles ([{tx, ty, heights}], heights with the one-vertex border tileGeometry takes): new

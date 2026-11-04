@@ -2,7 +2,7 @@
 // collision; they take a surface from the map they go into). Geometry is in Unreal axes as flat typed arrays:
 // {positions (3/vertex), uvs (2/vertex), normals (3/vertex), tangents (6/vertex: X then Y), tris (3/triangle)},
 // triangles in Unreal's winding.
-import { fromHalf } from './bytes.js';
+import { concat, fromHalf, pack } from './bytes.js';
 import { read } from './mesh.js';
 
 const sub = (a, b) => a.map((v, k) => v - b[k]);
@@ -115,4 +115,89 @@ export function corners(g, attribute = 'positions', n = 3) {   // per triangle c
   const out = new Float32Array(n * g.tris.length);
   g.tris.forEach((v, k) => out.set(g[attribute].subarray(n * v, n * v + n), n * k));
   return out;
+}
+
+// A convex piece of simple collision (UE3's FKConvexElem) around `points`: its corners, its faces as triangles wound
+// as UDK winds them (inward), the distinct edge and face directions, and face planes {n, d} (n·p = d, n outward).
+// Null when the points enclose no volume.
+export function convexHull(points, eps = 0.01) {
+  const pts = [];
+  for (const p of points) if (!pts.some(q => Math.hypot(...sub(p, q)) < eps)) pts.push([...p]);
+  const planes = [];
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) for (let k = j + 1; k < pts.length; k++) {
+    const c = cross(sub(pts[j], pts[i]), sub(pts[k], pts[i]));
+    if (Math.hypot(...c) < 1e-6) continue;
+    let n = unit(c), d = dot(n, pts[i]), above = false, below = false;
+    for (const p of pts) { const s = dot(n, p) - d; above ||= s > eps; below ||= s < -eps; }
+    if (above && below) continue;
+    if (above) [n, d] = [n.map(v => -v), -d];
+    if (!planes.some(q => dot(q.n, n) > 1 - 1e-6 && Math.abs(q.d - d) < eps)) planes.push({ n, d });
+  }
+  if (planes.length < 4) return null;
+  const verts = pts.filter(p => planes.some(q => Math.abs(dot(q.n, p) - q.d) < eps)), tris = [], edges = [], normals = [];
+  const add = (list, v) => { if (!list.some(u => Math.abs(dot(u, v)) > 1 - 1e-6)) list.push(v); };
+  for (const { n, d } of planes) {
+    const on = verts.map((p, i) => i).filter(i => Math.abs(dot(n, verts[i]) - d) < eps);
+    const c = on.reduce((s, i) => s.map((v, k) => v + verts[i][k] / on.length), [0, 0, 0]);
+    const u = unit(sub(verts[on[0]], c)), w = cross(n, u);
+    on.sort((a, b) => Math.atan2(dot(sub(verts[a], c), w), dot(sub(verts[a], c), u)) - Math.atan2(dot(sub(verts[b], c), w), dot(sub(verts[b], c), u)));
+    for (let k = 1; k + 1 < on.length; k++) tris.push(on[0], on[k + 1], on[k]);
+    on.forEach((a, k) => add(edges, unit(sub(verts[on[(k + 1) % on.length]], verts[a]))));
+    add(normals, n);
+  }
+  const box = [0, 1, 2].map(k => Math.min(...verts.map(p => p[k]))).concat([0, 1, 2].map(k => Math.max(...verts.map(p => p[k]))));
+  return { verts, tris, edges, normals, planes, box };
+}
+
+// A mesh's simple collision as convex pieces (convexHull): the whole mesh when it is convex, else its flat convex
+// patches (neighbouring triangles in one plane), each thickened `depth` inward. Moving shapes collide only by these.
+// ponytail: no merging across bends, so a curved mesh gets a piece per face (a Ring: 360); merge bends if that's heavy.
+export function convexPieces(g, depth = 30) {
+  const point = k => Array.from(g.positions.subarray(3 * k, 3 * k + 3)), normal = k => Array.from(g.normals.subarray(3 * k, 3 * k + 3));
+  const tris = [];
+  for (let t = 0; t < g.tris.length; t += 3) {
+    const ids = [g.tris[t], g.tris[t + 1], g.tris[t + 2]], v = ids.map(point), c = cross(sub(v[1], v[0]), sub(v[2], v[0]));
+    if (Math.hypot(...c) < 1e-3) continue;
+    const n = unit(c), out = ids.map(normal).reduce((a, b) => a.map((x, k) => x + b[k]));
+    tris.push({ v, n: dot(n, out) < 0 ? n.map(x => -x) : n, area: Math.hypot(...c) / 2 });   // outward, as the vertex normals say
+  }
+  const all = tris.flatMap(t => t.v);
+  if (tris.every(t => all.every(p => dot(t.n, sub(p, t.v[0])) <= 0.5))) {
+    const whole = convexHull(all);
+    if (whole) return [whole];
+  }
+  const same = (p, q) => Math.hypot(...sub(p, q)) < 0.01;
+  const touches = (patch, t) => patch.some(u => u.v.filter(p => t.v.some(q => same(p, q))).length >= 2);
+  const flatArea = (patch, n) => {                // area of the 2D hull of a flat patch's corners
+    const u = unit(sub(patch[0].v[1], patch[0].v[0])), w = cross(n, u);
+    const p2 = patch.flatMap(t => t.v).map(p => [dot(p, u), dot(p, w)]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const turn = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const half = list => list.reduce((h, p) => { while (h.length > 1 && turn(h.at(-2), h.at(-1), p) <= 0) h.pop(); h.push(p); return h; }, []);
+    const hull = [...half(p2).slice(0, -1), ...half([...p2].reverse()).slice(0, -1)];
+    return Math.abs(hull.reduce((s, p, k) => s + p[0] * hull[(k + 1) % hull.length][1] - hull[(k + 1) % hull.length][0] * p[1], 0)) / 2;
+  };
+  const slab = patch => convexHull(patch.flatMap(t => t.v.flatMap(p => [p, p.map((x, k) => x - depth * t.n[k])])));
+  const pieces = [];
+  let patch = [];
+  for (const t of tris) {
+    const flat = patch.length && dot(patch[0].n, t.n) > 0.9999 && Math.abs(dot(t.n, sub(t.v[0], patch[0].v[0]))) < 0.5;
+    const next = [...patch, t];
+    if (flat && touches(patch, t) && flatArea(next, t.n) <= 1.01 * next.reduce((s, x) => s + x.area, 0)) patch = next;
+    else { if (patch.length) pieces.push(slab(patch)); patch = [t]; }
+  }
+  if (patch.length) pieces.push(slab(patch));
+  return pieces.filter(Boolean);
+}
+
+// One convex piece as UE3 saves it: tagged properties made with `tag(name, type, body, struct)`, ended by `none`.
+// Planes are stored W first, and the corners also as PermutedVertexData: per four corners, their X, Y and Z rows.
+export function convexElemBytes(h, tag, none) {
+  const array = (name, rows, fmt) => tag(name, 'ArrayProperty', concat(pack('<i', rows.length), ...rows.map(r => pack(fmt, ...r))));
+  const four = Array.from({ length: Math.ceil(h.verts.length / 4) * 4 }, (_, k) => h.verts[Math.min(k, h.verts.length - 1)]);
+  const permuted = [];
+  for (let g = 0; g < four.length; g += 4) for (let axis = 0; axis < 3; axis++) permuted.push([3, 0, 1, 2].map(k => four[g + k][axis]));
+  return concat(array('VertexData', h.verts, '<3f'), array('PermutedVertexData', permuted, '<4f'),
+    tag('FaceTriData', 'ArrayProperty', pack(`<i${h.tris.length}i`, h.tris.length, ...h.tris)), array('EdgeDirections', h.edges, '<3f'),
+    array('FaceNormalDirections', h.normals, '<3f'), array('FacePlaneData', h.planes.map(p => [p.d, ...p.n]), '<4f'),
+    tag('ElemBox', 'StructProperty', concat(pack('<6f', ...h.box), Uint8Array.of(1)), 'Box'), none);
 }

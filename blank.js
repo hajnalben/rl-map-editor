@@ -4,7 +4,7 @@
 // copied from another map. Game materials and classes are only referenced by name.
 import { concat, latin1Bytes, pack, packInto } from './bytes.js';
 import { geometryMesh, write } from './mesh.js';
-import { asMeshInput, boxShape } from './shapes.js';
+import { asMeshInput, boxShape, convexElemBytes, convexHull } from './shapes.js';
 
 const FLOOR = 100000, SKY = 250000;               // floor half size and sky dome radius
 const ZONE = [512, 512, 352];                     // the trigger zone's half size
@@ -183,8 +183,10 @@ export function blankMap() {
     const [brightness, rot, color] = SUNS[k];
     set(a, actor(w, engine('DirectionalLight'), 'DirectionalLight', [P.obj(w, 'LightComponent', c), P.vector(w, 'Location', [0, 0, 3000 + 300 * k]),
       P.rotator(w, 'Rotation', rot), P.name(w, 'Tag', 'DirectionalLight')]));
-    set(c, component(w, [P.guid(w, 'LightGuid'), P.guid(w, 'LightmapGuid'), P.float(w, 'Brightness', brightness), P.color(w, 'LightColor', color),
-      P.bool(w, 'CastShadows', false), P.bool(w, 'CastStaticShadows', false), P.bool(w, 'CastDynamicShadows', false)]));
+    // the main sun gives the car and ball their shadows, greyed as TestGround's; nothing static casts one (nothing is baked)
+    const shadows = k === 0 ? [P.bool(w, 'CastStaticShadows', false), tag(w, 'ModShadowColor', 'StructProperty', pack('<4f', 0.3427, 0.3427, 0.3427, 1), 'LinearColor')]
+      : [P.bool(w, 'CastShadows', false), P.bool(w, 'CastStaticShadows', false), P.bool(w, 'CastDynamicShadows', false)];
+    set(c, component(w, [P.guid(w, 'LightGuid'), P.guid(w, 'LightmapGuid'), P.float(w, 'Brightness', brightness), P.color(w, 'LightColor', color), ...shadows]));
   });
 
   for (const [n, rgb] of Object.entries(TINTS)) {
@@ -264,15 +266,8 @@ function brushPolys(w, { corners, faces }, self) {
     ...f.quad.map(c => pack('<3f', ...corners[c])), pack('<2i', 0x0e00, 0), w.name('None'), pack('<3ifi', 0, k, -1, 32, 3), LIGHTMASS, w.name('None'))));
 }
 
-function convexElems(w, { E, corners, faces }) {  // the zone's collision: one convex element, the box
-  const planes = faces.map(f => pack('<4f', ...f.n, f.d));
-  const permuted = [0, 4].flatMap(g => [0, 1, 2].map(axis => pack('<4f', ...[0, 1, 2, 3].map(k => corners[g + k][axis]))));
-  const tris = faces.flatMap(f => [f.quad[0], f.quad[1], f.quad[2], f.quad[0], f.quad[2], f.quad[3]]);
-  const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map(a => pack('<3f', ...a));
-  const elem = props(w, [P.raw(w, 'VertexData', 8, concat(...corners.map(c => pack('<3f', ...c)))), P.raw(w, 'PermutedVertexData', 6, concat(...permuted)),
-    P.raw(w, 'FaceTriData', tris.length, pack(`<${tris.length}i`, ...tris)), P.raw(w, 'EdgeDirections', 3, concat(...axes)),
-    P.raw(w, 'FaceNormalDirections', 3, concat(...axes)), P.raw(w, 'FacePlaneData', 6, concat(...planes)),
-    tag(w, 'ElemBox', 'StructProperty', concat(pack('<6f', ...E.map(e => -e), ...E), Uint8Array.of(1)), 'Box')]);
+function convexElems(w, { corners }) {           // the zone's collision: one convex element, the box
+  const elem = convexElemBytes(convexHull(corners), (name, type, body, struct) => tag(w, name, type, body, struct), w.name('None'));
   return tag(w, 'ConvexElems', 'ArrayProperty', concat(pack('<i', 1), elem));
 }
 
