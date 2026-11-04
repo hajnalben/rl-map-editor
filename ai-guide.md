@@ -159,6 +159,10 @@ standing on a platform that slides under another shape gets pushed off.
 A box (`"box"`) or 20-thick doorway (`"gate"`) that does nothing by itself: scripts react to the car or ball going
 in or out. Sized and placed like checkpoints; `visible` shows a glass panel in the game.
 
+With `gravity` it is a **gravity zone** instead: inside it the car and ball fall with that gravity, not the map's.
+Rocket League's own is `-650`; `-200` floats, `-2000` is heavy, a positive number pulls up. Workshop maps use -5000
+(ThePath), -1000 and +1000.
+
 ## Scripts
 
 A map's script is JavaScript that says what happens when: `apply({script: "..."})`, or the editor's **Script**

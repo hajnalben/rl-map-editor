@@ -9,7 +9,8 @@ export class Package {
     this.data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     this.pos = 0;
     const [tag, ver] = this.unpack('<IHHi');
-    if (tag !== 0x9E2A83C1 || ver !== 868) throw new Error('not a Rocket League workshop map (UE3 package version 868)');
+    // 867 (an older UDK) reads and writes back as 868 does, checked on LethDribbleChallenge1
+    if (tag !== 0x9E2A83C1 || (ver !== 868 && ver !== 867)) throw new Error('not a Rocket League workshop map (UE3 package version 867 or 868)');
     this.fstring();
     this.summaryAt = this.pos;                    // PackageFlags, then name/export/import counts+offsets, DependsOffset
     const [, ncount, noff, ecount, eoff, icount, ioff] = this.unpack('<I6i');
@@ -480,29 +481,40 @@ export class Additions {
   }
 
   // Copy a placed actor and its components; `values` ({prop: [fmt, values]}) sets the copy's transform, adding
-  // properties the original lacks. `kidProps` ({component export index: [tags, tail]}) rewrites a copied
-  // component (see withProps). Returns the copy's export index.
-  duplicate(i, offset = [0, 0, 0], values = null, kidProps = null) {
+  // properties the original lacks. `kidProps` ({export index of the actor or a component: [tags, tail]}) rewrites
+  // a copied object (see withProps). `cls` makes the copy an actor of that Engine class, its components made from
+  // that class's defaults (a TriggerVolume copied as a GravityVolume). Returns the copy's export index.
+  duplicate(i, offset = [0, 0, 0], values = null, kidProps = null, cls = null) {
     const pkg = this.pkg, src = pkg.exports[i];
     const newRef = pkg.exports.length + this.added.length + 1;   // object references are 1-based
     const kids = [];
     pkg.exports.forEach((e, k) => { if (e.outer === i + 1) kids.push(k); });
     const remap = new Map([[i + 1, newRef], ...kids.map((k, n) => [k + 1, newRef + 1 + n])]);
     const present = new Set([...pkg.properties(src)].map(([name]) => name));
+    const clsRef = cls && this.classRef(cls, 'Engine');
     for (const [k, ref] of [[i, newRef], ...kids.map(k => [k, remap.get(k + 1)])]) {
       const e = pkg.exports[k];
       let blob = pkg.data.slice(e.off, e.off + e.size);
       if (e === src) this.remap(e, blob, remap, offset, values);
       else this.remap(e, blob, remap);
       packInto('<i', blob, pkg.netIndexAt(e) - e.off, ref - 1);
-      if (e === src && values) {
-        const absent = Object.fromEntries(Object.entries(values).filter(([n]) => !present.has(n)));
-        blob = this.withProps(e, blob, this.transformTags(absent));
-      }
-      if (kidProps && Object.hasOwn(kidProps, k)) blob = this.withProps(e, blob, ...kidProps[k]);
+      const absent = e === src && values ? this.transformTags(Object.fromEntries(Object.entries(values).filter(([n]) => !present.has(n)))) : {};
+      const [tags, tail] = kidProps?.[k] ?? [{}, null];
+      if (Object.keys(absent).length || Object.keys(tags).length || tail !== null) blob = this.withProps(e, blob, { ...absent, ...tags }, tail);
       const entry = e.entry.slice();
-      if (e === src) packInto('<i', entry, 16, this.uniqueNumber(src.nameRaw[0]));
-      else packInto('<i', entry, 8, newRef);      // outer: the copied actor
+      if (e === src) {
+        const nameIndex = cls ? this.name(cls)[0] : src.nameRaw[0];
+        packInto('<ii', entry, 12, nameIndex, this.uniqueNumber(nameIndex));
+      } else packInto('<i', entry, 8, newRef);    // outer: the copied actor
+      if (clsRef && e === src) {
+        packInto('<i', entry, 0, clsRef);
+        if (unpackFrom('<i', blob, 0)[0] === src.cls) packInto('<ii', blob, 0, clsRef, clsRef);   // the state frame's nodes: the class
+      }
+      const arch = unpackFrom('<i', entry, 20)[0];
+      if (clsRef && e !== src && arch < 0) {
+        const t = pkg.imports[-arch - 1];
+        packInto('<i', entry, 20, this.templateRef(cls, t.name, t.cls));
+      }
       this.added.push([entry, blob]);
     }
     this.levelListChange(refs => [...refs, newRef]);

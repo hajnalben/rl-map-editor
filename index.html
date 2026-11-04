@@ -212,6 +212,7 @@
           <label title="Adds an opaque panel the size of the checkpoint, so players see it; nothing collides with it"><input type="checkbox" id="panelOn"> Visible in game</label>
           <label class="field" id="cpTitleRow" title="Shown on screen for 2 seconds when this checkpoint becomes the respawn point">Title <input id="cpTitle" maxlength="60" placeholder="Checkpoint N"></label>
         </div>
+        <label class="field" id="gravityRow" hidden title="Units per second²: Rocket League's own is −650; less floats, more is heavy, above 0 pulls up">Gravity <input type="number" id="gravityZ" step="50" min="-20000" max="20000" placeholder="map default"></label>
         <div id="ballPlace" class="ball-place" hidden>
           <span class="muted">Ball after reset</span>
           <div class="modes two">
@@ -485,12 +486,12 @@ function renderLighting() {
 let saveName = 'my-map.udk';                      // suggested file name for Save as
 let mapName = null, source = null, pkg = null, actors = [], palette = [], zone = null, objects = [], selected = null;
 let moversSaved = 0;                              // how many moving shapes the open map has
-const CHECKPOINT_COLORS = { car: 0x3ddc84, ball: 0xff9f43, lava: 0xff3b1f, zone: 0xb47cff };
+const CHECKPOINT_COLORS = { car: 0x3ddc84, ball: 0xff9f43, lava: 0xff3b1f, zone: 0xb47cff, gravity: 0x38c6d9 };
 const checkpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
   [k, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.28, depthWrite: false })]));
 const shownCheckpointMats = Object.fromEntries(Object.entries(CHECKPOINT_COLORS).map(([k, color]) =>
   [k, new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.8, roughness: 0.6 })]));
-const lookOf = obj => (obj.userData.panel ? shownCheckpointMats : checkpointMats)[obj.userData.lava ? 'lava' : obj.userData.zone ? 'zone' : obj.userData.checkpoint];
+const lookOf = obj => (obj.userData.panel ? shownCheckpointMats : checkpointMats)[obj.userData.lava ? 'lava' : obj.userData.gravity !== undefined ? 'gravity' : obj.userData.zone ? 'zone' : obj.userData.checkpoint];
 // see-through glass when the map has some, so a gate shows without hiding the view; for lava something fiery.
 // 'lava' is a red copy of a surface, made when the map is saved.
 const fiery = name => /lava|magma|fire|ember|orange/i.test(name) || /(?<![a-z])red|Red/.test(name);   // not "Colored"
@@ -1105,7 +1106,7 @@ async function buildOnBlank() {
   });
   const zones = added.filter(o => o.userData.zone).map(o => {
     readBack(o);
-    return { id: o.userData.aiId, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d], panel: !!o.userData.panel };
+    return { id: o.userData.aiId, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d], panel: !!o.userData.panel, gravity: o.userData.gravity };
   });
   const scriptSource = script.source, scriptRan = !!script.plan;
   readBack(objects.find(o => o.userData.spawn));
@@ -1136,7 +1137,7 @@ async function buildOnBlank() {
   }
   for (const l of lights) placeLight(l.light.kind, [l.loc[0] + dx * ter.cell, l.loc[1] + dy * ter.cell, l.loc[2] + floor], l.rot, l.light).userData.aiId = l.id;
   for (const z of zones) {
-    const obj = makeZone([z.loc[0] + dx * ter.cell, z.loc[1] + dy * ter.cell, z.loc[2] + floor], z.rot, z.scale3d);
+    const obj = makeZone([z.loc[0] + dx * ter.cell, z.loc[1] + dy * ter.cell, z.loc[2] + floor], z.rot, z.scale3d, z.gravity);
     obj.userData.aiId = z.id;
     if (z.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
   }
@@ -1228,6 +1229,11 @@ function loadMap(name, bytes, parsed, data) {
     const obj = new THREE.Mesh(geometryFor(a.bounds), materialFor(a));
     obj.userData.actor = a;
     obj.userData.original = { loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale, surface: a.materials?.[0] || null };
+    if (a.cls === 'GravityVolume') {
+      Object.assign(obj.userData, { zone: true, gravity: a.gravity });
+      obj.userData.original.gravity = a.gravity;
+      obj.material = lookOf(obj);
+    }
     const cp = checkpointZones.get(a.i), lava = lavaZones.get(a.i);
     if (cp) {
       Object.assign(obj.userData, { checkpoint: cp.ball ? 'ball' : 'car', ballOnTop: cp.ballOnTop, oldBallCheckpoint: cp.ball && cp.modeVar === null,
@@ -1465,6 +1471,8 @@ function showSelection() {
         : `Becomes your respawn point when your car ${isGate(a) ? 'passes through' : 'drives or flies into'} it.`}
         After a reset the car appears ${isGate(a) ? `just past the gate (${GATE_PAST} units)` : 'inside it'}, on the ground when it reaches some, facing the arrow${selected.userData.checkpoint === 'ball'
         ? `, with the new ball ${selected.userData.ballOnTop ? 'just over the roof' : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
+    : selected.userData.gravity !== undefined
+    ? `<div class="kv"><b>Gravity zone</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">Inside it, the car and ball fall with this gravity instead of the map's (Rocket League's is −650): less floats, more is heavy, above 0 pulls up.</div>`
     : selected.userData.zone
     ? `<div class="kv"><b>Trigger zone</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">Sets off script events when the car or ball goes in or out: zone('${idOf(selected)}').enter('car'), .leave(). Nothing happens unless the Script uses it.</div>`
     : selected.userData.light
@@ -1499,7 +1507,9 @@ function showSelection() {
   $('rotRow').hidden = !can.modes.includes('rotate');
   $('scaleRow').hidden = !can.modes.includes('scale');
   document.querySelectorAll('#rotRow input').forEach(inp => inp.classList.toggle('unused', can.yawOnly && inp.dataset.k !== '1'));
-  $('cpPanel').hidden = !selected.userData.checkpoint && !selected.userData.zone;
+  $('cpPanel').hidden = !selected.userData.checkpoint && !(selected.userData.zone && selected.userData.gravity === undefined);
+  $('gravityRow').hidden = selected.userData.gravity === undefined;
+  $('gravityZ').value = selected.userData.gravity ?? '';
   $('cpShape').hidden = !selected.userData.checkpoint || !!selected.userData.lava;
   $('panelOn').checked = !!selected.userData.panel;
   $('cpTitleRow').hidden = !selected.userData.checkpoint || !!selected.userData.lava;
@@ -1556,6 +1566,15 @@ for (const [id, field] of Object.entries(LIGHT_INPUTS)) $(id).addEventListener(i
   showSelection();
 });
 
+$('gravityZ').addEventListener('change', () => {
+  const el = $('gravityZ'), v = Math.min(+el.max, Math.max(+el.min, parseFloat(el.value)));
+  if (selected?.userData.gravity === undefined || Number.isNaN(v) || v === selected.userData.gravity) return;
+  undo.push({ kind: 'gravity', obj: selected, gravity: selected.userData.gravity });
+  selected.userData.gravity = v;
+  markDirty(selected);
+  showSelection();
+});
+
 function pushUndo(obj) {
   if (!obj) return;
   undo.push({ kind: 'move', obj, state: { pos: obj.position.clone(), quat: obj.quaternion.clone(), scale: obj.scale.clone() } });
@@ -1574,6 +1593,10 @@ function popUndo() {
     select(u.obj);
   } else if (u.kind === 'motion') {
     u.obj.userData.motion = u.motion;
+    markDirty(u.obj);
+    if (u.obj === selected) showSelection();
+  } else if (u.kind === 'gravity') {
+    u.obj.userData.gravity = u.gravity;
     markDirty(u.obj);
     if (u.obj === selected) showSelection();
   } else if (u.kind === 'light') {
@@ -1667,10 +1690,13 @@ function makeCheckpoint(kind, loc, rot, ballOnTop = false, scale3d = [1, 1, 1], 
   placeNew(obj);
   return obj;
 }
-function makeZone(loc, rot = [0, 0, 0], scale3d = [1, 1, 1]) {   // a trigger zone for scripts: a checkpoint's box, without the checkpoint
-  const a = { i: null, name: 'Trigger zone', cls: 'TriggerVolume', mesh: null, loc, rot, scale3d: [...scale3d], scale: 1, bounds: zone.bounds };
+const NEW_GRAVITY = -200;                          // a new gravity zone pulls about a third as hard: floaty
+// A trigger zone for scripts: a checkpoint's box, without the checkpoint. With `gravity` (GravityZ), a gravity zone.
+function makeZone(loc, rot = [0, 0, 0], scale3d = [1, 1, 1], gravity = undefined) {
+  const a = { i: null, name: gravity === undefined ? 'Trigger zone' : 'Gravity zone', cls: gravity === undefined ? 'TriggerVolume' : 'GravityVolume', mesh: null,
+              loc, rot, scale3d: [...scale3d], scale: 1, bounds: zone.bounds };
   const obj = new THREE.Mesh(geometryFor(zone.bounds));
-  obj.userData = { actor: a, copy: true, zone: true, panel: null };
+  obj.userData = { actor: a, copy: true, zone: true, panel: null, ...(gravity !== undefined ? { gravity } : {}) };
   obj.material = lookOf(obj);
   placeNew(obj);
   return obj;
@@ -1923,7 +1949,8 @@ function renderPalette() {
   const nodes = [
     group('Checkpoints', zoned([['cp:car', 'Car · box'], ['cp:car:gate', 'Car · gate'], ['cp:ball', 'Ball · box'], ['cp:ball:gate', 'Ball · gate']])),
     group('Floor is lava', zoned([['lava:ball', 'The ball resets'], ['lava:car', 'The car resets']])),
-    group('Trigger zones', zoned([['zone:box', 'Box', 'A zone for scripts'], ['zone:gate', 'Gate', 'A zone for scripts']])),
+    group('Zones', zoned([['zone:box', 'Trigger · box', 'A zone for scripts'], ['zone:gate', 'Trigger · gate', 'A zone for scripts'],
+                          ['zone:gravity', 'Gravity', 'Gravity of its own inside: lower, heavier or upward']])),
     group('Lights', Object.entries(LIGHT_KINDS).map(([k, v]) => [`light:${k}`, v.name])),
     group('Built-in shapes', Object.keys(BUILT_IN).map(k => [`std:${k}`, k])),
     group('This map', palette.map(p => [`map:${p.template}`, `${p.mesh}  ×${p.count}`]), true),
@@ -1941,6 +1968,7 @@ function addFromPalette() {
     if (!zone) return setStatus('This map has no trigger zone to copy.', 'warn');
     const loc = fromThree(orbit.target);
     loc[2] += zone.bounds[5] - 50;
+    if (value === 'zone:gravity') return makeZone([loc[0], loc[1], loc[2] + zone.bounds[5]], [0, 0, 0], [2, 2, 2], NEW_GRAVITY);
     return makeZone(loc, [0, 0, 0], [value.endsWith('gate') ? GATE / (2 * zone.bounds[3]) : 1, 1, 1]);
   }
   if (value.startsWith('light:')) {
@@ -2001,14 +2029,15 @@ function collectShapes() {                        // the open map's shapes join 
 }
 function copyObject(source, loc) {
   readBack(source);
-  const src = source.userData.actor, { checkpoint, shape, ballOnTop, lava, surface, newLight, mover } = source.userData;
+  const src = source.userData.actor, { checkpoint, shape, ballOnTop, lava, surface, newLight, mover, zone, gravity } = source.userData;
   const panel = source.userData.panel ? { material: source.userData.panel.material } : null;
   const a = { ...src, i: null, src: src.src ?? src.i, name: (src.mesh || src.name) + ' copy',
               loc: [...loc], rot: [...src.rot], scale3d: [...src.scale3d] };
   const obj = source.userData.light ? lightObject(a, settingsOf(source.userData.light)) : new THREE.Mesh(source.geometry, source.material);
-  obj.userData = { actor: a, copy: true, checkpoint, shape, ballOnTop, panel, lava, surface, light: obj.userData.light, newLight, mover, motion: copyMotion(source.userData.motion),
+  obj.userData = { actor: a, copy: true, checkpoint, shape, ballOnTop, panel, lava, surface, light: obj.userData.light, newLight, mover, motion: copyMotion(source.userData.motion), zone,
+                   ...(gravity !== undefined ? { gravity } : {}),
                    ...(checkpoint ? { title: source.userData.title ?? '' } : {}) };
-  if (checkpoint) obj.material = lookOf(obj);
+  if (checkpoint || zone) obj.material = lookOf(obj);
   if (checkpoint) decorateCheckpoint(obj);
   placeNew(obj);
 }
@@ -2099,11 +2128,12 @@ function aiErrors(step) {                         // what is wrong with a step b
   const ids = new Set(), KEYS = { shape: ['id', 'shape', 'at', 'size', 'yaw', 'pitch', 'roll', 'surface', 'motion'],
                                   checkpoint: ['id', 'checkpoint', 'at', 'size', 'yaw', 'gate', 'ballOnTop', 'visible', 'title'],
                                   light: ['id', 'light', 'at', 'yaw', 'pitch', 'color', 'brightness', 'radius', 'cone', 'core', 'shadows', 'on'],
-                                  zone: ['id', 'zone', 'at', 'size', 'yaw', 'visible'] };
+                                  zone: ['id', 'zone', 'at', 'size', 'yaw', 'visible', 'gravity'] };
   step.add.forEach((e, n) => {
     const where = `add[${n}]${typeof e?.id === 'string' ? ` (${e.id})` : ''}`, kind = e && ['shape', 'checkpoint', 'light', 'zone'].filter(k => k in e);
     if (!kind || kind.length !== 1) return bad(where, 'an object with one of "shape", "checkpoint", "light" or "zone"');
     if ('zone' in e && !['box', 'gate'].includes(e.zone)) bad(where, 'zone: "box" or "gate"');
+    if ('gravity' in e && !(typeof e.gravity === 'number' && Math.abs(e.gravity) <= 20000)) bad(where, 'gravity: a number within ±20000 (Rocket League\'s is -650)');
     for (const k of Object.keys(e)) if (!KEYS[kind[0]].includes(k)) bad(where, `unknown field "${k}" for a ${kind[0]}`);
     if ('id' in e && !(typeof e.id === 'string' && /^[\w-]{1,40}$/.test(e.id))) bad(where, 'id: up to 40 letters, digits, - or _');
     else if ('id' in e && ids.has(e.id)) bad(where, 'id used twice in this step');
@@ -2147,7 +2177,7 @@ function aiAdd(e) {
     if (!zone) throw new Error('this map has no trigger zone to copy');
     const b = zone.bounds, rot = [0, Math.round((e.yaw ?? 0) * DEG), 0], size = e.size ?? [2 * b[3], 2 * b[4], 2 * b[5]];
     const scale3d = [e.zone === 'gate' ? GATE : size[0], size[1], size[2]].map((v, k) => v / (2 * b[3 + k]));
-    obj = makeZone(pivotFor(e.at, rot, zoneFoot(b, scale3d)), rot, scale3d);
+    obj = makeZone(pivotFor(e.at, rot, zoneFoot(b, scale3d)), rot, scale3d, e.gravity);
     if (e.visible) { obj.userData.panel = { material: e.visible === true ? null : surfaceRef(e.visible) }; obj.material = lookOf(obj); }
   } else if ('light' in e) {
     const hex = e.color ?? '#ffffff', settings = { kind: e.light, ...NEW_LIGHT[e.light], color: [1, 3, 5].map(k => parseInt(hex.slice(k, k + 2), 16)) };
@@ -2246,7 +2276,8 @@ function aiEntry(o) {
   if (u.lava) Object.assign(e, { kind: 'lava', resets: u.checkpoint });
   else if (u.zone) {
     const s = a.scale3d.map(v => v * a.scale);
-    Object.assign(e, { kind: 'zone', at: footOf(a, zoneFoot(a.bounds, s)), yaw: deg(a.rot[1]), size: s.map((v, k) => r1(2 * a.bounds[3 + k] * v)), visible: !!u.panel });
+    Object.assign(e, { kind: 'zone', at: footOf(a, zoneFoot(a.bounds, s)), yaw: deg(a.rot[1]), size: s.map((v, k) => r1(2 * a.bounds[3 + k] * v)), visible: !!u.panel,
+                       ...(u.gravity !== undefined ? { gravity: u.gravity } : {}) });
   }
   else if (u.checkpoint) {
     const s = a.scale3d.map(v => v * a.scale);
@@ -2391,6 +2422,7 @@ function changes(obj) {                           // transform fields that diffe
   if (o && obj.userData.checkpoint && (!!want !== !!had || (want && had && want.material !== had.material))) e.panel = true;
   if (o && obj.userData.surface !== undefined && obj.userData.surface !== o.surface) e.surface = obj.userData.surface;
   if (o && (obj.userData.mover || obj.userData.shape) && motionKey(obj) !== o.motion) e.motion = true;   // the movers are written as a whole (changeSet)
+  if (obj.userData.gravity !== undefined && (!o || obj.userData.gravity !== o.gravity)) e.gravity = obj.userData.gravity;
   const l = obj.userData.light;
   if (l) {
     const set = LIGHT_FIELDS.filter(f => f in l && (!o?.light || JSON.stringify(l[f]) !== JSON.stringify(o.light[f])));
@@ -2406,14 +2438,14 @@ function markDirty(obj) {
   updateDirty();
 }
 // The Map list: every object grouped by kind, shapes by their mesh; it follows the selection.
-const GROUPS = ['Spawn', 'Checkpoints', 'Lava', 'Trigger zones', 'Shapes', 'Lights & atmosphere', 'Volumes', 'Other'];   // the spawn: a row of its own
+const GROUPS = ['Spawn', 'Checkpoints', 'Lava', 'Trigger zones', 'Gravity zones', 'Shapes', 'Lights & atmosphere', 'Volumes', 'Other'];   // the spawn: a row of its own
 const openGroups = new Set(['Checkpoints', 'Lava', 'Shapes']);
 let outlinePending = false, revealing = null;
 function groupOf(o) {                             // [group, sub-group or null]
   const a = o.userData.actor;
   if (o.userData.lava) return ['Lava', null];
   if (o.userData.checkpoint) return ['Checkpoints', null];
-  if (o.userData.zone) return ['Trigger zones', null];
+  if (o.userData.zone) return [o.userData.gravity !== undefined ? 'Gravity zones' : 'Trigger zones', null];
   if (o.userData.spawn || o.userData.ballSpawn) return ['Spawn', null];
   if (/Light|Fog|PostProcess|SceneCapture/.test(a.cls)) return ['Lights & atmosphere', null];   // scene captures make reflections
   if (isVolume(a)) return ['Volumes', null];
@@ -2496,7 +2528,7 @@ function changeSet() {                            // [what build() applies, summ
   }
   const edits = [...dirty].filter(o => !removed.has(o) && !o.userData.ballSpawn).map(o => { const { motion, ...e } = changes(o); return { i: o.userData.actor.i, ...e }; });
   const duplicates = added.filter(o => !o.userData.checkpoint && !o.userData.shape && !o.userData.newLight && !o.userData.zone).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
-  const triggerZones = added.filter(o => o.userData.zone).map(o => { const { loc, rot, scale3d } = changes(o); return { loc, rot, scale3d }; });
+  const triggerZones = added.filter(o => o.userData.zone).map(o => { const { loc, rot, scale3d, gravity } = changes(o); return { loc, rot, scale3d, ...(o.userData.gravity !== undefined ? { gravity } : {}) }; });
   const lights = added.filter(o => o.userData.newLight).map(o => {
     const { loc, rot, light } = changes(o);
     return { kind: o.userData.light.kind, loc, rot, ...light };
@@ -2558,7 +2590,7 @@ function changeSet() {                            // [what build() applies, summ
     const { trigger: t, ...rest } = o.userData.motion, motion = { ...JSON.parse(JSON.stringify(rest)), trigger: trigger(t) };
     return { ...refOf(o), motion };
   }) : null;
-  const summary = [moved && `${moved} moved`, lit && `${lit} lights set`, duplicates.length && `${duplicates.length} added`, lights.length && `${lights.length} new lights`, triggerZones.length && `${triggerZones.length} trigger zones`, script.source !== scriptSaved && (script.source.trim() ? 'the script' : 'no script'),
+  const summary = [moved && `${moved} moved`, lit && `${lit} lights set`, duplicates.length && `${duplicates.length} added`, lights.length && `${lights.length} new lights`, triggerZones.length && `${triggerZones.length} zone${triggerZones.length === 1 ? '' : 's'}`, script.source !== scriptSaved && (script.source.trim() ? 'the script' : 'no script'),
                    shapes.length && `${shapes.length} shapes`, checkpoints.length > lava && `${checkpoints.length - lava} checkpoints`,
                    lava && `${lava} lava zones`,
                    terrain && `${terrain.tiles.length} terrain tiles`,

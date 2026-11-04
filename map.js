@@ -22,6 +22,7 @@ export function describe(pkg) {
     const c = meshComponent(pkg, a.i), p = c === null ? null : pkg.prop(pkg.exports[c], 'Materials');
     a.materials = p ? [...unpackFrom(`<${unpackFrom('<i', pkg.data, p[2])[0]}i`, pkg.data, p[2] + 4)] : [];
     a.light = lightOf(pkg, a.i);
+    if (a.cls === 'GravityVolume') a.gravity = pkg.get(pkg.exports[a.i], 'GravityZ', '<f')?.[0] ?? null;   // null: the class default
   }
   const panels = actors.filter(a => /^CheckpointPanel/.test(a.mesh || '')).map(a => ({ i: a.i, material: a.materials[0] || null }));
   const tint = pkg.tintable(), spawn = actors.find(a => a.cls.startsWith('PlayerStart'))?.i ?? null;
@@ -99,7 +100,9 @@ const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its che
 // `movers` ([{i | shape: k | duplicate: k, motion}], see motion.js) is every moving shape the map should have, given
 // when they change: a saved one, `shapes[k]` (written as a mover), or the copy `duplicates[k]`. A motion's trigger
 // is {i} (a saved checkpoint zone), {checkpoint: k} (`checkpoints[k]`) or null.
-// `triggerZones` ([{loc, rot, scale3d}]) are new trigger zones for scripts. `script` ({source, plan, names}, see script.js;
+// `triggerZones` ([{loc, rot, scale3d, gravity?}]) are new trigger zones for scripts; one with `gravity` is a gravity
+// zone (GravityVolume): inside, its GravityZ (a number; null for the class default) replaces the world's (-650 in
+// Rocket League). An edit or duplicate with `gravity` sets a saved gravity zone's or its copy's. `script` ({source, plan, names}, see script.js;
 // names {name: {i} | {shape | checkpoint | zone | light | duplicate: k}}) replaces the map's script; an empty
 // source takes it out. Shapes a script moves, shows or hides must be movers (InterpActors).
 // `conversions` ([{i, loc, rot, scale3d, scale?, material?}]) turn saved mesh actors into movers (toMover); an {i}
@@ -126,21 +129,32 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   }
   const markers = respawns.filter(r => r.marker);
   for (const r of respawns) if (!r.marker) pkg.set(pkg.exports[r.valueVar], 'ObjValue', '<i', r.zone + 1);
-  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || surfaces.length || ballSpawn || lighting || titles.length || triggerZones.length || conversions.length) {
+  const unsetGravity = new Map();                 // saved gravity zones at the class default: GravityZ gets added
+  for (const e of edits.filter(e => typeof e.gravity === 'number')) {
+    if (pkg.prop(pkg.exports[e.i], 'GravityZ')) pkg.set(pkg.exports[e.i], 'GravityZ', '<f', e.gravity);
+    else unsetGravity.set(e.i, e.gravity);
+  }
+  if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || surfaces.length || ballSpawn || lighting || titles.length || triggerZones.length || conversions.length || unsetGravity.size) {
     const add = new Additions(pkg);
     let lava = null;
     const surface = m => m === 'lava' ? (lava ??= lavaSurface(add)) : m;
+    const gravity = g => typeof g === 'number' ? { GravityZ: add.tag('GravityZ', 'FloatProperty', pack('<f', g)) } : {};
     for (const [v, value] of unsetModes) add.setProps(v, { IntValue: add.tag('IntValue', 'IntProperty', pack('<i', value)) });
+    for (const [i, g] of unsetGravity) if (!missing.has(i)) add.setProps(i, gravity(g));
     for (const { i, text } of titles) {
       add.setProps(zones.get(i).textNode, { DrawTextInfo: add.tag('DrawTextInfo', 'StructProperty', textInfo(add, text), 'KismetDrawTextInfo') });
     }
     if (fresh) add.clearRefs(mainSequence(pkg), 'SequenceObjects');
-    for (const [i, values] of missing) add.setValues(i, values);
+    for (const [i, values] of missing) add.setProps(i, { ...add.transformTags(values), ...gravity(unsetGravity.get(i)) });
     if (lighting) setLighting(add, lighting, new Set(edits.filter(e => e.light && ('color' in e.light || 'brightness' in e.light)).map(e => e.i)));
-    copies = duplicates.map(dup => add.duplicate(dup.src, [0, 0, 0], editValues(dup)));
+    copies = duplicates.map(dup => add.duplicate(dup.src, [0, 0, 0], editValues(dup), { [dup.src]: [gravity(dup.gravity), null] }));
     for (const i of removes) add.remove(i);
     if (triggerZones.length && !pkg.zoneTemplate()) throw new Error('this map has no trigger zone to copy for trigger zones');
-    zoneActors = triggerZones.map(z => add.duplicate(pkg.zoneTemplate().i, [0, 0, 0], editValues(z)));
+    zoneActors = triggerZones.map(z => {
+      const i = pkg.zoneTemplate().i, isGravity = z.gravity !== undefined;
+      return add.duplicate(i, [0, 0, 0], editValues(z), isGravity ? { [i]: [{ ...gravity(z.gravity), Tag: add.tag('Tag', 'NameProperty', add.fname('GravityVolume')) }, null] } : null,
+                           isGravity ? 'GravityVolume' : null);
+    });
     converted = new Map(conversions.map(c => [c.i, toMover(add, c.i, editValues(c), c.material == null ? null : surface(c.material))]));
     for (const r of markers) {
       const marker = add.duplicate(pkg.zoneTemplate().i, [0, 0, 0], editValues(r.marker));
@@ -238,6 +252,10 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     const a = byIndex.get(i);
     check(lightIs(i, lights[k], lights[k].kind) && a && a.loc.every((v, j) => Math.abs(v - lights[k].loc[j]) < 0.01), `new light ${k + 1}`);
   });
+  const gravityIs = (i, g) => byIndex.get(i)?.cls === 'GravityVolume' && (typeof g !== 'number' || saved.get(saved.exports[i], 'GravityZ', '<f')?.[0] === Math.fround(g));
+  triggerZones.forEach((z, k) => check(z.gravity === undefined ? byIndex.get(zoneActors[k])?.cls === 'TriggerVolume' : gravityIs(zoneActors[k], z.gravity), `trigger zone ${k + 1}`));
+  for (const e of edits) if (typeof e.gravity === 'number') check(gravityIs(e.i, e.gravity), `${saved.exports[e.i].name} gravity`);
+  duplicates.forEach((d, k) => { if (typeof d.gravity === 'number') check(gravityIs(copies[k], d.gravity), `copy ${k + 1} gravity`); });
   if (notes) check(JSON.stringify(editorDataOf(saved)) === JSON.stringify(notes), 'editor notes');
   for (const [, i] of converted) check(byIndex.get(i)?.cls === 'InterpActor', 'shape made a mover');
   if (script) {
