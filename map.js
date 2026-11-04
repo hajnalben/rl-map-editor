@@ -2,7 +2,7 @@
 import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
 import { addCheckpoints, ballSpawnMarker, checkpointZones, editorDataOf, hudOf, lavaZones, mainSequence, moversOf, nodeProps, setEditorData, setHud, setMovers, spawnBall, textInfo } from './kismet.js';
-import { CELL, SINK, TILE, addShapes, meshComponent, moverCollision, read, saveTerrain, terrain, toMover, write } from './mesh.js';
+import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain, toMover } from './mesh.js';
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
 import { compact } from './compact.js';
@@ -224,14 +224,6 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     setScript(add, script.source.trim() ? { source: script.source, plan, names: scriptNames, homes } : null);
     out = add.save();
   }
-  const exact = p => new Set(p.levelActors().filter(a => a.cls === 'InterpActor' && a.meshIndex != null
-    && p.get(p.exports[a.meshIndex], 'UseSimpleRigidBodyCollision', '<B')?.[0] === 0).map(a => a.meshIndex));
-  const unsolid = exact(new Package(out));       // moving shapes the editor made, without the collision they need
-  if (unsolid.size) {
-    const add = new Additions(new Package(out));
-    for (const i of unsolid) moverCollision(add, i);
-    out = add.save();
-  }
   const hudWanted = hud ?? hudOf(new Package(out));
   if (hudWanted) {                                // after everything else, so it sees the final checkpoints and lava
     const p = new Package(out), add = new Additions(p);
@@ -265,11 +257,6 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   for (const e of edits) if (typeof e.gravity === 'number') check(gravityIs(e.i, e.gravity), `${saved.exports[e.i].name} gravity`);
   duplicates.forEach((d, k) => { if (typeof d.gravity === 'number') check(gravityIs(copies[k], d.gravity), `copy ${k + 1} gravity`); });
   if (notes) check(JSON.stringify(editorDataOf(saved)) === JSON.stringify(notes), 'editor notes');
-  check(exact(saved).size === 0 && [...unsolid].every(i => saved.prop(saved.exports[saved.get(saved.exports[i], 'BodySetup', '<i')[0] - 1], 'AggGeom')), 'moving shapes collide');
-  for (const i of unsolid) {                      // their meshes grew: the render data's file offset must follow
-    const e = saved.exports[i], [, rawAt] = write(read(saved, i));
-    check(unpackFrom('<i', saved.data, e.off + rawAt + 12)[0] === e.off + rawAt + 16, `${e.name} render data offset`);
-  }
   for (const [, i] of converted) check(byIndex.get(i)?.cls === 'InterpActor', 'shape made a mover');
   if (script) {
     const got = scriptOf(saved);
