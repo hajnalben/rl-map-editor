@@ -209,7 +209,7 @@ export function blankMap() {
   set(floorComp, component(w, [P.obj(w, 'StaticMesh', floorMesh), P.int(w, 'VertexPositionVersionNumber', 1), P.objs(w, 'Materials', [tints.Sand]),
     P.obj(w, 'ReplacementPrimitive', 0), P.bool(w, 'BlockRigidBody', true), P.bool(w, 'bDisableAllRigidBody', false), lit(['bInitialized', 'Static']),
     P.struct(w, 'RBCollideWithChannels', 'RBCollisionChannelContainer', ['Default', 'Vehicle', 'Ball'].map(n => P.bool(w, n, true))),
-    P.obj(w, 'PhysMaterialOverride', sticky)], pack('<i', 0)));
+    P.obj(w, 'PhysMaterialOverride', sticky), P.bool(w, 'bAcceptsDynamicDecals', true)], pack('<i', 0)));
   meshActor(dome, domeComp, engine('StaticMeshActor'));
   set(domeComp, component(w, [P.obj(w, 'StaticMesh', skyMesh), P.int(w, 'VertexPositionVersionNumber', 1), P.obj(w, 'ReplacementPrimitive', 0),
     ...['CastShadow', 'bAcceptsLights', 'CollideActors', 'BlockActors', 'BlockRigidBody', 'BlockZeroExtent', 'BlockNonZeroExtent'].map(n => P.bool(w, n, false))],

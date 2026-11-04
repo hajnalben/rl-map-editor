@@ -300,7 +300,7 @@ function newMeshSetup(add) {
 // surface physics (sticky walls). Returns the new actor indices.
 export function addShapes(add, shapes, geometry, material = null, { name = 'Shape', solid = true } = {}) {
   const { actor, comp, template, meshExport } = newMeshSetup(add), meshes = new Map();
-  const ghost = solid ? {} : Object.fromEntries(['CollideActors', 'BlockActors', 'BlockRigidBody', 'BlockZeroExtent', 'BlockNonZeroExtent']
+  const ghost = solid ? { bAcceptsDynamicDecals: ballShadow(add) } : Object.fromEntries(['CollideActors', 'BlockActors', 'BlockRigidBody', 'BlockZeroExtent', 'BlockNonZeroExtent', 'bAcceptsDynamicDecals']
     .map(n => [n, add.tag(n, 'BoolProperty', new Uint8Array(1))]));
   const phys = add.pkg.get(add.pkg.exports[comp], 'PhysMaterialOverride', '<i')?.[0] ?? 0;
   const mover = (mesh, own, values) => moverActor(add, mesh, own === null ? [] : [Math.trunc(own)], values, phys);
@@ -318,6 +318,9 @@ export function addShapes(add, shapes, geometry, material = null, { name = 'Shap
   });
 }
 
+// The ball's shadow circle is a dynamic decal, which a placed mesh only takes when it says so (off by default)
+const ballShadow = add => add.tag('bAcceptsDynamicDecals', 'BoolProperty', Uint8Array.of(1));
+
 function moverActor(add, mesh, materials, values, phys) {
   const lit = add.tag('LightingChannels', 'StructProperty', concat(...['bInitialized', 'Dynamic'].map(n => add.tag(n, 'BoolProperty', Uint8Array.of(1))), add.fname('None')),
                       'LightingChannelContainer');
@@ -325,7 +328,7 @@ function moverActor(add, mesh, materials, values, phys) {
     add.tag('StaticMeshComponent', 'ObjectProperty', pack('<i', component)), ...Object.values(add.transformTags(values)),
     add.tag('Tag', 'NameProperty', add.fname('InterpActor')), add.tag('CollisionComponent', 'ObjectProperty', pack('<i', component))],
     [add.tag('StaticMesh', 'ObjectProperty', pack('<i', mesh)), ...(materials.length ? [add.tag('Materials', 'ArrayProperty', pack(`<i${materials.length}i`, materials.length, ...materials))] : []),
-     add.tag('ReplacementPrimitive', 'ObjectProperty', pack('<i', 0)), lit, ...(phys ? [add.tag('PhysMaterialOverride', 'ObjectProperty', pack('<i', phys))] : [])],
+     add.tag('ReplacementPrimitive', 'ObjectProperty', pack('<i', 0)), lit, ballShadow(add), ...(phys ? [add.tag('PhysMaterialOverride', 'ObjectProperty', pack('<i', phys))] : [])],
     pack('<i', 0));
 }
 
@@ -358,7 +361,7 @@ export function saveTerrain(add, base, material, tiles) {
     }
     const [blob, rawAt] = write(geometryMesh(template, ...tileGeometry(heights, tx, ty)));
     const mesh = add.addObject(meshExport.cls, meshExport.outer, 'Terrain', blob, meshExport.flags, [rawAt]) + 1;
-    const tags = { StaticMesh: add.tag('StaticMesh', 'ObjectProperty', pack('<i', mesh)) };
+    const tags = { StaticMesh: add.tag('StaticMesh', 'ObjectProperty', pack('<i', mesh)), bAcceptsDynamicDecals: ballShadow(add) };
     if (placed.has(key)) {
       add.setProps(meshComponent(pkg, placed.get(key)), tags);
       continue;
