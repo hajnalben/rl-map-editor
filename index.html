@@ -773,14 +773,27 @@ for (const [id, change] of [['mAddSpot', m => m.points.push([...m.points.at(-1)]
 // opened map is shown, not run, until you apply it: it is code from that map. The preview plays the plan's reactions
 // in the view when you set off its events; launches and teleports only say so.
 let script = { source: '', plan: null, error: null }, scriptSaved = '';
+// Scripts you ran here are trusted: this browser keeps their hashes, and runs them again when a map brings one back
+const TRUSTED = 'rlme.trustedScripts';
+const hashOf = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(b => b.toString(16).padStart(2, '0')).join('');
+const trustedHashes = () => { try { return JSON.parse(localStorage.getItem(TRUSTED) || '[]'); } catch { return []; } };
+async function trust(text) {
+  try { const h = await hashOf(text); localStorage.setItem(TRUSTED, JSON.stringify([...trustedHashes().filter(x => x !== h), h].slice(-500))); } catch { /* storage blocked */ }
+}
+async function runIfTrusted() {
+  const text = script.source;
+  if (!text.trim() || script.plan) return;
+  try { if (trustedHashes().includes(await hashOf(text)) && script.source === text && !script.plan) runPlan(); } catch { /* no crypto: it waits for Apply */ }
+}
 const ownName = o => o.userData.aiId && !/^(shape|checkpoint|lava|light|zone|map)#\d+$/.test(o.userData.aiId) ? o.userData.aiId : null;
+const ownId = o => o.userData.aiId && !/^map#\d+$/.test(o.userData.aiId) ? o.userData.aiId : null;   // any id but the export-based one, which changes
 const byName = name => objects.find(o => !o.userData.deleted && idOf(o) === name);
 function scriptKind(o) {                          // what a script may do with `o`
   const u = o.userData;
   return u.lava ? 'lava' : u.checkpoint ? 'checkpoint' : u.zone ? 'zone' : u.light ? 'light' : canMove(o) ? 'shape' : u.actor.bounds && !isVolume(u.actor) ? 'mesh' : 'object';
 }
 function runPlan() {
-  try { script.plan = runScript(script.source, name => { const o = byName(name); return o ? scriptKind(o) : null; }); script.error = null; }
+  try { script.plan = runScript(script.source, name => { const o = byName(name); return o ? scriptKind(o) : null; }); script.error = null; trust(script.source); }
   catch (err) { script.plan = null; script.error = err.message; }
   renderScript();
   resetPreview();
@@ -791,17 +804,21 @@ function scriptMoves() {                          // shapes the plan moves, show
   for (const [name, need] of script.plan ? planNames(script.plan) : []) if (need === 'moves' && byName(name)) out.add(byName(name));
   return out;
 }
+function refOf(o) {                               // how build() finds `o`: a saved object's export, or its place among the new ones
+  if (!o.userData.copy) return { i: o.userData.actor.i };
+  const kinds = [['shape', x => x.userData.shape], ['checkpoint', x => x.userData.checkpoint], ['zone', x => x.userData.zone], ['light', x => x.userData.newLight],
+                 ['duplicate', x => !x.userData.checkpoint && !x.userData.shape && !x.userData.newLight && !x.userData.zone]];
+  const [kind, test] = kinds.find(([, t]) => t(o));
+  return { [kind]: added.filter(test).indexOf(o) };
+}
 function scriptChange() {                         // the script for build(), or null to leave the map's as it is
   if (script.plan && script.source === scriptSaved && !dirty.size && !removed.size && !added.length) return null;   // unchanged, and so is what it names
   if (!script.plan) return !script.source.trim() && scriptSaved.trim() ? { source: '', plan: { clips: [], flags: [], counters: [], rules: [] }, names: {} } : null;
-  const list = test => added.filter(test), names = {};
-  const kinds = [['shape', o => o.userData.shape], ['checkpoint', o => o.userData.checkpoint], ['zone', o => o.userData.zone], ['light', o => o.userData.newLight],
-                 ['duplicate', o => !o.userData.checkpoint && !o.userData.shape && !o.userData.newLight && !o.userData.zone]];
+  const names = {};
   for (const name of planNames(script.plan).keys()) {
     const o = byName(name);
     if (!o) throw new Error(`Script: nothing is named "${name}" any more; apply the script again`);
-    const [kind, test] = o.userData.copy ? kinds.find(([, t]) => t(o)) : [];
-    names[name] = kind ? { [kind]: list(test).indexOf(o) } : { i: o.userData.actor.i };
+    names[name] = refOf(o);
   }
   return { source: script.source, plan: script.plan, names };
 }
@@ -1237,6 +1254,16 @@ function loadMap(name, bytes, parsed, data) {
   }
   script = { source: data.script?.source ?? '', plan: null, error: null };
   scriptSaved = script.source;
+  for (const [i, note] of Object.entries(data.editor?.objects ?? {})) {   // the editor's notes from the last save
+    const o = objects.find(x => x.userData.actor.i === +i);
+    if (!o) continue;
+    if (note.name) o.userData.aiId = note.name;
+    if (note.shape) Object.assign(o.userData, { shape: note.shape, surface: o.userData.original.surface });
+    if (note.zone) { o.userData.zone = true; o.material = lookOf(o); }
+    if (o.userData.actor.cls === 'InterpActor' && note.shape) o.userData.mover = true;
+    o.userData.original.motion = motionKey(o);
+  }
+  aiCount = Math.max(0, ...objects.map(o => +(/^\w+#(\d+)$/.exec(o.userData.aiId ?? '')?.[1] ?? 0)));   // new ids go on from the saved ones
   for (const [name, i] of Object.entries(data.script?.names ?? {})) {   // the names the script uses: trigger zones and moving shapes among them
     const o = objects.find(x => x.userData.actor.i === i);
     if (!o) continue;
@@ -1246,6 +1273,7 @@ function loadMap(name, bytes, parsed, data) {
   }
   renderScript();
   resetPreview();
+  runIfTrusted();
   moversSaved = data.movers.length;
   for (const { i, motion } of data.movers) {      // moving shapes: their motion, its trigger the checkpoint object
     const o = objects.find(x => x.userData.actor.i === i);
@@ -1429,7 +1457,7 @@ function showSelection() {
         ? `Where the ball starts, and comes back to on resets until you reach a checkpoint${selected.userData.onRoof ? ': on the spawn car\'s roof, following the car' : ''}.`
         : 'Where the game puts the ball now.'} Drag it to give the ball a spawn of its own: let go over the car to start on its roof, anywhere else to rest on the ground.</div>`
     : selected.userData.shape
-    ? `<div class="kv"><b>${a.name}</b> <span class="muted">(${selected.userData.shape.startsWith('std:') ? 'built-in shape' : 'from ' + library.get(selected.userData.shape.slice(4))?.source})</span></div><div class="kv muted">A new mesh; the car collides with its shape.</div>`
+    ? `<div class="kv"><b>${a.name}</b> <span class="muted">(${selected.userData.shape.startsWith('std:') ? 'built-in shape' : 'from ' + (library.get(selected.userData.shape.slice(4))?.source ?? 'your library')})</span></div><div class="kv muted">${isNew ? 'A new mesh' : 'A shape added in the editor'}; the car collides with its shape.</div>`
     : selected.userData.lava
     ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} lava</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
         ? 'When the ball touches it, the car goes back to the last checkpoint with a fresh ball (in front of the car after a car checkpoint).'
@@ -2348,7 +2376,7 @@ function changes(obj) {                           // transform fields that diffe
   const want = obj.userData.panel, had = obj.userData.savedPanel;
   if (o && obj.userData.checkpoint && (!!want !== !!had || (want && had && want.material !== had.material))) e.panel = true;
   if (o && obj.userData.surface !== undefined && obj.userData.surface !== o.surface) e.surface = obj.userData.surface;
-  if (o && obj.userData.mover && motionKey(obj) !== o.motion) e.motion = true;   // the movers are written as a whole (changeSet)
+  if (o && (obj.userData.mover || obj.userData.shape) && motionKey(obj) !== o.motion) e.motion = true;   // the movers are written as a whole (changeSet)
   const l = obj.userData.light;
   if (l) {
     const set = LIGHT_FIELDS.filter(f => f in l && (!o?.light || JSON.stringify(l[f]) !== JSON.stringify(o.light[f])));
@@ -2514,8 +2542,7 @@ function changeSet() {                            // [what build() applies, summ
   const trigger = t => !t || t.userData.deleted ? null : t.userData.copy ? { checkpoint: newOnes.indexOf(t) } : { i: t.userData.actor.i };
   const movers = moving.some(o => o.userData.copy || turned(o)) || moving.filter(o => !o.userData.copy).length !== moversSaved ? moving.map(o => {
     const { trigger: t, ...rest } = o.userData.motion, motion = { ...JSON.parse(JSON.stringify(rest)), trigger: trigger(t) };
-    return o.userData.shape ? { shape: added.filter(x => x.userData.shape).indexOf(o), motion }
-      : o.userData.copy ? { duplicate: added.filter(x => !x.userData.checkpoint && !x.userData.shape && !x.userData.newLight && !x.userData.zone).indexOf(o), motion } : { i: o.userData.actor.i, motion };
+    return { ...refOf(o), motion };
   }) : null;
   const summary = [moved && `${moved} moved`, lit && `${lit} lights set`, duplicates.length && `${duplicates.length} added`, lights.length && `${lights.length} new lights`, triggerZones.length && `${triggerZones.length} trigger zones`, script.source !== scriptSaved && (script.source.trim() ? 'the script' : 'no script'),
                    shapes.length && `${shapes.length} shapes`, checkpoints.length > lava && `${checkpoints.length - lava} checkpoints`,
@@ -2525,7 +2552,13 @@ function changeSet() {                            // [what build() applies, summ
                    panels.length && `${panels.length} checkpoint panels`, ballSpawn && 'a ball spawn',
                    lighting !== lightingSaved && `${LIGHTING[lighting]?.name.toLowerCase() ?? 'the map\'s own'} lighting`, movers && `${movers.length} moving shapes`,
                    hudChanged() && (hud.timer || hud.deaths ? `${[hud.timer && 'timer', hud.deaths && 'death counter'].filter(Boolean).join(' and ')} on screen` : 'nothing on screen')].filter(Boolean).join(', ') || 'no changes';
-  return [{ edits, duplicates, lights, movers, triggerZones, script: scriptChange(), checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
+  // saved shapes that now move: swapped for movers of themselves
+  const conversions = objects.filter(o => !o.userData.copy && !o.userData.deleted && o.userData.shape && o.userData.actor.cls !== 'InterpActor' && (o.userData.motion || scriptMoves().has(o)))
+    .map(o => { readBack(o); const a = o.userData.actor; return { i: a.i, loc: [...a.loc], rot: [...a.rot], scale3d: [...a.scale3d], scale: a.scale, material: o.userData.surface ?? null }; });
+  // the editor's notes: names, and which objects are shapes or trigger zones
+  const meta = { objects: objects.filter(o => !o.userData.deleted && (ownId(o) || o.userData.shape || o.userData.zone))
+    .map(o => ({ ref: refOf(o), ...(ownId(o) ? { name: ownId(o) } : {}), ...(o.userData.shape ? { shape: o.userData.shape } : {}), ...(o.userData.zone ? { zone: true } : {}) })) };
+  return [{ edits, duplicates, lights, movers, triggerZones, script: scriptChange(), conversions, meta, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
             lighting: lighting !== lightingSaved ? lighting : null, hud: hudChanged() ? hud : null },
           fresh ? `new map, ${summary}` : summary];
 }

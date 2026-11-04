@@ -64,7 +64,7 @@ ball settle onto shapes added in the same step.
 
 `at` is where the bottom centre of the shape's box goes. Rotation turns the shape about that point. `size` is the
 box size; leave it out for the natural size. Only `shape` and `at` are needed. Ids are up to 40 letters, digits,
-`-` or `_`; leave the id out and the editor gives one.
+`-` or `_`; leave the id out and the editor gives one. The map keeps ids, so they are the same when it is opened again.
 
 | shape | natural size (x × y × z) | notes |
 |---|---|---|

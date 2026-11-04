@@ -303,14 +303,7 @@ export function addShapes(add, shapes, geometry, material = null, { name = 'Shap
   const ghost = solid ? {} : Object.fromEntries(['CollideActors', 'BlockActors', 'BlockRigidBody', 'BlockZeroExtent', 'BlockNonZeroExtent']
     .map(n => [n, add.tag(n, 'BoolProperty', new Uint8Array(1))]));
   const phys = add.pkg.get(add.pkg.exports[comp], 'PhysMaterialOverride', '<i')?.[0] ?? 0;
-  const lit = add.tag('LightingChannels', 'StructProperty', concat(...['bInitialized', 'Dynamic'].map(n => add.tag(n, 'BoolProperty', Uint8Array.of(1))), add.fname('None')),
-                      'LightingChannelContainer');
-  const mover = (mesh, own, values) => add.addActor('InterpActor', 'StaticMeshComponent', 'StaticMeshComponent0', component => [
-    add.tag('StaticMeshComponent', 'ObjectProperty', pack('<i', component)), ...Object.values(add.transformTags(values)),
-    add.tag('Tag', 'NameProperty', add.fname('InterpActor')), add.tag('CollisionComponent', 'ObjectProperty', pack('<i', component))],
-    [add.tag('StaticMesh', 'ObjectProperty', pack('<i', mesh)), ...(own !== null ? [add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(own)))] : []),
-     add.tag('ReplacementPrimitive', 'ObjectProperty', pack('<i', 0)), lit, ...(phys ? [add.tag('PhysMaterialOverride', 'ObjectProperty', pack('<i', phys))] : [])],
-    pack('<i', 0));
+  const mover = (mesh, own, values) => moverActor(add, mesh, own === null ? [] : [Math.trunc(own)], values, phys);
   return shapes.map(({ key, values, material: own = material, mover: moves = false }) => {
     if (!meshes.has(key)) {
       if (!geometry[key]) throw new Error(`no geometry for shape ${key}`);
@@ -323,6 +316,27 @@ export function addShapes(add, shapes, geometry, material = null, { name = 'Shap
     // no baked lighting (LODData): the engine lights the new mesh dynamically
     return add.duplicate(actor, [0, 0, 0], values, { [comp]: [tags, pack('<i', 0)] });
   });
+}
+
+function moverActor(add, mesh, materials, values, phys) {
+  const lit = add.tag('LightingChannels', 'StructProperty', concat(...['bInitialized', 'Dynamic'].map(n => add.tag(n, 'BoolProperty', Uint8Array.of(1))), add.fname('None')),
+                      'LightingChannelContainer');
+  return add.addActor('InterpActor', 'StaticMeshComponent', 'StaticMeshComponent0', component => [
+    add.tag('StaticMeshComponent', 'ObjectProperty', pack('<i', component)), ...Object.values(add.transformTags(values)),
+    add.tag('Tag', 'NameProperty', add.fname('InterpActor')), add.tag('CollisionComponent', 'ObjectProperty', pack('<i', component))],
+    [add.tag('StaticMesh', 'ObjectProperty', pack('<i', mesh)), ...(materials.length ? [add.tag('Materials', 'ArrayProperty', pack(`<i${materials.length}i`, materials.length, ...materials))] : []),
+     add.tag('ReplacementPrimitive', 'ObjectProperty', pack('<i', 0)), lit, ...(phys ? [add.tag('PhysMaterialOverride', 'ObjectProperty', pack('<i', phys))] : [])],
+    pack('<i', 0));
+}
+
+// The saved mesh actor `i` made a mover: an InterpActor with its mesh, surfaces (or `material`) and surface physics,
+// placed by `values`, in place of the actor, which leaves the level. Returns the new actor's export index.
+export function toMover(add, i, values, material = null) {
+  const pkg = add.pkg, e = pkg.exports[meshComponent(pkg, i)], p = pkg.prop(e, 'Materials');
+  const own = p ? [...unpackFrom(`<${unpackFrom('<i', pkg.data, p[2])[0]}i`, pkg.data, p[2] + 4)] : [];
+  const at = moverActor(add, pkg.get(e, 'StaticMesh', '<i')[0], material === null ? own : [Math.trunc(material)], values, pkg.get(e, 'PhysMaterialOverride', '<i')?.[0] ?? 0);
+  add.remove(i);
+  return at;
 }
 
 // Write sculpted terrain tiles ([{tx, ty, heights}], heights with the one-vertex border tileGeometry takes): new

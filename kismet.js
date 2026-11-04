@@ -794,3 +794,21 @@ export function setMovers(add, movers) {
   });
   add.appendRefs(seq, 'SequenceObjects', nodes.map(n => n + 1));
 }
+
+// The editor's own notes on a map (each object's name, which are shapes or trigger zones): JSON in the comment of a
+// level-loaded event named "Editor" that leads nowhere, so the game ignores it. Written anew on every save.
+const EDITOR = 'Editor';
+const editorNodes = pkg => [...liveNodes(pkg)].filter(k => pkg.classOf(pkg.exports[k]) === 'SeqEvent_LevelLoaded' && nodeProps(pkg, pkg.exports[k]).ObjName === EDITOR);
+export function editorDataOf(pkg) {
+  const k = editorNodes(pkg)[0];
+  try { return k === undefined ? null : JSON.parse(nodeProps(pkg, pkg.exports[k]).ObjComment); } catch { return null; }
+}
+export function setEditorData(add, data) {
+  const pkg = add.pkg, seq = mainSequence(pkg), old = new Set(editorNodes(pkg));
+  if (old.size) add.appendRefs(seq, 'SequenceObjects', [], r => !old.has(r - 1));
+  const { parent, node } = writer(add), [x, y] = [29000, 69000];
+  const i = node('SeqEvent_LevelLoaded', [['MaxWidth', I, 136], ['ObjComment', S, JSON.stringify(data)], ['InputLinks', A, []],
+    ['OutputLinks', A, [outputLink('Loaded and Visible', [], y + 14, 14), outputLink('Beginning of Level', [], y + 35, 35), outputLink('Level Reset', [], y + 56, 56)]],
+    ['VariableLinks', A, []], ...layout(3, parent, x, y, 98, 85, EDITOR)]);
+  add.appendRefs(seq, 'SequenceObjects', [i + 1]);
+}
