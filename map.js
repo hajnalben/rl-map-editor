@@ -2,7 +2,7 @@
 import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
 import { addCheckpoints, ballSpawnMarker, checkpointZones, editorDataOf, hudOf, keysOf, lavaZones, mainSequence, moversOf, nodeProps, setEditorData, setHud, setKeys, setMovers, spawnBall, textInfo } from './kismet.js';
-import { CELL, SINK, TILE, addShapes, convexCache, meshComponent, saveTerrain, setMoverBoxes, terrain, toMover } from './mesh.js';
+import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain, toMover } from './mesh.js';
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
 import { compact } from './compact.js';
@@ -230,16 +230,6 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     setScript(add, script.source.trim() ? { source: script.source, plan, names: scriptNames, homes } : null);
     out = add.save();
   }
-  // the moving shapes the editor made (their meshes name UseSimpleRigidBodyCollision; UDK's never do) collide as boxes
-  const editorMovers = p => p.levelActors().filter(a => a.cls === 'InterpActor' && a.meshIndex != null && p.prop(p.exports[a.meshIndex], 'UseSimpleRigidBodyCollision'));
-  {
-    const p = new Package(out), list = editorMovers(p);
-    if (list.length) {
-      const add = new Additions(p);
-      setMoverBoxes(add, list);
-      out = add.save();
-    }
-  }
   {                                               // the quick-chat keys follow the checkpoints as they are now
     const p = new Package(out);
     if (checkpointZones(p).length || keysOf(p)) {
@@ -282,13 +272,6 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   duplicates.forEach((d, k) => { if (typeof d.gravity === 'number') check(gravityIs(copies[k], d.gravity), `copy ${k + 1} gravity`); });
   if (notes) check(JSON.stringify(editorDataOf(saved)) === JSON.stringify(notes), 'editor notes');
   check(!saved.imports.some(im => im.cls === 'Class' && /^Seq\w+_TA$/.test(im.name) && saved.ref(im.outer)?.toLowerCase() !== 'tagame'), 'Kismet classes from TAGame');
-  const cooked = editorMovers(saved).length && convexCache(saved);
-  for (const a of editorMovers(saved)) {
-    const m = saved.exports[a.meshIndex], body = saved.get(m, 'BodySetup', '<i')?.[0], f = Math.fround;
-    const scale = [0, 1, 2].map(k => f(f(a.scale3d[k] * a.scale) * a.inner[k]));
-    check(saved.get(m, 'UseSimpleRigidBodyCollision', '<B')[0] === 1 && body > 0 && saved.prop(saved.exports[body - 1], 'AggGeom')
-          && cooked?.entries.some(([r, ...s]) => r === a.meshIndex + 1 && scale.every((v, k) => Math.abs(v - s[k]) < 1e-4)), `${a.name} box collision`);
-  }
   check(keysOf(saved) === (checkpointZones(saved).length > 0 && actors.some(a => a.cls.startsWith('PlayerStart'))), 'checkpoint keys');
   for (const [, i] of converted) check(byIndex.get(i)?.cls === 'InterpActor', 'shape made a mover');
   if (script) {
