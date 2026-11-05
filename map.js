@@ -1,8 +1,8 @@
 // What the editor needs from a map: what's in it, the shapes to draw, and the edited copy.
 import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
-import { addCheckpoints, ballSpawnMarker, checkpointZones, editorDataOf, hudOf, keysOf, lavaZones, mainSequence, moversOf, nodeProps, setEditorData, setHud, setKeys, setMovers, spawnBall, textInfo } from './kismet.js';
-import { CELL, SINK, TILE, addShapes, meshComponent, saveTerrain, terrain, toMover } from './mesh.js';
+import { addCheckpoints, ballSpawnMarker, checkpointZones, editorDataOf, hudOf, keysOf, lavaZones, mainSequence, moversOf, nodeProps, setEditorData, setHud, setKeys, setMovers, setSolids, solidsOf, spawnBall, textInfo } from './kismet.js';
+import { CELL, SINK, TILE, addShapes, convexCache, meshComponent, read as readMesh, saveTerrain, solidStandIns, terrain, toMover } from './mesh.js';
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
 import { compact } from './compact.js';
@@ -12,8 +12,9 @@ import { scriptOf, setScript } from './rules.js';
 
 export function describe(pkg) {
   const all = pkg.levelActors(), ground = terrain(pkg, all);
-  const tileActors = new Set([...ground.tiles.values()].map(([i]) => i));
-  const actors = all.filter(a => !tileActors.has(a.i));      // the editor draws the terrain itself
+  const tileActors = new Set([...ground.tiles.values()].map(([i]) => i)), standIns = new Set(solidsOf(pkg).map(s => s.proxy));
+  // the editor draws the terrain itself, and moving shapes' collision stand-ins are rebuilt on every save
+  const actors = all.filter(a => !tileActors.has(a.i) && !standIns.has(a.i));
   const tiles = [...ground.tiles].map(([key, [, heights]]) => {
     const [tx, ty] = key.split(',').map(Number);
     return { tx, ty, heights };
@@ -86,6 +87,13 @@ export function shapes(pkg, meshIndices) {
 
 const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its check: ${what}`); };
 
+// the moving shapes the editor made: the ones a motion or the script moves (Leth's InterpActors are markers)
+function editorMovers(pkg) {
+  const ids = new Set([...moversOf(pkg).map(m => m.i), ...Object.values(scriptOf(pkg)?.names ?? {})]);
+  return pkg.levelActors().filter(a => ids.has(a.i) && a.cls === 'InterpActor' && a.meshIndex !== null);
+}
+const sameSize = (a, b) => [0, 1, 2].every(k => Math.abs(Math.fround(a.scale3d[k] * a.scale) - Math.fround(b.scale3d[k] * b.scale)) < 1e-4);
+
 // The original map bytes (left untouched) with the editor's changes applied, re-read and checked. `fresh` empties
 // the map's own Kismet scripts (a new map started from this one). `shapes` are new meshes ([{key, loc, rot, scale3d, material?}])
 // built from `shapeGeometry` ({key: geometryMesh arguments}) and drawn with `shapeMaterial`. `respawns` re-point saved
@@ -99,7 +107,8 @@ const check = (ok, what) => { if (!ok) throw new Error(`saved map failed its che
 // ({setting: value}) sets those on a saved light or its copy. A sun or sky light set by hand leaves the mood.
 // `movers` ([{i | shape: k | duplicate: k, motion}], see motion.js) is every moving shape the map should have, given
 // when they change: a saved one, `shapes[k]` (written as a mover), or the copy `duplicates[k]`. A motion's trigger
-// is {i} (a saved checkpoint zone), {checkpoint: k} (`checkpoints[k]`) or null.
+// is {i} (a saved checkpoint zone), {checkpoint: k} (`checkpoints[k]`) or null. Moving shapes (motions' and the
+// script's) collide as their box through a hidden KActor that follows them (mesh.js solidStandIns).
 // `triggerZones` ([{loc, rot, scale3d, gravity?}]) are new trigger zones for scripts; one with `gravity` is a gravity
 // zone (GravityVolume): inside, its GravityZ (a number; null for the class default) replaces the world's (-650 in
 // Rocket League). An edit or duplicate with `gravity` sets a saved gravity zone's or its copy's. `script` ({source, plan, names}, see script.js;
@@ -230,6 +239,17 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     setScript(add, script.source.trim() ? { source: script.source, plan, names: scriptNames, homes } : null);
     out = add.save();
   }
+  let standInsAdded = 0;
+  {                                               // moving shapes collide through hidden KActors following them
+    const p = new Package(out), want = editorMovers(p), old = solidsOf(p), placed = new Map(p.levelActors().map(a => [a.i, a]));
+    const fits = old.length === want.length && want.every(a => old.some(s => s.mover === a.i && placed.has(s.proxy) && sameSize(placed.get(s.proxy), a)));
+    if (!fits) {
+      const add = new Additions(p);
+      setSolids(add, solidStandIns(add, want, old));
+      standInsAdded = want.length - old.length;
+      out = add.save();
+    }
+  }
   {                                               // the quick-chat keys follow the checkpoints as they are now
     const p = new Package(out);
     if (checkpointZones(p).length || keysOf(p)) {
@@ -274,6 +294,12 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   check(!saved.imports.some(im => im.cls === 'Class' && /^Seq\w+_TA$/.test(im.name) && saved.ref(im.outer)?.toLowerCase() !== 'tagame'), 'Kismet classes from TAGame');
   check(keysOf(saved) === (checkpointZones(saved).length > 0 && actors.some(a => a.cls.startsWith('PlayerStart'))), 'checkpoint keys');
   for (const [, i] of converted) check(byIndex.get(i)?.cls === 'InterpActor', 'shape made a mover');
+  const solids = new Map(solidsOf(saved).map(s => [s.mover, s.proxy])), cooked = solids.size ? convexCache(saved) : null;
+  for (const a of editorMovers(saved)) {
+    const k = byIndex.get(solids.get(a.i)), body = k?.meshIndex != null && saved.get(saved.exports[k.meshIndex], 'BodySetup', '<i')?.[0];
+    check(k?.cls === 'KActor' && sameSize(k, a) && body > 0 && readMesh(saved, k.meshIndex).bodySetup === body && cooked?.entries.some(([r, ...s]) => r === k.meshIndex + 1 && sameSize(k, { scale3d: s.slice(0, 3), scale: 1 })),
+          `${a.name} collision stand-in`);
+  }
   if (script) {
     const got = scriptOf(saved);
     check(script.source.trim() ? got?.source === script.source && got.nodes.length > 0 && JSON.stringify(got.names) === JSON.stringify(scriptNames) : got === null, 'script');
@@ -292,7 +318,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     check(m && m.loc.every((v, k) => Math.abs(v - ballSpawn.loc[k]) < 0.01), 'ball spawn');
   }
   check(saved.levelList().length === before + duplicates.length + checkpoints.length + markersAdded + shapes.length + panels.length + tilesAdded + lights.length + triggerZones.length
-        - removes.length - tilesRemoved, 'level actor count');
+        + standInsAdded - removes.length - tilesRemoved, 'level actor count');
   const savedZones = new Map(checkpointZones(saved).map(z => [z.i, z])), savedLava = new Map(lavaZones(saved).map(z => [z.i, z]));
   triggers.forEach((t, k) => {
     const c = checkpoints[k], z = (c.lava ? savedLava : savedZones).get(t);

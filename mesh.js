@@ -1,5 +1,8 @@
 // StaticMesh native data for UE3 v868 maps: read, write, collision tree, and sculpted terrain tiles.
 import { concat, pack, pyDist, pyRound, pySum, unpackFrom } from './bytes.js';
+import { cookBox } from './physx.js';
+import { convexElemBytes, convexHull } from './shapes.js';
+import { editValues } from './ue3.js';
 
 const LEAF_TRIS = 5;                              // most triangles per kDOP leaf
 const RAW_TRI = 372;                              // FStaticMeshTriangle: corners, 3x8 UVs, colors, ids, 3x3 tangents, 2 flags
@@ -339,6 +342,109 @@ export function toMover(add, i, values, material = null) {
   const own = p ? [...unpackFrom(`<${unpackFrom('<i', pkg.data, p[2])[0]}i`, pkg.data, p[2] + 4)] : [];
   const at = moverActor(add, pkg.get(e, 'StaticMesh', '<i')[0], material === null ? own : [Math.trunc(material)], values, pkg.get(e, 'PhysMaterialOverride', '<i')?.[0] ?? 0);
   add.remove(i);
+  return at;
+}
+
+const PHYS_DATA_VERSION = 34079889;               // the cooked collision version UDK writes (body setups, the Level's caches)
+
+// The Level's cooked convex collision, as UDK writes it after the BSP's cooked data: a map of {mesh, Scale3D} to an
+// index into a store of cooked convex pieces. {at, end, entries: [[mesh ref, x, y, z, index]], store: [[bytes]]}
+// with file offsets; found by parsing on to the cache version after the stores, so nothing else passes for it.
+export function convexCache(pkg) {
+  const L = pkg.exports[pkg.levelIndex()], d = pkg.data, end = L.off + L.size, i32 = q => unpackFrom('<i', d, q)[0];
+  const isMesh = r => r > 0 ? r <= pkg.exports.length && pkg.classOf(pkg.exports[r - 1]) === 'StaticMesh' : pkg.imports[-r - 1]?.cls === 'StaticMesh';
+  const index = q => {                            // a TMap<StaticMesh, {Scale3D, index}>: its entries, or null
+    const n = i32(q);
+    if (n < 0 || n > 100000 || q + 4 + 20 * n > end) return null;
+    const entries = Array.from({ length: n }, (_, k) => unpackFrom('<i3fi', d, q + 4 + 20 * k));
+    return entries.every(([r]) => isMesh(r)) ? entries : null;
+  };
+  const stores = (q, nested) => {                 // [items, end]: TArray of (TArray of) byte bulks (element size 1)
+    const n = i32(q), items = [];
+    if (n < 0 || n > 100000) return null;
+    q += 4;
+    for (let k = 0; k < n; k++) {
+      const m = nested ? i32(q) : 1;
+      if (m < 0 || m > 10000) return null;
+      if (nested) q += 4;
+      const elems = [];
+      for (let j = 0; j < m; j++) {
+        const [size, count] = unpackFrom('<ii', d, q);
+        if (size !== 1 || count < 0 || q + 8 + count > end) return null;
+        elems.push(d.slice(q + 8, q + 8 + count));
+        q += 8 + count;
+      }
+      items.push(elems);
+    }
+    return [items, q];
+  };
+  for (let q = pkg.skipProperties(L); q + 8 <= end; q++) {
+    if (i32(q) !== 1) continue;                   // the BSP's cooked data: a byte bulk
+    const at = q + 8 + i32(q + 4), entries = at > q + 8 - 1 && at + 4 <= end && index(at);
+    if (!entries) continue;
+    const convex = stores(at + 4 + 20 * entries.length, true), perTri = convex && index(convex[1]);
+    const triStore = perTri && stores(convex[1] + 4 + 20 * perTri.length, false);
+    if (triStore && triStore[1] + 8 <= end && i32(triStore[1] + 4) === PHYS_DATA_VERSION) return { at, end: convex[1], entries, store: convex[0] };
+  }
+  return null;
+}
+const convexCacheBytes = (entries, store) => concat(pack('<i', entries.length), ...entries.map(e => pack('<i3fi', ...e)),
+  pack('<i', store.length), ...store.map(elems => concat(pack('<i', elems.length), ...elems.map(b => concat(pack('<ii', 1, b.length), b)))));
+
+// Rocket League gives moving shapes (InterpActors) no collision at all; ThePath's way around it: a hidden KActor,
+// which collides with the car and ball, as the shape's box (simple collision in a body setup, cooked into the Level
+// for each size in use, as UDK does), teleported onto the shape over and over (kismet.js setSolids). `movers` are
+// levelActors entries; `old` ([{mover, proxy}], solidsOf) the stand-ins of an earlier save, which leave the level
+// (their box meshes are used again). Returns [{mover, proxy}] export indices.
+export function solidStandIns(add, movers, old = []) {
+  const pkg = add.pkg, cache = convexCache(pkg), f = Math.fround;
+  if (!cache) throw new Error("moving shapes: this map's cooked collision cache was not found");
+  const meshOf = i => pkg.get(pkg.exports[pkg.get(pkg.exports[i], 'StaticMeshComponent', '<i')[0] - 1], 'StaticMesh', '<i')[0];
+  const boxes = new Map(old.map(s => [meshOf(s.mover), meshOf(s.proxy)]));
+  const entries = [...cache.entries], store = [...cache.store];
+  const plan = movers.map(a => {
+    const mesh = meshOf(a.i);
+    if (!boxes.has(mesh)) boxes.set(mesh, boxCollisionCopy(add, mesh - 1) + 1);
+    const box = boxes.get(mesh), scale = a.scale3d.map(v => f(v * a.scale));
+    if (!entries.some(([r, ...s]) => r === box && s.slice(0, 3).every((v, k) => Math.abs(v - scale[k]) < 1e-4))) {
+      const b = pkg.nativeBounds(pkg.exports[mesh - 1]), ends = k => [b[k] - b[3 + k], b[k] + b[3 + k]].map(v => f(f(v * scale[k]) * f(0.02)));
+      const [lo, hi] = [0, 1].map(m => [0, 1, 2].map(k => (m ? Math.max : Math.min)(...ends(k))));
+      entries.push([box, ...scale, store.length]);
+      store.push([cookBox(lo, hi)]);
+    }
+    return { a, box };
+  });
+  // the actor list comes before the cache in the Level's data, so the cache is replaced before the list changes
+  if (entries.length > cache.entries.length) add.replaceRange(pkg.levelIndex(), cache.at, cache.end, convexCacheBytes(entries, store));
+  old.forEach(s => add.remove(s.proxy));
+  const bools = names => concat(...names.map(n => add.tag(n, 'BoolProperty', Uint8Array.of(1))), add.fname('None'));
+  return plan.map(({ a, box }) => ({ mover: a.i, proxy: add.addActor('KActor', 'StaticMeshComponent', 'StaticMeshComponent0', component => [
+    add.tag('StaticMeshComponent', 'ObjectProperty', pack('<i', component)), ...Object.values(add.transformTags(editValues(a))),
+    add.tag('Tag', 'NameProperty', add.fname('KActor')), add.tag('CollisionComponent', 'ObjectProperty', pack('<i', component))],
+    [add.tag('StaticMesh', 'ObjectProperty', pack('<i', box)), add.tag('ReplacementPrimitive', 'ObjectProperty', pack('<i', 0)),
+     add.tag('HiddenGame', 'BoolProperty', Uint8Array.of(1)),
+     add.tag('LightingChannels', 'StructProperty', bools(['bInitialized', 'Dynamic']), 'LightingChannelContainer'),
+     add.tag('RBCollideWithChannels', 'StructProperty', bools(['Pawn', 'Vehicle', 'Ball']), 'RBCollisionChannelContainer')],
+    pack('<i', 0)) }));
+}
+
+// A copy of mesh i whose collision is one box, its bounds, as ThePath's KActor meshes have it: simple collision
+// throughout and the body setup named twice, as a property and in the native data (which the engine reads last).
+// Returns its export index.
+function boxCollisionCopy(add, i) {
+  const pkg = add.pkg, e = pkg.exports[i], at = pkg.exports.length + add.added.length;   // its body setup comes right after
+  const tag = (name, type, body, struct) => add.tag(name, type, body, struct), b = pkg.nativeBounds(e);
+  const simple = Object.fromEntries(['UseSimpleRigidBodyCollision', 'UseSimpleBoxCollision', 'UseSimpleLineCollision'].map(n => [n, tag(n, 'BoolProperty', Uint8Array.of(1))]));
+  const m = read(pkg, i);
+  m.head = add.withProps(e, pkg.objectBytes(i), { ...simple, BodySetup: tag('BodySetup', 'ObjectProperty', pack('<i', at + 2)) }, new Uint8Array(0));
+  m.bodySetup = at + 2;
+  const [blob, rawAt] = write(m);
+  add.addObject(e.cls, e.outer, `${e.name}_KActor`, blob, e.flags, [rawAt]);
+  const corners = [0, 1, 2, 3, 4, 5, 6, 7].map(c => [0, 1, 2].map(k => b[k] + (c >> k & 1 ? b[3 + k] : -b[3 + k])));
+  const elem = convexElemBytes(convexHull(corners), tag, add.fname('None'));
+  const agg = tag('AggGeom', 'StructProperty', concat(tag('ConvexElems', 'ArrayProperty', concat(pack('<i', 1), elem)), add.fname('None')), 'KAggregateGeom');
+  add.addObject(add.classRef('RB_BodySetup', 'Engine'), at + 1, 'RB_BodySetup',
+    concat(pack('<i', 0), tag('PreCachedPhysDataVersion', 'IntProperty', pack('<i', PHYS_DATA_VERSION)), agg, add.fname('None'), pack('<i', 0)), 0x0007000000000000n);
   return at;
 }
 

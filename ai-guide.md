@@ -81,7 +81,9 @@ and the car and the ball bounce off it.
 ### Moving shapes
 
 A shape with `motion` moves in the game (a Matinee, as Leth's maps move their platforms). The car and the ball ride
-on it and bounce off it. `look()` shows shapes where they start; the editor plays the motions.
+on it and bounce off it, but as its box: a moving ring or ramp is a solid block to them, and a pillar has corners.
+Keep moving shapes box-like (platforms, walls, pillars). `look()` shows shapes where they start; the editor plays the
+motions.
 
 ```js
 { id: "lift", shape: "platform", at: [0, 0, 300], motion: { kind: "slide", to: [0, 0, 800], seconds: 3, pause: 1 } }

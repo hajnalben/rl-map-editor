@@ -441,6 +441,12 @@ export class Additions {
 
   setValues(i, values) { this.setProps(i, this.transformTags(values)); }
 
+  replaceRange(i, from, to, bytes) {               // file offsets [from, to) of object i's data become `bytes`
+    if (this.replaced.has(i)) throw new Error(`${this.pkg.exports[i].name} was already rewritten`);
+    const e = this.pkg.exports[i], blob = this.pkg.objectBytes(i);
+    this.replaced.set(i, concat(blob.subarray(0, from - e.off), bytes, blob.subarray(to - e.off)));
+  }
+
   clearRefs(i, prop) { this.appendRefs(i, prop, [], false); }
 
   // add object references to an existing object's array property; `keep` (true, false, or a test of each
@@ -538,12 +544,10 @@ export class Additions {
   remove(i) { this.levelListChange(refs => refs.map(r => r === i + 1 ? 0 : r)); }   // the object stays, never spawned
 
   levelListChange(change) {
-    const pkg = this.pkg, li = pkg.levelIndex();
-    if (!this.replaced.has(li)) {
-      const level = pkg.exports[li];
-      this.levelListAt = pkg.skipProperties(level) - level.off + 4;   // after the TTransArray owner ref
-      this.replaced.set(li, pkg.objectBytes(li).slice());
-    }
+    const pkg = this.pkg, li = pkg.levelIndex(), level = pkg.exports[li];
+    // the list comes first in the Level's data, so a replaceRange further on leaves its place as it was
+    this.levelListAt ??= pkg.skipProperties(level) - level.off + 4;   // after the TTransArray owner ref
+    if (!this.replaced.has(li)) this.replaced.set(li, pkg.objectBytes(li).slice());
     const blob = this.replaced.get(li), at = this.levelListAt;
     const count = unpackFrom('<i', blob, at)[0];
     const refs = change(unpackFrom(`<${count}i`, blob, at + 4));

@@ -114,10 +114,11 @@ export const inputLink = (y, desc = 'In', delta = 11) => [['LinkDesc', S, desc],
   ['bDisabledPIE', B, false], ['LinkedOp', O, 0], ['DrawY', I, y], ['bHidden', B, false],
   ['ActivateDelay', F, 0.0], ['bClampedMax', B, false], ['bClampedMin', B, false], ['OverrideDelta', I, delta]];
 
-// targets: node refs, or [ref, input index] to enter a node through another input than its first
-export const outputLink = (desc, targets, y, delta = 11) => [['Links', A, targets.map(t => [t].flat()).map(([t, k = 0]) => [['LinkedOp', O, t], ['InputLinkIdx', I, k]])],
+// targets: node refs, or [ref, input index] to enter a node through another input than its first; `delay` seconds
+// pass before they run
+export const outputLink = (desc, targets, y, delta = 11, delay = 0) => [['Links', A, targets.map(t => [t].flat()).map(([t, k = 0]) => [['LinkedOp', O, t], ['InputLinkIdx', I, k]])],
   ['LinkDesc', S, desc], ['bHasImpulse', B, false], ['bDisabled', B, false], ['bDisabledPIE', B, false], ['LinkedOp', O, 0],
-  ['ActivateDelay', F, 0.0], ['DrawY', I, y], ['bHidden', B, false], ['bClampedMax', B, false],
+  ['ActivateDelay', F, delay], ['DrawY', I, y], ['bHidden', B, false], ['bClampedMax', B, false],
   ['bClampedMin', B, false], ['OverrideDelta', I, delta]];
 
 export const varLink = (desc, expected, linked, x, { prop = 'None', writeable = false, hidden = false, delta = 16, minVars = 1, maxVars = 255, any = false } = {}) => [
@@ -890,6 +891,44 @@ export function setMovers(add, movers) {
         || sub('InterpTrackMove', group, [['PosTrack', T, curve(0)], ['EulerTrack', T, curve(1)],
              ['LookupTrack', T, ['InterpLookupTrack', enc.props([['Points', A, keys.map(k => [['GroupName', N, 'None'], ['Time', F, k.t]])]])]],
              ['MoveFrame', E, ['EInterpTrackMoveFrame', 'IMF_RelativeToInitial']]]) !== track) throw new Error('mover: object order');
+  });
+  add.appendRefs(seq, 'SequenceObjects', nodes.map(n => n + 1));
+}
+
+// Moving shapes' collision stand-ins (mesh.js solidStandIns): per shape a level-loaded event "Solid: <shape>" and a
+// Teleport putting the hidden KActor onto the shape, which runs itself again every 0.01 s, as in ThePath.
+const SOLID = 'Solid: ';
+export function solidsOf(pkg) {                   // [{mover, proxy}] export indices
+  const out = [];
+  for (const k of blockNodes(pkg, liveNodes(pkg), SOLID)) {
+    if (pkg.classOf(pkg.exports[k]) !== 'SeqAct_Teleport') continue;
+    const links = nodeProps(pkg, pkg.exports[k]).VariableLinks || [];
+    const actor = desc => nodeProps(pkg, pkg.exports[links.find(l => l.LinkDesc === desc).LinkedVariables[0] - 1]).ObjValue - 1;
+    out.push({ mover: actor('Destination'), proxy: actor('Target') });
+  }
+  return out;
+}
+
+export function setSolids(add, pairs) {
+  const pkg = add.pkg, seq = mainSequence(pkg), old = blockNodes(pkg, liveNodes(pkg), SOLID);
+  if (old.size) add.appendRefs(seq, 'SequenceObjects', [], r => !old.has(r - 1));
+  if (!pairs.length) return;
+  const { parent, cls, node, nodes, refs, placed, vars } = writer(add), obj = cls('SeqVar_Object');
+  pairs.forEach(({ mover, proxy }, n) => {
+    const x = 40000 + 600 * (n % 16), y = 10000 - 300 * Math.floor(n / 16), r = refs(['event', 'teleport', 'proxy', 'mover']);
+    node('SeqEvent_LevelLoaded', [['MaxWidth', I, 136], ['InputLinks', A, []],
+      ['OutputLinks', A, [outputLink('Loaded and Visible', [r.teleport], y + 14, 14), outputLink('Beginning of Level', [], y + 35, 35), outputLink('Level Reset', [], y + 56, 56)]],
+      ['VariableLinks', A, []], ...layout(3, parent, x, y, 98, 85, `${SOLID}${pkg.exports[mover].name}`)]);
+    node('SeqAct_Teleport', [
+      ['InputLinks', A, [inputLink(y + 34)]],
+      ['OutputLinks', A, [outputLink('Out', [r.teleport], y + 34, 11, 0.01)]],
+      ['VariableLinks', A, [varLink('Target', obj, [r.proxy], x + 238, { prop: 'Targets' }),
+                            varLink('Destination', obj, [r.mover], x + 313, { delta: 76 }),
+                            varLink('Teleport Volumes', obj, [], 0, { prop: 'TeleportVolumes', hidden: true, delta: 0 })]],
+      ...layout(2, parent, x + 200, y, 166, 61)]);
+    node('SeqVar_Object', vars(x + 230, y + 100, [['ObjValue', O, proxy + 1]]));
+    node('SeqVar_Object', vars(x + 310, y + 100, [['ObjValue', O, mover + 1]]));
+    placed(r, 'solid');
   });
   add.appendRefs(seq, 'SequenceObjects', nodes.map(n => n + 1));
 }

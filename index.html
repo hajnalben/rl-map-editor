@@ -1534,7 +1534,7 @@ function showSelection() {
         ? `Where the ball starts, and comes back to on resets until you reach a checkpoint${selected.userData.onRoof ? ': on the spawn car\'s roof, following the car' : ''}.`
         : 'Where the game puts the ball now.'} Drag it to give the ball a spawn of its own: let go over the car to start on its roof, anywhere else to rest on the ground.</div>`
     : selected.userData.shape
-    ? `<div class="kv"><b>${a.name}</b> <span class="muted">(${selected.userData.shape.startsWith('std:') ? 'built-in shape' : 'from ' + (library.get(selected.userData.shape.slice(4))?.source ?? 'your library')})</span></div><div class="kv muted">${isNew ? 'A new mesh' : 'A shape added in the editor'}; the car collides with its shape.</div>`
+    ? `<div class="kv"><b>${a.name}</b> <span class="muted">(${selected.userData.shape.startsWith('std:') ? 'built-in shape' : 'from ' + (library.get(selected.userData.shape.slice(4))?.source ?? 'your library')})</span></div><div class="kv muted">${isNew ? 'A new mesh' : 'A shape added in the editor'}; the car collides with ${selected.userData.motion ? 'its box, as it moves' : 'its shape'}.</div>`
     : selected.userData.lava
     ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} lava</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
         ? 'When the ball touches it, the car goes back to the last checkpoint with a fresh ball (in front of the car after a car checkpoint).'
