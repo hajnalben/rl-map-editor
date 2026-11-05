@@ -441,6 +441,12 @@ export class Additions {
 
   setValues(i, values) { this.setProps(i, this.transformTags(values)); }
 
+  replaceRange(i, from, to, bytes) {               // file offsets [from, to) of object i's data become `bytes`
+    if (this.replaced.has(i)) throw new Error(`${this.pkg.exports[i].name} was already rewritten`);
+    const e = this.pkg.exports[i], blob = this.pkg.objectBytes(i);
+    this.replaced.set(i, concat(blob.subarray(0, from - e.off), bytes, blob.subarray(to - e.off)));
+  }
+
   clearRefs(i, prop) { this.appendRefs(i, prop, [], false); }
 
   // add object references to an existing object's array property; `keep` (true, false, or a test of each
