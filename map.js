@@ -2,7 +2,7 @@
 import { Additions, Package, editValues } from './ue3.js';
 import { pack, packInto } from './bytes.js';
 import { addCheckpoints, ballSpawnMarker, checkpointZones, editorDataOf, hudOf, keysOf, lavaZones, mainSequence, moversOf, nodeProps, setEditorData, setHud, setKeys, setMovers, setSolids, solidsOf, spawnBall, textInfo } from './kismet.js';
-import { CELL, SINK, TILE, addShapes, convexCache, meshComponent, read as readMesh, saveTerrain, solidStandIns, terrain, toMover } from './mesh.js';
+import { CELL, SINK, TILE, addShapes, convexCache, isCurrentStandIn, meshComponent, read as readMesh, saveTerrain, solidStandIns, terrain, toMover } from './mesh.js';
 import { asMeshInput, boxShape, corners, meshGeometry } from './shapes.js';
 import { unpackFrom } from './bytes.js';
 import { compact } from './compact.js';
@@ -242,7 +242,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   let standInsAdded = 0;
   {                                               // moving shapes collide through hidden KActors following them
     const p = new Package(out), want = editorMovers(p), old = solidsOf(p), placed = new Map(p.levelActors().map(a => [a.i, a]));
-    const fits = old.length === want.length && want.every(a => old.some(s => s.mover === a.i && placed.has(s.proxy) && sameSize(placed.get(s.proxy), a)));
+    const fits = old.length === want.length && want.every(a => old.some(s => s.mover === a.i && placed.has(s.proxy) && sameSize(placed.get(s.proxy), a) && isCurrentStandIn(p, s.proxy)));
     if (!fits) {
       const add = new Additions(p);
       setSolids(add, solidStandIns(add, want, old));
@@ -297,7 +297,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   const solids = new Map(solidsOf(saved).map(s => [s.mover, s.proxy])), cooked = solids.size ? convexCache(saved) : null;
   for (const a of editorMovers(saved)) {
     const k = byIndex.get(solids.get(a.i)), body = k?.meshIndex != null && saved.get(saved.exports[k.meshIndex], 'BodySetup', '<i')?.[0];
-    check(k?.cls === 'KActor' && sameSize(k, a) && body > 0 && readMesh(saved, k.meshIndex).bodySetup === body && cooked?.entries.some(([r, ...s]) => r === k.meshIndex + 1 && sameSize(k, { scale3d: s.slice(0, 3), scale: 1 })),
+    check(k?.cls === 'KActor' && sameSize(k, a) && isCurrentStandIn(saved, k.i) && body > 0 && readMesh(saved, k.meshIndex).bodySetup === body && cooked?.entries.some(([r, ...s]) => r === k.meshIndex + 1 && sameSize(k, { scale3d: s.slice(0, 3), scale: 1 })),
           `${a.name} collision stand-in`);
   }
   if (script) {

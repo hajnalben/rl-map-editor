@@ -57,7 +57,7 @@ function readValue(pkg, ptype, extra, p, size) {
     const n = unpackFrom('<i', d, p)[0];
     let body = p + 4;
     if (n === 0) return [];
-    if (size === 4 + 4 * n && !looksTagged(pkg, body)) return unpackFrom(`<${n}i`, d, body);
+    if (size === 4 + 4 * n) return unpackFrom(`<${n}i`, d, body);   // a struct item takes 8 bytes at least (its None)
     const items = [];
     for (let k = 0; k < n; k++) {
       if (!looksTagged(pkg, body)) return `<${n} items, ${size} bytes>`;
@@ -896,7 +896,8 @@ export function setMovers(add, movers) {
 }
 
 // Moving shapes' collision stand-ins (mesh.js solidStandIns): per shape a level-loaded event "Solid: <shape>" and a
-// Teleport putting the hidden KActor onto the shape, which runs itself again every 0.01 s, as in ThePath.
+// Teleport putting the hidden KActor onto the shape, which runs itself again every frame (0.001 s, as the RL Modding
+// Wiki's KActor guide has it; ThePath's 0.01 s skips frames above 100 fps).
 const SOLID = 'Solid: ';
 export function solidsOf(pkg) {                   // [{mover, proxy}] export indices
   const out = [];
@@ -921,7 +922,7 @@ export function setSolids(add, pairs) {
       ['VariableLinks', A, []], ...layout(3, parent, x, y, 98, 85, `${SOLID}${pkg.exports[mover].name}`)]);
     node('SeqAct_Teleport', [
       ['InputLinks', A, [inputLink(y + 34)]],
-      ['OutputLinks', A, [outputLink('Out', [r.teleport], y + 34, 11, 0.01)]],
+      ['OutputLinks', A, [outputLink('Out', [r.teleport], y + 34, 11, 0.001)]],
       ['VariableLinks', A, [varLink('Target', obj, [r.proxy], x + 238, { prop: 'Targets' }),
                             varLink('Destination', obj, [r.mover], x + 313, { delta: 76 }),
                             varLink('Teleport Volumes', obj, [], 0, { prop: 'TeleportVolumes', hidden: true, delta: 0 })]],

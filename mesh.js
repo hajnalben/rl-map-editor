@@ -399,8 +399,15 @@ const convexCacheBytes = (entries, store) => concat(pack('<i', entries.length), 
 export function solidStandIns(add, movers, old = []) {
   const pkg = add.pkg, cache = convexCache(pkg), f = Math.fround;
   if (!cache) throw new Error("moving shapes: this map's cooked collision cache was not found");
-  const meshOf = i => pkg.get(pkg.exports[pkg.get(pkg.exports[i], 'StaticMeshComponent', '<i')[0] - 1], 'StaticMesh', '<i')[0];
+  const meshOf = i => pkg.get(componentOf(pkg, i), 'StaticMesh', '<i')[0];
+  const physOf = i => pkg.get(componentOf(pkg, i), 'PhysMaterialOverride', '<i')?.[0] ?? 0;
   const boxes = new Map(old.map(s => [meshOf(s.mover), meshOf(s.proxy)]));
+  for (const box of new Set(boxes.values())) {
+    const body = bodyOf(pkg, box);
+    if (body > 0 && !isFixed(pkg, body)) add.setProps(body - 1, { bFixed: add.tag('bFixed', 'BoolProperty', Uint8Array.of(1)) });
+  }
+  const heavy = new Map(old.filter(s => isHeavy(pkg, s.proxy)).map(s => [physOf(s.mover), physOf(s.proxy)]));
+  const heavyOf = phys => { if (!heavy.has(phys)) heavy.set(phys, heavyCopy(add, phys)); return heavy.get(phys); };
   const entries = [...cache.entries], store = [...cache.store];
   const plan = movers.map(a => {
     const mesh = meshOf(a.i);
@@ -412,24 +419,49 @@ export function solidStandIns(add, movers, old = []) {
       entries.push([box, ...scale, store.length]);
       store.push([cookBox(lo, hi)]);
     }
-    return { a, box };
+    return { a, box, phys: heavyOf(physOf(a.i)) };
   });
   // the actor list comes before the cache in the Level's data, so the cache is replaced before the list changes
   if (entries.length > cache.entries.length) add.replaceRange(pkg.levelIndex(), cache.at, cache.end, convexCacheBytes(entries, store));
   old.forEach(s => add.remove(s.proxy));
   const bools = names => concat(...names.map(n => add.tag(n, 'BoolProperty', Uint8Array.of(1))), add.fname('None'));
-  return plan.map(({ a, box }) => ({ mover: a.i, proxy: add.addActor('KActor', 'StaticMeshComponent', 'StaticMeshComponent0', component => [
+  return plan.map(({ a, box, phys }) => ({ mover: a.i, proxy: add.addActor('KActor', 'StaticMeshComponent', 'StaticMeshComponent0', component => [
     add.tag('StaticMeshComponent', 'ObjectProperty', pack('<i', component)), ...Object.values(add.transformTags(editValues(a))),
-    add.tag('Tag', 'NameProperty', add.fname('KActor')), add.tag('CollisionComponent', 'ObjectProperty', pack('<i', component))],
+    add.tag('Tag', 'NameProperty', add.fname('KActor')), add.tag('CollisionComponent', 'ObjectProperty', pack('<i', component)),
+    // else the car takes it for an object like the ball: landing on it is a flip reset (confirmed in game)
+    add.tag('bWorldGeometry', 'BoolProperty', Uint8Array.of(1))],
     [add.tag('StaticMesh', 'ObjectProperty', pack('<i', box)), add.tag('ReplacementPrimitive', 'ObjectProperty', pack('<i', 0)),
      add.tag('HiddenGame', 'BoolProperty', Uint8Array.of(1)),
      add.tag('LightingChannels', 'StructProperty', bools(['bInitialized', 'Dynamic']), 'LightingChannelContainer'),
-     add.tag('RBCollideWithChannels', 'StructProperty', bools(['Pawn', 'Vehicle', 'Ball']), 'RBCollisionChannelContainer')],
+     add.tag('RBCollideWithChannels', 'StructProperty', bools(['Pawn', 'Vehicle', 'Ball']), 'RBCollisionChannelContainer'),
+     add.tag('PhysMaterialOverride', 'ObjectProperty', pack('<i', phys))],
     pack('<i', 0)) }));
+}
+
+const HEAVY = 100000;
+const componentOf = (pkg, i) => pkg.exports[pkg.get(pkg.exports[i], 'StaticMeshComponent', '<i')[0] - 1];
+function isHeavy(pkg, i) {                        // whether actor i's physical material holds it still, as heavyCopy makes it
+  const phys = pkg.get(componentOf(pkg, i), 'PhysMaterialOverride', '<i')?.[0];
+  return phys > 0 && pkg.get(pkg.exports[phys - 1], 'Density', '<f')?.[0] === HEAVY;
+}
+const bodyOf = (pkg, mesh) => pkg.get(pkg.exports[mesh - 1], 'BodySetup', '<i')?.[0] ?? 0;
+const isFixed = (pkg, body) => body > 0 && pkg.get(pkg.exports[body - 1], 'bFixed', '<B')?.[0] === 1;
+// whether stand-in i is made as solidStandIns makes them now (older saves get theirs rebuilt)
+export const isCurrentStandIn = (pkg, i) => isHeavy(pkg, i) && pkg.get(pkg.exports[i], 'bWorldGeometry', '<B')?.[0] === 1 &&
+  isFixed(pkg, bodyOf(pkg, pkg.get(componentOf(pkg, i), 'StaticMesh', '<i')[0]));
+
+// A copy of physical material `phys` (or a new one, for none or the game's own) so dense and damped that neither the
+// car's weight nor gravity moves a stand-in between teleports (RL Modding Wiki, KActors). Returns its object ref.
+function heavyCopy(add, phys) {
+  const pkg = add.pkg, props = Object.fromEntries(['Density', 'LinearDamping', 'AngularDamping'].map(n => [n, add.tag(n, 'FloatProperty', pack('<f', HEAVY))]));
+  if (!(phys > 0)) return add.addObject(add.classRef('PhysicalMaterial', 'Engine'), 0, 'MovingSolid', concat(pack('<i', 0), ...Object.values(props), add.fname('None')), 0x0007000400000000n) + 1;
+  const e = pkg.exports[phys - 1];
+  return add.addObject(e.cls, e.outer, `${e.name}_Heavy`, add.withProps(e, pkg.objectBytes(phys - 1), props), e.flags) + 1;
 }
 
 // A copy of mesh i whose collision is one box, its bounds, as ThePath's KActor meshes have it: simple collision
 // throughout and the body setup named twice, as a property and in the native data (which the engine reads last).
+// The body is kinematic (bFixed): the car sinks less into a rising lift (confirmed in game; a little still shows).
 // Returns its export index.
 function boxCollisionCopy(add, i) {
   const pkg = add.pkg, e = pkg.exports[i], at = pkg.exports.length + add.added.length;   // its body setup comes right after
@@ -444,7 +476,8 @@ function boxCollisionCopy(add, i) {
   const elem = convexElemBytes(convexHull(corners), tag, add.fname('None'));
   const agg = tag('AggGeom', 'StructProperty', concat(tag('ConvexElems', 'ArrayProperty', concat(pack('<i', 1), elem)), add.fname('None')), 'KAggregateGeom');
   add.addObject(add.classRef('RB_BodySetup', 'Engine'), at + 1, 'RB_BodySetup',
-    concat(pack('<i', 0), tag('PreCachedPhysDataVersion', 'IntProperty', pack('<i', PHYS_DATA_VERSION)), agg, add.fname('None'), pack('<i', 0)), 0x0007000000000000n);
+    concat(pack('<i', 0), tag('PreCachedPhysDataVersion', 'IntProperty', pack('<i', PHYS_DATA_VERSION)), tag('bFixed', 'BoolProperty', Uint8Array.of(1)),
+      agg, add.fname('None'), pack('<i', 0)), 0x0007000000000000n);
   return at;
 }
 
