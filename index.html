@@ -94,6 +94,8 @@
   #labels > span { position: absolute; left: 0; top: 0; padding: 0 5px; border-radius: 4px; background: rgba(0, 0, 0, .7); color: #fff; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; }
   #legend { position: absolute; left: 10px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 6px; background: rgba(0, 0, 0, .7); font-size: 12px; }
   #scaleBar { height: 4px; background: #fff; border-radius: 2px; }
+  #dragInfo { position: absolute; pointer-events: none; padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, .75); color: #fff; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; }
+  .snap { display: flex; gap: 8px; align-items: center; } .snap select { width: auto; padding: 2px 6px; }
   #help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
   #help dt { color: var(--accent); white-space: nowrap; } #help dd { margin: 0; }
 </style>
@@ -187,6 +189,7 @@
       <div class="script-body"><textarea id="scriptSource" spellcheck="false" placeholder="const pad = zone('pad');&#10;on(pad.enter('car'), text('Hello!', 2));"></textarea>
         <div id="scriptEvents"><span class="muted">Preview: set off an event</span><button id="scriptStart" title="Back to the start, then the map-start events">▶ Start over</button><div id="scriptFire" style="display:contents"></div></div></div>
     </section>
+    <div id="dragInfo" hidden></div>
     <div id="labels" hidden><div id="legend"><span id="legendText"></span><span id="scaleBar"></span><span id="scaleText"></span></div></div>
     <input type="file" id="file" accept=".udk,.upk" hidden>
   </main>
@@ -201,6 +204,10 @@
           <button data-mode="translate" title="Move it in the view (1)">Move</button>
           <button data-mode="rotate" title="Rotate it in the view (2)">Rotate</button>
           <button data-mode="scale" title="Scale it in the view (3)">Scale</button>
+        </div>
+        <div class="snap">
+          <label title="Dragging lines edges up with the grid and with shapes nearby, sizes in grid steps, turns 15° at a time (G; hold ⌘ while dragging to snap the other way)"><input type="checkbox" id="snap"> Snap</label>
+          <select id="snapStep" title="Grid step ([ and ])"><option value="10">10 units</option><option value="25">25 units</option><option value="50">50 units</option><option value="100">100 units</option><option value="250">250 units</option><option value="500">500 units</option></select>
         </div>
         <div id="cpShape" hidden>
           <span class="muted">Shape</span>
@@ -289,6 +296,7 @@
       <dt>Left-drag · Right-drag · Wheel</dt><dd>Orbit · pan · zoom</dd>
       <dt>Click</dt><dd>Select · F focuses it · Esc deselects</dd>
       <dt>1 / 2 / 3</dt><dd>Move / rotate / scale the selection</dd>
+      <dt>G · [ ]</dt><dd>Snap on or off · grid step: edges to the grid and to shapes nearby, sizes in steps, 15° turns (⌘ while dragging: the other way)</dd>
       <dt>T</dt><dd>Sculpt the ground (Shift lowers, ⌥-drag orbits)</dd>
       <dt>⌘D · ⌫ · ⌘Z</dt><dd>Duplicate · delete · undo</dd>
       <dt>⌘S · ⌘O</dt><dd>Save as · open a map</dd>
@@ -377,7 +385,10 @@ gizmo.addEventListener('dragging-changed', e => {
   if (e.value) {
     pushUndo(selected);
     if (selected?.userData.ballSpawn) Object.assign(selected.userData, { placed: true, onRoof: false });
+    drag = startDrag();
   } else {
+    drag = null;
+    endDrag();
     if (selected?.userData.spawn) settleSpawn(selected);
     if (selected?.userData.ballSpawn) settleBall(selected);
     scheduleOutline();
@@ -401,11 +412,124 @@ function attachGizmo(obj) {
   gizmo.attach(pivot);
 }
 gizmo.addEventListener('objectChange', () => {
+  if (drag) snapDrag();
   pivot.updateMatrixWorld();
   pivot.matrixWorld.clone().multiply(pivotOffset).decompose(selected.position, selected.quaternion, selected.scale);
+  if (drag) showDrag();
   markDirty(selected);
   showSelection();
 });
+
+// Snapping (G) while dragging: a shape's lower corner lands on the grid, unless one of its faces or its middle comes
+// within a few pixels of a nearby shape's, which it then lines up with. Sizes go in grid steps, yaw in 15° turns of
+// the map (other rings 15° from where they started). ⌘ held while dragging snaps the other way for that moment.
+// Scaling keeps the side across from the grabbed handle in place; scaling all ways keeps the bottom.
+const TURN = THREE.MathUtils.degToRad(15), YAW_STEP = 65536 / 24, AXES = ['x', 'y', 'z'];
+const UE_AXIS = { x: 'X', y: 'Z', z: 'Y' };      // three's axes by their Unreal names
+let snapStep = 50, drag = null, freeDrag = false, dragAt = [0, 0];
+window.addEventListener('pointermove', e => { freeDrag = e.metaKey || e.ctrlKey; dragAt = [e.clientX, e.clientY]; }, true);
+const snapping = () => $('snap').checked !== freeDrag;
+const guideGeo = new THREE.BoxGeometry(1, 1, 1), guideEdges = new THREE.EdgesGeometry(guideGeo);
+const guideFill = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.18, depthWrite: false });
+const guideLine = new THREE.LineBasicMaterial({ color: 0x00e5ff, depthTest: false });   // over the shape's own edges
+const snapGuides = AXES.map(() => {                // the shape being lined up with, one per snapped axis
+  const g = new THREE.Mesh(guideGeo, guideFill);
+  g.add(new THREE.LineSegments(guideEdges, guideLine));
+  g.visible = false;
+  return g;
+});
+scene.add(...snapGuides);
+const showGuide = (g, box) => {
+  box.getCenter(g.position);
+  box.getSize(g.scale).addScalar(4);
+  g.visible = true;
+};
+let snapGrid = null;
+function startDrag() {
+  if (!selected) return null;
+  const others = objects.filter(o => o !== selected && o.visible && o.userData.actor.bounds && !o.userData.deleted &&
+                                     !o.userData.respawnFor && !o.userData.spawn && !o.userData.ballSpawn);
+  return { pos: pivot.position.clone(), quat: pivot.quaternion.clone(), scale: pivot.scale.clone(), box: boxOf(selected),
+           size: selected.geometry.boundingBox.getSize(new THREE.Vector3()), others: others.map(boxOf),
+           grab: gizmo.pointStart.clone().applyQuaternion(pivot.quaternion.clone().invert()) };   // which end of a scale axis
+}
+function snapDrag() {
+  const used = AXES.filter(c => gizmo.axis.includes(c.toUpperCase()));
+  for (const g of snapGuides) g.visible = false;
+  if (gizmo.mode === 'translate') { if (snapping()) snapMove(used); }
+  else if (gizmo.mode === 'scale') snapSize(used);
+  else if (snapping()) snapTurn();
+}
+function snapMove(used) {
+  const box = drag.box.clone().translate(pivot.position.clone().sub(drag.pos));
+  const near = box.clone().expandByScalar(1000 + box.getSize(new THREE.Vector3()).length());
+  const others = drag.others.filter(b => b.intersectsBox(near)), tol = 8 * pixelAt(pivot.position);
+  const mid = (b, c) => (b.min[c] + b.max[c]) / 2;
+  used.forEach((c, n) => {
+    let best = null;
+    for (const b of others) {
+      for (const d of [b.min[c] - box.min[c], b.min[c] - box.max[c], b.max[c] - box.min[c], b.max[c] - box.max[c], mid(b, c) - mid(box, c)]) {
+        if (Math.abs(d) < tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, b };
+      }
+    }
+    const d = best ? best.d : Math.round(box.min[c] / snapStep) * snapStep - box.min[c];
+    pivot.position[c] += d;
+    box.min[c] += d;
+    box.max[c] += d;
+    if (best) showGuide(snapGuides[n], best.b);
+  });
+}
+function snapSize(used) {
+  const s = pivot.scale, start = drag.scale, size = drag.size;
+  if (snapping() && used.length === 3) {          // the longest side in whole steps, the others in proportion
+    const longest = Math.max(...AXES.map(c => size[c] * Math.abs(start[c])));
+    const f = Math.max(snapStep, Math.round(longest * s.x / start.x / snapStep) * snapStep) / longest;
+    s.copy(start).multiplyScalar(f);
+  } else if (snapping()) {
+    for (const c of used) s[c] = Math.sign(s[c] || 1) * Math.max(snapStep, Math.round(size[c] * Math.abs(s[c]) / snapStep) * snapStep) / size[c];
+  }
+  pivot.position.copy(drag.pos);
+  if (used.length === 3) pivot.position.y += (drag.pos.y - drag.box.min.y) * (s.x / start.x - 1);
+  else for (const c of used) {
+    const grown = size[c] * (Math.abs(s[c]) - Math.abs(start[c])), dir = new THREE.Vector3().setComponent(AXES.indexOf(c), 1);
+    pivot.position.addScaledVector(dir.applyQuaternion(drag.quat), Math.sign(drag.grab[c] || 1) * grown / 2);
+  }
+}
+function snapTurn() {
+  if (gizmo.axis === 'Y') {                       // about the up axis only yaw changes: whole steps of it
+    const r = quatToUe(pivot.quaternion);
+    r[1] = Math.round(r[1] / YAW_STEP) * YAW_STEP;
+    pivot.quaternion.copy(ueToQuat(r));
+  } else pivot.quaternion.setFromAxisAngle(gizmo.rotationAxis, Math.round(gizmo.rotationAngle / TURN) * TURN).multiply(drag.quat);
+}
+const pixelAt = p => 2 * camera.position.distanceTo(p) * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / view.clientHeight;
+function showDrag() {                             // the grid being snapped to, and what the drag has done so far
+  const box = boxOf(selected), gridded = snapping() && gizmo.mode !== 'rotate';
+  if (snapGrid?.userData.step !== snapStep) {
+    if (snapGrid) { scene.remove(snapGrid); snapGrid.geometry.dispose(); snapGrid.material.dispose(); }
+    snapGrid = new THREE.GridHelper(snapStep * 40, 40, 0x00e5ff, 0x00e5ff);
+    Object.assign(snapGrid.material, { transparent: true, opacity: 0.45 });
+    snapGrid.userData.step = snapStep;
+    scene.add(snapGrid);
+  }
+  snapGrid.visible = gridded;
+  snapGrid.position.set(Math.round(box.min.x / snapStep) * snapStep, box.min.y + 1, Math.round(box.min.z / snapStep) * snapStep);
+  const used = AXES.filter(c => gizmo.axis.includes(c.toUpperCase())), moved = pivot.position.clone().sub(drag.pos);
+  const signed = v => `${v > 0 ? '+' : ''}${Math.round(v)}`;
+  const yaw = () => ((quatToUe(pivot.quaternion)[1] * 360 / 65536 % 360) + 540) % 360 - 180;
+  $('dragInfo').textContent =
+    gizmo.mode === 'translate' ? used.map(c => `${UE_AXIS[c]} ${signed(moved[c])}`).join('  ')
+    : gizmo.mode === 'scale' ? ['x', 'z', 'y'].map(c => Math.round(drag.size[c] * Math.abs(pivot.scale[c]))).join(' × ')
+    : gizmo.axis === 'Y' ? `yaw ${Math.round(yaw())}°` : `${Math.round(THREE.MathUtils.radToDeg(drag.quat.angleTo(pivot.quaternion)))}°`;
+  const r = view.getBoundingClientRect();
+  Object.assign($('dragInfo').style, { left: `${dragAt[0] - r.left + 18}px`, top: `${dragAt[1] - r.top + 18}px` });
+  $('dragInfo').hidden = false;
+}
+function endDrag() {
+  for (const g of snapGuides) g.visible = false;
+  if (snapGrid) snapGrid.visible = false;
+  $('dragInfo').hidden = true;
+}
 
 function resize() {
   const { clientWidth: w, clientHeight: h } = view;
@@ -1700,7 +1824,7 @@ function duplicateSelected() {
   readBack(selected);
   const width = boxOf(selected).getSize(new THREE.Vector3()).x;
   const loc = selected.userData.actor.loc;
-  copyObject(selected, [loc[0] + Math.max(width * 1.2, 300), loc[1], loc[2]]);
+  copyObject(selected, [loc[0] + ($('snap').checked ? width : Math.max(width * 1.2, 300)), loc[1], loc[2]]);   // snapping: right against it
 }
 function placeNew(obj) {
   applyActor(obj);
@@ -2863,6 +2987,8 @@ window.addEventListener('keydown', e => {
   if (k === '2') setMode('rotate');
   if (k === '3') setMode('scale');
   if (k === 'f') focus();
+  if (k === 'g') setSnap(!$('snap').checked);
+  if (k === '[' || k === ']') setSnapStep(SNAP_STEPS[Math.max(0, Math.min(SNAP_STEPS.length - 1, SNAP_STEPS.indexOf(snapStep) + (k === ']' ? 1 : -1)))]);
   if (k === 't') setSculpt(!sculpting);
   if (k === 'escape') sculpting ? setSculpt(false) : select(null);
 });
@@ -2894,6 +3020,32 @@ for (const id of ['hudTimer', 'hudDeaths']) $(id).addEventListener('change', () 
   updateDirty();
 });
 $('showHuge').addEventListener('change', applyFilter);
+function setSnap(on) {
+  $('snap').checked = on;
+  try { localStorage.setItem('rlme.snap', on ? '1' : ''); } catch { /* storage blocked */ }
+}
+function setSnapStep(step) {
+  snapStep = step;
+  $('snapStep').value = step;
+  try { localStorage.setItem('rlme.snapStep', step); } catch { /* storage blocked */ }
+}
+const SNAP_STEPS = [...$('snapStep').options].map(o => +o.value);
+try {
+  setSnap(localStorage.getItem('rlme.snap') === '1');
+  setSnapStep(SNAP_STEPS.includes(+localStorage.getItem('rlme.snapStep')) ? +localStorage.getItem('rlme.snapStep') : 50);
+} catch { /* storage blocked */ }
+$('snap').addEventListener('change', e => setSnap(e.target.checked));
+$('snapStep').addEventListener('change', e => setSnapStep(+e.target.value));
+function placeSnapped() {                         // with snapping on, what you place lands with its lower corner on the grid
+  const before = selected;
+  addFromPalette();
+  if (!$('snap').checked || !selected || selected === before) return;
+  const min = boxOf(selected).min;
+  selected.position.x += Math.round(min.x / snapStep) * snapStep - min.x;
+  selected.position.z += Math.round(min.z / snapStep) * snapStep - min.z;
+  markDirty(selected);
+  select(selected);
+}
 try { $('gameTextures').checked = localStorage.getItem('rlme.gameTextures') === '1'; } catch { /* storage blocked */ }
 $('gameTextures').addEventListener('change', e => {
   try { localStorage.setItem('rlme.gameTextures', e.target.checked ? '1' : ''); } catch { /* storage blocked */ }
@@ -2906,7 +3058,7 @@ $('save').addEventListener('click', save);
 $('play').addEventListener('click', play);
 $('undo').addEventListener('click', popUndo);
 $('duplicate').addEventListener('click', duplicateSelected);
-$('add').addEventListener('click', addFromPalette);
+$('add').addEventListener('click', placeSnapped);
 $('sculpt').addEventListener('click', () => setSculpt(!sculpting));
 document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 $('brushSize').addEventListener('input', showBrush);
@@ -2917,7 +3069,7 @@ $('palette').addEventListener('click', e => {
   $('palette').querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel'));
   el.classList.add('sel');
 });
-$('palette').addEventListener('dblclick', e => { if (e.target.closest('.item')) addFromPalette(); });
+$('palette').addEventListener('dblclick', e => { if (e.target.closest('.item')) placeSnapped(); });
 $('palette').addEventListener('toggle', e => {    // remember open folders, except ones a search opened
   const d = e.target, key = d.dataset?.key;
   if (!key || $('paletteFilter').value.trim() || d.open === paletteOpen.has(key)) return;
