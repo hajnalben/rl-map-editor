@@ -1,316 +1,145 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="rlme">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RL Map Editor</title>
-<style>
-  :root { --bg: #111317; --panel: #1a1d23; --panel2: #20242c; --text: #e7e9ec; --muted: #969ead; --accent: #4da3ff; --border: #2b3039; --warn: #ffb547; --ok: #5fd38d; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; overflow: hidden; }
-  #app { display: grid; height: 100%; grid-template: "top top top" 46px "left view right" 1fr "foot foot foot" 26px / 250px 1fr 280px; }
-  header { grid-area: top; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border); min-width: 0; }
-  header .side { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  header .side.end { justify-content: flex-end; }
-  .brand { font-size: 14px; white-space: nowrap; }
-  @media (max-width: 1200px) { .brand { display: none; } header { grid-template-columns: 1fr auto; } }   /* the toolbar needs the room */
-  .group { display: flex; gap: 4px; align-items: center; padding-right: 10px; border-right: 1px solid var(--border); }
-  #mapName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
-  aside { background: var(--panel); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 18px; }
-  #left { grid-area: left; border-right: 1px solid var(--border); }
-  #right { grid-area: right; border-left: 1px solid var(--border); }
-  #view { grid-area: view; position: relative; overflow: hidden; }
-  footer { grid-area: foot; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 10px; background: var(--panel); border-top: 1px solid var(--border); font-size: 12px; }
-  #status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #status.ok { color: var(--ok); } #status.warn { color: var(--warn); }
-  footer .hint { white-space: nowrap; }
-  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
-  label { display: flex; gap: 6px; align-items: center; }
-  label.field { display: grid; grid-template-columns: 64px 1fr; margin-top: 8px; color: var(--muted); }
-  select, input, button, summary { font: inherit; color: var(--text); background: #0f1114; border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
-  input[type=number] { width: 100%; box-sizing: border-box; padding: 4px 6px; }
-  input[type=checkbox] { padding: 0; }
-  select, #paletteFilter, #filter { width: 100%; box-sizing: border-box; }
-  button, summary { cursor: pointer; background: #232832; white-space: nowrap; }
-  button:hover, summary:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
-  button.active { border-color: var(--accent); color: var(--accent); background: rgba(77, 163, 255, .14); }
-  button:disabled { opacity: .45; cursor: default; }
-  button[hidden], select[hidden], label[hidden], section[hidden], .row[hidden] { display: none; }
-  details.menu { position: relative; }
-  details.menu > summary { list-style: none; }
-  details.menu > summary::-webkit-details-marker { display: none; }
-  details.menu[open] > summary { border-color: var(--accent); }
-  .items { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; min-width: 230px; display: flex; flex-direction: column; gap: 6px;
-           padding: 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .45); }
-  .items button { text-align: left; }
-  section.fill { flex: 1; display: flex; flex-direction: column; min-height: 160px; }
-  section.fill[hidden] { display: none; }
-  #left { gap: 10px; }
-  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-  .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
-  .modes.two { grid-template-columns: repeat(2, 1fr); margin: 4px 0 10px; }
-  .tree { flex: 1; overflow: auto; margin-top: 6px; padding: 4px 0; background: #0f1114; border: 1px solid var(--border); border-radius: 6px; user-select: none; }
-  .tree summary { display: block; padding: 3px 8px; border: 0; border-radius: 0; background: none; color: var(--muted); }
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.7.50/daisyui.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3"></script>
+<script src="https://cdn.jsdelivr.net/npm/lucide@1.61.0/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  @theme inline {
+    --color-base-100: var(--color-base-100); --color-base-200: var(--color-base-200); --color-base-300: var(--color-base-300);
+    --color-base-content: var(--color-base-content); --color-primary: var(--color-primary); --color-primary-content: var(--color-primary-content);
+    --color-neutral: var(--color-neutral); --color-neutral-content: var(--color-neutral-content);
+    --color-success: var(--color-success); --color-warning: var(--color-warning); --color-error: var(--color-error); --color-info: var(--color-info);
+  }
+  /* parts the script builds or re-classes, so it keeps plain class names */
+  /* the picked one of a set (tool, join, tab) reads at a glance */
+  .btn.active, .tabs-box .tab.tab-active { @apply bg-primary/15 text-primary border-primary/40 shadow-none; }
+  .tabs-box .tab:not(.tab-active) { @apply text-base-content/60 hover:text-base-content; }
+  .btn:disabled { @apply bg-transparent border-transparent text-base-content/25; }
+  header .btn { @apply whitespace-nowrap shrink-0; }
+  .join > .active { @apply relative z-[3]; }       /* above its neighbours, even a focused one (daisyUI lifts those to 2), whose edge would cover its border */
+  /* no focus rings anywhere: a focused field keeps its resting border */
+  :focus, :focus-visible, :focus-within { outline: none !important; }   /* !important: daisyUI's own focus rules are more specific */
+  .input:focus, .input:focus-within, .select:focus, .select:focus-within, .select:open, .textarea:focus, .textarea:focus-within {
+    --input-color: color-mix(in oklab, var(--color-base-content) 20%, #0000); box-shadow: none; outline: none;
+  }
+  ::selection { @apply bg-primary/35; }
+  * { scrollbar-width: thin; scrollbar-color: var(--color-neutral) transparent; }
+  /* inspector: sections, and rows of a label column then one field or three */
+  .section { @apply flex flex-col gap-2 border-t border-base-300 pt-3; }
+  .section > h3 { @apply m-0 text-[11px] font-semibold uppercase tracking-wider text-base-content/60; }
+  .actions { @apply flex gap-2 border-t border-base-300 pt-3; }
+  .section:not(:has(> :not(h3):not([hidden]))), .actions:not(:has(> :not([hidden]))) { display: none; }
+  .field { @apply grid grid-cols-[5rem_1fr] items-center gap-2 text-base-content/60; }
+  .vec { @apply grid grid-cols-[5rem_repeat(3,minmax(0,1fr))] items-center gap-1 text-base-content/60; }
+  .check { @apply flex cursor-pointer items-center gap-2; }
+  #selEdit .check { @apply ml-22; }               /* under the fields, past the label column */
+  #app:has(#scriptPanel:not([hidden])) #scriptButton { @apply bg-primary/15 text-primary; }
+  .tree { @apply flex-1 overflow-auto py-1 rounded-md bg-base-300 border border-white/5 select-none; }
+  .tree summary { @apply block px-2 py-0.5 cursor-pointer list-none text-base-content/60 hover:text-base-content; }
+  .tree summary::-webkit-details-marker { display: none; }
   .tree summary::before { content: '▸ '; } .tree details[open] > summary::before { content: '▾ '; }
-  .tree summary:hover { color: var(--text); }
-  .tree details details > summary { padding-left: 20px; }
-  .tree .item { padding: 2px 8px 2px 26px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tree .item.top { padding-left: 8px; }
-  #surfaceRow { margin: 0 0 8px; }
-  .row input.unused { visibility: hidden; }
-  .tree details details .item { padding-left: 40px; }
-  .tree .item:hover { background: #1c2129; }
-  .tree .item.sel { background: rgba(77, 163, 255, .18); color: var(--accent); }
-  .tree .empty { padding: 4px 10px; color: var(--muted); }
-  .row { display: grid; grid-template-columns: 62px 1fr 1fr 1fr; gap: 4px; align-items: center; margin-bottom: 4px; }
-  .row span { color: var(--muted); }
-  .tools-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 10px; }
-  input[type=range] { flex: 1; }
-  .muted { color: var(--muted); }
-  .kv { word-break: break-word; }
-  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-  #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
-  #loading[hidden] { display: none; }
-  .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0, 0, 0, .5); }
-  .overlay[hidden] { display: none; }
-  .overlay .card { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-width: 520px; }
-  .overlay p { margin: 0 0 10px; color: var(--muted); }
-  #ask { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-width: 420px; }
-  #ask::backdrop { background: rgba(0, 0, 0, .5); }
-  #ask p { margin: 0 0 10px; }
-  #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-  #scriptPanel { position: absolute; left: 0; right: 0; bottom: 0; height: 45%; display: flex; flex-direction: column; background: #15171c; border-top: 1px solid #2a2f38; z-index: 5; }
-  #scriptPanel[hidden] { display: none; }
-  .script-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; } .script-head .grow { flex: 1; }
-  #scriptStatus.warn { color: #ff8a7a; }
-  .script-head a { color: var(--accent); }
-  .script-body { flex: 1; display: flex; min-height: 0; gap: 8px; padding: 0 10px 10px; }
-  #scriptSource { flex: 1; resize: none; font: 12px/1.5 ui-monospace, Menlo, monospace; background: #0d0f12; color: #e6e6e6; border: 1px solid #2a2f38; border-radius: 6px; padding: 8px; tab-size: 2; }
-  #scriptEvents { width: 230px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
-  #scriptEvents button { text-align: left; font: 11px ui-monospace, Menlo, monospace; }
-  #scriptTexts { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-  #scriptTexts > div { position: absolute; transform: translate(-50%, -50%); font-weight: 700; text-shadow: 0 1px 3px #000; white-space: nowrap; }
-  #labels[hidden] { display: none; }
-  #labels > span { position: absolute; left: 0; top: 0; padding: 0 5px; border-radius: 4px; background: rgba(0, 0, 0, .7); color: #fff; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; }
-  #legend { position: absolute; left: 10px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 6px; background: rgba(0, 0, 0, .7); font-size: 12px; }
-  #scaleBar { height: 4px; background: #fff; border-radius: 2px; }
-  #dragInfo { position: absolute; pointer-events: none; padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, .75); color: #fff; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; }
-  .snap { display: flex; gap: 8px; align-items: center; } .snap select { width: auto; padding: 2px 6px; }
-  #help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; }
-  #help dt { color: var(--accent); white-space: nowrap; } #help dd { margin: 0; }
+  .tree details details > summary { @apply pl-5; }
+  .tree .item { @apply py-0.5 pr-2 pl-[26px] cursor-pointer truncate hover:bg-white/5; }
+  .tree .item.top { @apply pl-2; }
+  .tree details details .item { @apply pl-10; }
+  .tree .item.sel { @apply bg-primary/15 text-primary; }
+  .tree .empty { @apply px-2.5 py-1 text-base-content/60; }
+  #outline .item, #outline summary { @apply relative pr-7; }
+  #outline .eye { @apply absolute right-1.5 top-1/2 grid -translate-y-1/2 cursor-pointer text-base-content/60 opacity-0 hover:text-base-content; }
+  #outline :hover > .eye, #outline .eye.shown { @apply opacity-100; }   /* on hover, and always while something under it is hidden */
+  .dropdown-content label { @apply flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer hover:bg-white/5; }
+  .select > button { display: contents; } .select > button > span { @apply min-w-0 truncate; }
+  .doc { @apply overflow-auto rounded-md border border-white/5 bg-base-200 px-3 py-2 text-xs leading-relaxed text-base-content/80; }
+  .doc h2 { @apply mb-2 text-sm font-semibold text-base-content; }
+  .doc h3 { @apply mt-4 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-base-content/60; }
+  .doc p, .doc pre, .doc table { @apply mb-3; }
+  .doc strong { @apply text-base-content; }
+  .doc code { @apply rounded bg-base-300 px-1 font-mono text-[11px] text-base-content; }
+  .doc pre { @apply overflow-auto rounded-md bg-base-300 p-2; } .doc pre code { @apply bg-transparent p-0; }
+  .doc table { @apply w-full border-collapse; }
+  .doc th, .doc td { @apply border-b border-base-300 px-1.5 py-1 text-left align-top; } .doc th { @apply font-semibold text-base-content/60; }
+  #status { @apply truncate; } #status.ok { @apply text-success; } #status.warn { @apply text-warning; }
+</style>
+<style>
+  [data-theme=rlme] {
+    color-scheme: dark;
+    --color-base-100: #1a1d23; --color-base-200: #15171c; --color-base-300: #0f1114; --color-base-content: #e7e9ec;
+    --color-primary: #4da3ff; --color-primary-content: #06121f; --color-secondary: #a78bfa; --color-secondary-content: #110a24;
+    --color-accent: #4da3ff; --color-accent-content: #06121f; --color-neutral: #232832; --color-neutral-content: #e7e9ec;
+    --color-info: #4da3ff; --color-info-content: #06121f; --color-success: #5fd38d; --color-success-content: #05180d;
+    --color-warning: #ffb547; --color-warning-content: #231500; --color-error: #ff8a7a; --color-error-content: #2a0904;
+    --radius-selector: .25rem; --radius-field: .375rem; --radius-box: .5rem;
+    --size-selector: .22rem; --size-field: .22rem; --border: 1px; --depth: 0; --noise: 0;
+  }
+</style>
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  body { font: 13px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: var(--color-base-300); color: var(--color-base-content); }   /* html keeps 16px: Tailwind's rem sizes */
+  #app { display: grid; height: 100%; grid-template: "top top top" 46px "left view right" 1fr "foot foot foot" 26px / 250px 1fr 280px; }
+  /* while the map from before a reload comes back (restoreSession): skeletons in the panels, a message over the view */
+  #app:not(.booting) .boot-only, #app.booting .boot-hide { display: none; }
 </style>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "preact": "https://cdn.jsdelivr.net/npm/preact@11.0.1/dist/preact.mjs",
+  "preact/hooks": "https://cdn.jsdelivr.net/npm/preact@11.0.1/hooks/dist/hooks.mjs",
+  "htm": "https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.module.js",
+  "marked": "https://cdn.jsdelivr.net/npm/marked@12.0.2/lib/marked.esm.js",
+  "htm/preact": "https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/index.module.js",
+  "@preact/signals": "https://cdn.jsdelivr.net/npm/@preact/signals@2.11.3/dist/signals.module.js",
+  "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.14.4/dist/signals-core.module.js"
 } }
 </script>
 </head>
 <body>
-<div id="app">
-  <header>
-    <div class="side">
-      <div class="group">
-        <button id="newMap" title="Start over with flat ground, the car and the ball">New</button>
-        <button id="open" title="Open a Rocket League workshop map (.udk), or drop one on the view. Maps never leave this computer. (⌘O)">Open…</button>
-        <button id="save" class="primary" title="Save the map as a .udk file (⌘S)">Save as…</button>
-        <details class="menu">
-          <summary title="Put the map into Rocket League (Chrome or Edge)">Game ▾</summary>
-          <div class="items">
-            <button id="play" title="Writes the map over Free Play's Underpass. Be on the main menu, not in Underpass.">Load into game</button>
-            <button id="restore" title="Put the game's own Underpass back">Restore the original Underpass</button>
-          </div>
-        </details>
-      </div>
-      <div class="group">
-        <button id="undo" title="Undo (⌘Z)">↶ Undo</button>
-        <button id="sculpt" title="Paint hills, mountains and roads onto the ground (T)">Sculpt</button>
-      </div>
-      <details class="menu">
-        <summary>View ▾</summary>
-        <div class="items">
-          <label><input type="checkbox" id="showCheckpoints" checked> Checkpoints, lava and trigger zones</label>
-          <label><input type="checkbox" id="showVolumes"> Other trigger zones</label>
-          <label><input type="checkbox" id="showMarkers" checked> Objects without a shape</label>
-          <label><input type="checkbox" id="showHuge"> Huge objects (sky, barriers)</label>
-          <label title="Labels that AI agents building the map refer to"><input type="checkbox" id="showIds"> Object ids</label>
-          <label title="Moving shapes move in the view as they will in the game"><input type="checkbox" id="playMotion" checked> Play moving shapes</label>
-          <label title="Textures and colours of the game's own surfaces, read from the game folder (TAGame/CookedPCConsole)"><input type="checkbox" id="gameTextures"> Game textures</label>
-        </div>
-      </details>
-      <details class="menu" id="lightingMenu">
-        <summary title="The mood of the map's sun and sky lights">Lighting ▾</summary>
-        <div class="items" id="lightingItems"></div>
-      </details>
-      <button id="scriptButton" title="Events and what they set off, in JavaScript">Script</button>
-      <details class="menu" id="screenMenu">
-        <summary title="Text the map shows on screen while you play">On screen ▾</summary>
-        <div class="items">
-          <label title="Counts up from the start and stops for good when the last checkpoint becomes the respawn point"><input type="checkbox" id="hudTimer"> Timer</label>
-          <label title="Counts lava touches and resets"><input type="checkbox" id="hudDeaths"> Death counter</label>
-        </div>
-      </details>
-    </div>
-    <b class="brand">RL Map Editor</b>
-    <div class="side end">
-      <div id="mapName" class="muted"></div>
-      <div class="muted"><span id="dirty">0</span> changes</div>
-      <button id="helpButton" title="Keyboard and mouse controls (?)">?</button>
-    </div>
-  </header>
+<div id="app" class="booting">
+  <header id="toolbar" class="[grid-area:top] flex items-center justify-between gap-4 px-2 min-w-0 bg-base-100 border-b border-base-300"></header>
 
-  <aside id="left">
-    <div class="tabs" role="tablist">
-      <button role="tab" data-tab="map" class="active" aria-selected="true" title="What's in the map">Map</button>
-      <button role="tab" data-tab="add" aria-selected="false" title="Shapes, checkpoints, lava and lights to place">Add</button>
+  <aside id="left" class="[grid-area:left] flex flex-col gap-2 p-2.5 min-h-0 overflow-hidden bg-base-100 border-r border-base-300">
+    <div id="leftPanel" class="contents"></div>
+    <div class="boot-only flex flex-1 flex-col gap-3 rounded-md border border-white/5 bg-base-300 p-2.5 [&>div]:h-3 [&>div]:bg-base-100">
+      <div class="skeleton w-3/5"></div><div class="skeleton w-1/2"></div><div class="skeleton w-4/5"></div><div class="skeleton w-2/3"></div>
+      <div class="skeleton w-1/2"></div><div class="skeleton w-3/4"></div><div class="skeleton w-2/5"></div>
     </div>
-    <section class="fill" id="mapTab">
-      <input id="filter" placeholder="Find objects: name, kind or shape">
-      <div id="outline" class="tree" role="tree" aria-label="Objects in the map"></div>
-      <div id="count" class="muted" style="margin-top:6px"></div>
-    </section>
-    <section class="fill" id="addTab" hidden>
-      <input id="paletteFilter" placeholder="Search shapes, checkpoints and lights">
-      <div id="palette" class="tree" role="tree" aria-label="Things to place"></div>
-      <div class="actions">
-        <button id="add" class="primary" title="Place the picked shape or checkpoint where you're looking (or double-click it in the list)">Place</button>
-      </div>
-    </section>
   </aside>
 
-  <main id="view">
-    <div id="loading">Loading…</div>
-    <div id="scriptTexts"></div>
-    <section id="scriptPanel" hidden>
-      <div class="script-head"><b>Script</b> <span id="scriptStatus" class="muted"></span><span class="grow"></span>
-        <a href="ai-guide.md#scripts" target="_blank" title="The script API">API</a>
-        <button id="scriptRun" class="primary" title="Run the script: check it and use it from now on (⌘Enter)">Apply</button>
-        <button id="scriptClose" title="Close">✕</button></div>
-      <div class="script-body"><textarea id="scriptSource" spellcheck="false" placeholder="const pad = zone('pad');&#10;on(pad.enter('car'), text('Hello!', 2));"></textarea>
-        <div id="scriptEvents"><span class="muted">Preview: set off an event</span><button id="scriptStart" title="Back to the start, then the map-start events">▶ Start over</button><div id="scriptFire" style="display:contents"></div></div></div>
-    </section>
-    <div id="dragInfo" hidden></div>
-    <div id="labels" hidden><div id="legend"><span id="legendText"></span><span id="scaleBar"></span><span id="scaleText"></span></div></div>
+  <main id="view" class="[grid-area:view] relative overflow-hidden">
+    <!-- position inline: it shows before Tailwind has run -->
+    <div class="boot-only grid place-items-center" style="position: absolute; inset: 0; z-index: 6; background: var(--color-base-300)">
+      <div class="flex flex-col items-center gap-3 text-base-content/60"><span class="loading loading-spinner loading-md text-primary"></span><span id="bootText">Loading…</span></div>
+    </div>
+    <div id="loadingMount" class="contents"></div>
+    <div id="scriptTexts" class="pointer-events-none absolute inset-0 overflow-hidden"></div>
+    <div id="scriptMount" class="contents"></div>
+    <div id="dragInfo" class="pointer-events-none absolute whitespace-nowrap rounded bg-base-300/85 px-1.5 font-mono text-[11px] leading-snug" hidden></div>
+    <div id="labels" class="pointer-events-none absolute inset-0 overflow-hidden" hidden><div id="legend" class="absolute bottom-2.5 left-2.5 flex items-center gap-2 rounded-box bg-base-300/80 px-2 py-0.5 text-xs"><span id="legendText"></span><span id="scaleBar" class="h-1 rounded-full bg-base-content"></span><span id="scaleText"></span></div></div>
     <input type="file" id="file" accept=".udk,.upk" hidden>
   </main>
 
-  <aside id="right">
-    <section id="selection">
-      <h2>Inspector</h2>
-      <div id="selInfo" class="muted">Nothing selected. Click an object in the view or in the Map list, or place one from the Add tab.</div>
-      <div id="selEdit" hidden style="margin-top:10px">
-        <label class="field" id="nameRow" title="What the Script and AI agents call it: letters, digits, - and _">Name <input id="objName" maxlength="40" spellcheck="false"></label>
-        <div class="modes">
-          <button data-mode="translate" title="Move it in the view (1)">Move</button>
-          <button data-mode="rotate" title="Rotate it in the view (2)">Rotate</button>
-          <button data-mode="scale" title="Scale it in the view (3)">Scale</button>
-        </div>
-        <div class="snap">
-          <label title="Dragging lines edges up with the grid and with shapes nearby, sizes in grid steps, turns 15° at a time (G; hold ⌘ while dragging to snap the other way)"><input type="checkbox" id="snap"> Snap</label>
-          <select id="snapStep" title="Grid step ([ and ])"><option value="10">10 units</option><option value="25">25 units</option><option value="50">50 units</option><option value="100">100 units</option><option value="250">250 units</option><option value="500">500 units</option></select>
-        </div>
-        <div id="cpShape" hidden>
-          <span class="muted">Shape</span>
-          <div class="modes two">
-            <button data-gate="box" title="A box you drive or dribble into">Box</button>
-            <button data-gate="gate" title="A flat gate you pass through, 20 units thick">Gate</button>
-          </div>
-        </div>
-        <div id="cpPanel" hidden>
-          <label title="Adds an opaque panel the size of the checkpoint, so players see it; nothing collides with it"><input type="checkbox" id="panelOn"> Visible in game</label>
-          <label class="field" id="cpTitleRow" title="Shown on screen for 2 seconds when this checkpoint becomes the respawn point">Title <input id="cpTitle" maxlength="60" placeholder="Checkpoint N"></label>
-        </div>
-        <label class="field" id="gravityRow" hidden title="Units per second²: Rocket League's own is −650; less floats, more is heavy, above 0 pulls up">Gravity <input type="number" id="gravityZ" step="50" min="-20000" max="20000" placeholder="map default"></label>
-        <div id="ballPlace" class="ball-place" hidden>
-          <span class="muted">Ball after reset</span>
-          <div class="modes two">
-            <button data-ball="front" title="The new ball appears ahead of the car, the way the checkpoint faces">In front</button>
-            <button data-ball="top" title="The new ball drops onto the car's roof">On the car</button>
-          </div>
-        </div>
-        <div id="motionEdit" hidden>
-          <label class="field" title="How it moves in the game">Moves <select id="mKind"><option value="">No</option></select></label>
-          <div class="row" data-m="slide" title="Where it goes, from where it stands (units)"><span>Goes by</span><input type="number" step="50" data-mv="to" data-k="0" title="X"><input type="number" step="50" data-mv="to" data-k="1" title="Y"><input type="number" step="50" data-mv="to" data-k="2" title="Z"></div>
-          <div id="mSpots" data-m="path"></div>
-          <div class="actions" data-m="path"><button id="mAddSpot" title="Another spot after the last one">Add spot</button><button id="mDropSpot">Remove last</button></div>
-          <label class="field" data-m="slide path" title="How it gets back to where it started">Back <select id="mBack"><option value="same">The same way</option><option value="start">Straight to the start</option><option value="jump">Jumps to the start</option></select></label>
-          <label class="field" data-m="spin swing" title="The shape's own axis it turns about">Axis <select id="mAxis"><option value="yaw">Up (like a turntable)</option><option value="roll">Forward (like a windmill)</option><option value="pitch">Sideways (tumbling)</option></select></label>
-          <label class="field" data-m="spin" title="Turns this many times per round, waiting the pause after each">Steps <input type="number" id="mSteps" min="1" max="36" step="1"></label>
-          <label data-m="spin"><input type="checkbox" id="mReverse"> The other way round</label>
-          <label class="field" data-m="swing" title="How far it swings each way from where it hangs">Angle° <input type="number" id="mAngle" min="1" max="180" step="5"></label>
-          <label class="field" data-m="swing" title="The point it swings about">Hinge <select id="mHinge"><option value="top">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select></label>
-          <label class="field" data-m="all"><span id="mSecondsLabel">Seconds</span> <input type="number" id="mSeconds" min="0.1" max="600" step="0.1"></label>
-          <label class="field" data-m="all" title="Seconds it waits at each stop">Pause <input type="number" id="mPause" min="0" max="600" step="0.1"></label>
-          <label data-m="all" title="Eases into and out of every stop; a swing moves like a pendulum"><input type="checkbox" id="mSmooth"> Smooth starts and stops</label>
-          <label class="field" data-m="all" title="What sets it going; the view plays every moving shape from the start">Starts <select id="mTrigger"></select></label>
-          <label class="field" data-m="all" title="Seconds after it starts before it moves">Delay <input type="number" id="mDelay" min="0" max="600" step="0.1"></label>
-          <label data-m="all" title="Moves through its round once, instead of over and over"><input type="checkbox" id="mOnce"> Runs once</label>
-        </div>
-        <div id="lightEdit" hidden>
-          <label class="field">Colour <input type="color" id="lightColor"></label>
-          <label class="field" title="1 is a plain light; most maps' suns are 0.3 to 1.3">Brightness <input type="number" id="lightBrightness" min="0" max="100" step="0.1"></label>
-          <label class="field" id="lightRadiusRow" title="How far it reaches">Radius <input type="number" id="lightRadius" min="10" max="100000" step="50"></label>
-          <label class="field" id="lightOuterRow" title="From the middle of the cone to its edge">Cone° <input type="number" id="lightOuter" min="1" max="89" step="1"></label>
-          <label class="field" id="lightInnerRow" title="Full brightness inside this angle, fading out to the cone's edge">Core° <input type="number" id="lightInner" min="0" max="89" step="1"></label>
-          <label title="Shadows from many lights can cost frame rate"><input type="checkbox" id="lightShadows"> Casts shadows</label>
-          <label><input type="checkbox" id="lightOn"> On</label>
-        </div>
-        <label class="field" id="surfaceRow">Surface <select id="surface" title="What it looks like in game"></select></label>
-        <div class="row" id="locRow"><span>Location</span><input type="number" data-f="loc" data-k="0"><input type="number" data-f="loc" data-k="1"><input type="number" data-f="loc" data-k="2"></div>
-        <div class="row" id="rotRow"><span>Rotation°</span><input type="number" data-f="rot" data-k="0" title="Pitch"><input type="number" data-f="rot" data-k="1" title="Yaw"><input type="number" data-f="rot" data-k="2" title="Roll"></div>
-        <div class="row" id="scaleRow"><span>Scale</span><input type="number" step="0.05" data-f="scale" data-k="0"><input type="number" step="0.05" data-f="scale" data-k="1"><input type="number" step="0.05" data-f="scale" data-k="2"></div>
-        <div class="actions">
-          <button id="duplicate" title="Duplicate (⌘D)">Duplicate</button>
-          <button id="delete" title="Delete (⌫)">Delete</button>
-        </div>
-      </div>
-    </section>
-    <section id="brush" hidden>
-      <h2>Terrain brush</h2>
-      <div class="tools-grid">
-        <button data-tool="raise">Raise</button>
-        <button data-tool="lower">Lower</button>
-        <button data-tool="smooth">Smooth</button>
-        <button data-tool="flatten" title="Level the ground to the height where the stroke started">Flatten</button>
-        <button data-tool="road" title="A drivable road along your drag, flat across its width">Road</button>
-      </div>
-      <label>Size <input type="range" id="brushSize" min="200" max="4000" step="50" value="1200"></label>
-      <label>Strength <input type="range" id="brushStrength" min="1" max="100" value="30"></label>
-      <div class="muted" id="brushHint" style="margin-top:8px"></div>
-      <label class="field">Surface <select id="terrainMat" title="Surface of the terrain; set when its first hill is saved"></select></label>
-    </section>
+  <aside id="right" class="[grid-area:right] flex flex-col gap-4 p-3 overflow-auto bg-base-100 border-l border-base-300">
+    <!-- field rows: a label column and the field; vector rows: a label and three fields; .active marks the picked button of a join -->
+    <div class="boot-only flex flex-col gap-3">
+      <div class="skeleton h-4 w-14"></div>
+      <div class="flex flex-col gap-2"><div class="skeleton h-3 w-full"></div><div class="skeleton h-3 w-4/5"></div></div>
+      <div class="mt-3 skeleton h-3 w-20"></div>
+      <div class="flex items-center gap-2"><div class="skeleton h-3 w-16"></div><div class="skeleton h-7 flex-1"></div></div>
+      <div class="mt-3 skeleton h-3 w-20"></div>
+      <div class="flex items-center gap-2"><div class="skeleton size-4"></div><div class="skeleton h-3 w-16"></div></div>
+      <div class="flex items-center gap-2"><div class="skeleton size-4"></div><div class="skeleton h-3 w-24"></div></div>
+    </div>
+    <section id="selection" class="boot-hide flex flex-col gap-3"></section>
+    <section id="brush" class="flex flex-col gap-2"></section>
   </aside>
 
-  <footer>
-    <div id="status"></div>
-    <div class="muted hint">WASD move · Q/E turn · drag to orbit · ? for all controls</div>
-  </footer>
+  <footer id="footer" class="[grid-area:foot] flex items-center justify-between gap-4 px-2.5 text-xs bg-base-100 border-t border-base-300 min-w-0"></footer>
 </div>
-
-<div id="help" class="overlay" hidden>
-  <div class="card">
-    <h2>Controls</h2>
-    <dl>
-      <dt>W A S D</dt><dd>Move the camera (Shift: faster)</dd>
-      <dt>Q / E</dt><dd>Turn the camera</dd>
-      <dt>Left-drag · Right-drag · Wheel</dt><dd>Orbit · pan · zoom</dd>
-      <dt>Click</dt><dd>Select · F focuses it · Esc deselects</dd>
-      <dt>1 / 2 / 3</dt><dd>Move / rotate / scale the selection</dd>
-      <dt>G · [ ]</dt><dd>Snap on or off · grid step: edges to the grid and to shapes nearby, sizes in steps, 15° turns (⌘ while dragging: the other way)</dd>
-      <dt>T</dt><dd>Sculpt the ground (Shift lowers, ⌥-drag orbits)</dd>
-      <dt>⌘D · ⌫ · ⌘Z</dt><dd>Duplicate · delete · undo</dd>
-      <dt>⌘S · ⌘O</dt><dd>Save as · open a map</dd>
-      <dt>?</dt><dd>Show or hide this</dd>
-    </dl>
-    <p>AI agents that can run JavaScript in this page can build maps here on their own: <code>await mapAI.help()</code> (or <a href="ai-guide.md" target="_blank">ai-guide.md</a>) explains how.</p>
-  </div>
-</div>
-<dialog id="ask">
-  <form method="dialog">
-    <p></p>
-    <div class="actions"><button value="ok" class="primary"></button><button value="">Cancel</button></div>
-  </form>
-</dialog>
+<div id="overlays"></div>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -318,7 +147,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Package } from './ue3.js';
 import { blankMap } from './blank.js';
-import { LIGHTING, build, describe, isOriginalGameMap, shapes } from './map.js';
+import { LIGHTING, build, describe, isOriginalGameMap, shapes, bareName } from './map.js';
 import { BALL_AHEAD, BALL_FRONT_LIFT, BALL_LIFT, BALL_TOP_AHEAD } from './kismet.js';
 import { LIGHT_FIELDS, LIGHT_KINDS } from './lights.js';
 import { planNames, runScript } from './script.js';
@@ -326,7 +155,9 @@ import { MOTIONS, eulerRotator, keysAt, motionErrors, motionKeys, newMotion, sca
 import { CELL, SINK, TILE } from './mesh.js';
 import { BUILT_IN, asMeshInput, corners, meshGeometry } from './shapes.js';
 import { nameLook, surfaceLook, textureImage } from './looks.js';
+import { textureSize } from './texture.js';
 import { gameIndex, gameLook, openGame } from './game.js';
+import { SNAP_STEPS, mountUI, ui } from './ui.js';
 
 // Unreal is left-handed Z-up, Three.js right-handed Y-up: swapping Y and Z converts without mirroring.
 const UU = Math.PI / 32768;                       // rotator units to radians
@@ -428,7 +259,7 @@ const TURN = THREE.MathUtils.degToRad(15), YAW_STEP = 65536 / 24, AXES = ['x', '
 const UE_AXIS = { x: 'X', y: 'Z', z: 'Y' };      // three's axes by their Unreal names
 let snapStep = 50, drag = null, freeDrag = false, dragAt = [0, 0];
 window.addEventListener('pointermove', e => { freeDrag = e.metaKey || e.ctrlKey; dragAt = [e.clientX, e.clientY]; }, true);
-const snapping = () => $('snap').checked !== freeDrag;
+const snapping = () => ui.snap.value !== freeDrag;
 const guideGeo = new THREE.BoxGeometry(1, 1, 1), guideEdges = new THREE.EdgesGeometry(guideGeo);
 const guideFill = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.18, depthWrite: false });
 const guideLine = new THREE.LineBasicMaterial({ color: 0x00e5ff, depthTest: false });   // over the shape's own edges
@@ -549,7 +380,7 @@ renderer.setAnimationLoop(() => {
   flyCamera(dt);
   orbit.update();
   syncLightPreview();
-  const posed = $('playMotion').checked && !gizmo.dragging ? poseMovers(dt) : [];
+  const posed = ui.view.value.playMotion && !gizmo.dragging ? poseMovers(dt) : [];
   renderer.render(scene, camera);
   for (const [o, p, q] of posed) { o.position.copy(p); o.quaternion.copy(q); o.visible = true; }
   drawLabels();
@@ -597,13 +428,10 @@ let lighting = 'map', lightingSaved = 'map';      // the mood picked, and the on
 const NO_HUD = { timer: false, deaths: false };
 let hud = NO_HUD, hudSaved = NO_HUD;              // the timer and death counter wanted, and what the map has
 const hudChanged = () => hud.timer !== hudSaved.timer || hud.deaths !== hudSaved.deaths;
-function renderHud() { $('hudTimer').checked = hud.timer; $('hudDeaths').checked = hud.deaths; }
+let hasSuns = true;                               // a map without sun or sky lights has no mood to set
+const renderHud = () => { ui.mapProps.value = { ...ui.mapProps.value, hud }; };
 function renderLighting() {
-  $('lightingItems').replaceChildren(...[['map', 'As the map has it'], ...Object.entries(LIGHTING).map(([k, v]) => [k, v.name])].map(([key, name]) => {
-    const label = document.createElement('label');
-    label.append(Object.assign(document.createElement('input'), { type: 'radio', name: 'lighting', value: key, checked: key === lighting }), ` ${name}`);
-    return label;
-  }));
+  ui.mapProps.value = { ...ui.mapProps.value, lighting: hasSuns ? { value: lighting, options: [['map', 'As the map has it'], ...Object.entries(LIGHTING).map(([k, v]) => [k, v.name])] } : null };
   const p = LIGHTING[lighting], [r, g, b] = (p?.tint ?? [255, 255, 255]).map(v => v / 255);
   sun.color.setRGB(r, g, b, THREE.SRGBColorSpace);
   sun.intensity = 1.4 * (p?.brightness ?? 1);
@@ -621,11 +449,68 @@ const lookOf = obj => (obj.userData.panel ? shownCheckpointMats : checkpointMats
 // see-through glass when the map has some, so a gate shows without hiding the view; for lava something fiery.
 // 'lava' is a red copy of a surface, made when the map is saved.
 const fiery = name => /lava|magma|fire|ember|orange/i.test(name) || /(?<![a-z])red|Red/.test(name);   // not "Colored"
-const surfaceValue = v => v === 'lava' ? v : +v;
+const surfaceValue = v => v === 'lava' || v.startsWith('extra:') || v.startsWith('image:') ? v : +v;
+// Surfaces borrowed from other maps, offered in every map (surfaces.upk, made by surfaces.mjs) and copied into it
+// when used: value 'extra:<material name>'
+const EXTRA_SURFACES = { Text_LavaFloor: 'Lava (Lethamyr\'s lava floor)', Lake_01_Mat: 'Water (Deadeye Canyon lake)', Editor_Grass: 'Grass' };
+const LAVA_FLOOR = 'extra:Text_LavaFloor';
+const STARTER_GROUND = 'extra:Editor_Grass';   // a new map's ground and hills, until you pick another
+const extras = fetch('surfaces.upk').then(r => r.ok ? r.arrayBuffer() : null).then(b => b && new Package(new Uint8Array(b))).catch(() => null);
+let donor = null;
+extras.then(p => { donor = p; offerExtras(); refreshSurfaces(); gameLooksSoon(); });
+const donorRef = value => donor?.materials().find(m => bareName(m.name) === value.slice(6))?.ref;
+const surfaceOptions = () => ui.surfaces.value;   // [{value, text, group?}], as Surface lists show them
+function offerExtras() {                          // the borrowed surfaces this map doesn't have yet, after its own
+  const shown = new Set(surfaceOptions().flatMap(o => [o.text, String(o.value)]));   // a copy the map has shows under the same label
+  const more = Object.entries(EXTRA_SURFACES).filter(([name, label]) => donorRef(`extra:${name}`) && !shown.has(label) && !shown.has(`extra:${name}`))
+    .map(([name, label]) => ({ value: `extra:${name}`, text: label, group: 'From other maps' }));
+  if (more.length) ui.surfaces.value = [...surfaceOptions(), ...more];
+}
+// Pictures from this computer, as surfaces: value 'image:<id>', made into a texture and a material when the map is
+// built (map.js imageSurface). Kept for a reload with the map's changes, offered in every map opened meanwhile.
+const images = new Map();                         // value -> {name, width, height, rgba}
+function offerImages() {                          // the pictures this map doesn't have yet (a saved one shows as its own surface)
+  const shown = new Set(surfaceOptions().flatMap(o => [String(o.value), bareName(String(o.text))]));
+  const more = [...images].filter(([value, img]) => !shown.has(value) && !shown.has(img.name)).map(([value, img]) => ({ value, text: img.name, group: 'Your pictures' }));
+  if (more.length) ui.surfaces.value = [...surfaceOptions(), ...more];
+}
+function pickPicture() {                          // a picture from this computer as a surface: its value, null when none
+  return new Promise(resolve => {
+    const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*' });
+    input.onchange = () => addPicture(input.files[0]).then(resolve, err => { setStatus(`That picture could not be read: ${err.message}`, 'warn'); resolve(null); });
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+async function addPicture(file) {
+  const bitmap = await createImageBitmap(file), [width, height] = textureSize(bitmap.width, bitmap.height);
+  const canvas = Object.assign(document.createElement('canvas'), { width, height }), ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  const base = file.name.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'Picture';
+  const value = `image:${Date.now()}`, name = /^\d/.test(base) ? `Picture_${base}` : base;
+  images.set(value, { name, width, height, rgba: new Uint8Array(ctx.getImageData(0, 0, width, height).data.buffer) });
+  offerImages();
+  setStatus(`${file.name} is a surface now${width !== bitmap.width || height !== bitmap.height ? `, as ${width}×${height} (the game wants powers of two)` : ''}.`, 'ok');
+  return value;
+}
+function offerSurfaces(data, saved = null) {      // the map's surfaces in the Surface and terrain lists; `saved`: its terrain's
+  const earthy = data.materials.find(m => /sand|grass|dirt|rock|ground|snow|terrain/i.test(m.name)) || data.materials[0];
+  const own = data.materials.map(m => ({ value: m.ref, text: EXTRA_SURFACES[bareName(m.name)] ?? m.name }));
+  ui.terrain.value = { options: own, value: earthy ? saved ?? earthy.ref : null, locked: saved !== null };   // placed tiles keep the surface they were saved with
+  ui.surfaces.value = [...own, ...(data.tintable && !data.materials.some(m => fiery(m.name)) ? [{ value: 'lava', text: `Lava red (a red copy of ${data.tintable})` }] : [])];
+  if (donor) offerExtras();
+  offerImages();
+  lastSurface = earthy?.ref ?? null;
+}
+function setTerrainSurface(value) {                // a reference, or a Surface list's value
+  ui.terrain.value = { ...ui.terrain.value, value: typeof value === 'string' ? surfaceValue(value) : value };
+  refreshSurfaces();
+}
 let lastSurface = null;                           // what new shapes get: the surface last picked for one (first the map's earthiest)
 function panelSurface(lava = false) {
-  const options = [...$('surface').options], look = options.find(o => lava ? fiery(o.text) : /glass/i.test(o.text));
-  return look ? surfaceValue(look.value) : lastSurface;
+  const options = surfaceOptions();
+  const look = (lava && options.find(o => o.value === LAVA_FLOOR || o.text === EXTRA_SURFACES.Text_LavaFloor)) || options.find(o => lava ? fiery(o.text) : /glass/i.test(o.text));
+  return look ? look.value : lastSurface;
 }
 const terrainMat = new THREE.MeshStandardMaterial({ color: 0xa08a64, roughness: 0.9, flatShading: true });
 // A checkpoint shows where a reset puts you: the car at its respawn spot facing the arrow (its local +X), and for
@@ -713,8 +598,8 @@ const roofSpot = start => {                      // a ball resting on the car at
 function baseSun() {                              // the starter's stand-in for the blank map's lights
   const a = { i: null, name: 'Sun (comes with the blank map)', cls: 'DirectionalLight', mesh: null, loc: [-3000, -3000, 4000],
               rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null, meshIndex: null };
-  const obj = new THREE.Mesh(geometryFor(null), materialFor(a));
-  obj.userData = { actor: a, placeholder: true };
+  const obj = new THREE.Mesh(sunGeo, new THREE.MeshBasicMaterial({ color: SUN_GOLD }));
+  obj.userData = { actor: a, placeholder: true, aiId: 'sun' };   // not in a map file yet: no map#<export> id
   applyActor(obj);
   return obj;
 }
@@ -729,6 +614,12 @@ const ballOfNoOne = () => ({ i: null, name: 'Ball spawn', cls: 'BallSpawn', mesh
 // Lights: a marker in the light's colour (faint when off); selected, its reach, its cone, or the way a sun shines.
 // Point and spot lights also light the view: the ones nearest to where you look, as many as the view has lights for.
 const lightGeo = new THREE.SphereGeometry(45, 16, 8);
+const SUN_GOLD = 0xffc83d;
+const sunGeo = mergeGeometries([new THREE.SphereGeometry(110, 24, 12),   // a ball with rays all round: a sun from any side
+  ...[[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], ...[-1, 1].flatMap(x => [-1, 1].flatMap(y => [-1, 1].map(z => [x, y, z])))].map(d => {
+    const ray = new THREE.ConeGeometry(26, 120, 8).translate(0, 210, 0);
+    return ray.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...d).normalize()));
+  })]);
 const LIGHT_AIM = { point: [0, 0, 0], spot: [-16384, 0, 0], sun: [-8192, 8192, 0], sky: [0, 0, 0] };   // a spot shines straight down
 const LIGHT_LIFT = { point: 400, spot: 1000, sun: 3000, sky: 3000 };   // how far over the point you look at a new one goes
 const NEW_LIGHT = {
@@ -739,7 +630,7 @@ const NEW_LIGHT = {
 };
 const settingsOf = light => Object.fromEntries(['kind', ...LIGHT_FIELDS].filter(f => f in light).map(f => [f, structuredClone(light[f])]));
 function lightObject(a, light) {
-  const obj = new THREE.Mesh(lightGeo, new THREE.MeshBasicMaterial({ transparent: true }));
+  const obj = new THREE.Mesh(light.kind === 'sun' ? sunGeo : lightGeo, new THREE.MeshBasicMaterial({ transparent: true }));
   obj.userData = { actor: a, light };
   refreshLight(obj);
   applyActor(obj);
@@ -747,7 +638,8 @@ function lightObject(a, light) {
 }
 function refreshLight(obj) {
   const l = obj.userData.light;
-  obj.material.color.setRGB(...l.color.map(v => v / 255), THREE.SRGBColorSpace);
+  if (l.kind === 'sun') obj.material.color.set(SUN_GOLD);
+  else obj.material.color.setRGB(...l.color.map(v => v / 255), THREE.SRGBColorSpace);
   obj.material.opacity = l.on ? 1 : 0.35;
 }
 function placeLight(kind, loc, rot = LIGHT_AIM[kind], light = structuredClone({ kind, ...NEW_LIGHT[kind] })) {
@@ -826,72 +718,50 @@ function checkpointName(o) {
   const u = o.userData, a = u.actor;
   return u.title || `${u.checkpoint === 'ball' ? 'Ball' : 'Car'} ${isGate(a) ? 'gate' : 'checkpoint'} at ${a.loc.slice(0, 2).map(Math.round).join(', ')}`;
 }
-function showMotion(o) {                          // the inspector's Motion settings for `o`
-  $('motionEdit').hidden = !canMove(o);
-  if ($('motionEdit').hidden) return;
-  const m = o.userData.motion, kind = m?.kind ?? '';
-  if ($('mKind').options.length === 1) $('mKind').append(...Object.entries(MOTIONS).map(([k, v]) => new Option(v, k)));
-  $('mKind').value = kind;
-  for (const el of $('motionEdit').querySelectorAll('[data-m]')) el.hidden = !kind || (el.dataset.m !== 'all' && !el.dataset.m.split(' ').includes(kind));
-  if (!m) return;
-  $('mBack').querySelector('[value=start]').hidden = kind !== 'path';
-  $('mSecondsLabel').textContent = { slide: 'Move s', path: 'Move s', spin: 'Step s', swing: 'Swing s' }[kind];
-  $('mSecondsLabel').parentElement.title = { slide: 'Seconds from one end to the other', path: 'Seconds from one spot to the next', spin: 'Seconds a step takes (with one step, a whole turn)',
-                                             swing: 'Seconds a whole swing takes, there and back' }[kind];
-  if (kind === 'path' && $('mSpots').children.length !== m.points.length) {
-    $('mSpots').replaceChildren(...m.points.map((_, n) => {
-      const row = Object.assign(document.createElement('div'), { className: 'row', title: 'A spot it visits, from where it stands (units)' });
-      row.append(Object.assign(document.createElement('span'), { textContent: `Spot ${n + 1}` }),
-                 ...[0, 1, 2].map(k => Object.assign(document.createElement('input'), { type: 'number', step: 50, title: 'XYZ'[k], dataset: { mp: n, k } })));
-      return row;
-    }));
-  }
+function motionOf(o) {                            // the Inspector's Motion settings for `o` (ui.js Motion), null when it can't move
+  if (!canMove(o)) return null;
+  const m = o.userData.motion;
+  if (!m) return { kind: '', kinds: MOTIONS };
   const checkpoints = objects.filter(c => c.userData.checkpoint && !c.userData.lava && !c.userData.deleted);
-  $('mTrigger').replaceChildren(new Option('With the map', ''), ...checkpoints.map(c => new Option(`When ${checkpointName(c)} is touched`, objects.indexOf(c))));
-  $('mTrigger').value = m.trigger && checkpoints.includes(m.trigger) ? objects.indexOf(m.trigger) : '';
-  const set = (id, v) => { if (document.activeElement !== $(id)) $(id).value = v; };
-  for (const inp of $('motionEdit').querySelectorAll('[data-mv]')) if (document.activeElement !== inp) inp.value = Math.round(m.to?.[+inp.dataset.k] ?? 0);
-  for (const inp of $('mSpots').querySelectorAll('[data-mp]')) if (document.activeElement !== inp) inp.value = Math.round(m.points?.[+inp.dataset.mp]?.[+inp.dataset.k] ?? 0);
-  set('mBack', m.back ?? 'same'); set('mAxis', m.axis ?? 'yaw'); set('mSteps', m.steps ?? 1); set('mAngle', m.angle ?? 45); set('mHinge', m.hinge ?? 'top');
-  set('mSeconds', m.seconds); set('mPause', m.pause); set('mDelay', m.delay);
-  $('mReverse').checked = !!m.reverse; $('mSmooth').checked = m.smooth; $('mOnce').checked = m.once;
+  return { kind: m.kind, kinds: MOTIONS, to: (m.to ?? [0, 0, 0]).map(Math.round), points: m.points?.map(p => p.map(Math.round)) ?? [],
+           back: m.back ?? 'same', axis: m.axis ?? 'yaw', steps: m.steps ?? 1, reverse: !!m.reverse, angle: m.angle ?? 45, hinge: m.hinge ?? 'top',
+           seconds: m.seconds, pause: m.pause, smooth: m.smooth, delay: m.delay, once: m.once,
+           triggers: [['', 'With the map'], ...checkpoints.map(c => [String(objects.indexOf(c)), `When ${checkpointName(c)} is touched`])],
+           trigger: m.trigger && checkpoints.includes(m.trigger) ? String(objects.indexOf(m.trigger)) : '' };
 }
 function changeMotion(field, change) {            // one edit of the selected shape's motion, undone as one step per field
   const o = selected;
   if (!o) return;
   const last = undo.at(-1);
-  if (!(last?.kind === 'motion' && last.obj === o && last.field === field)) undo.push({ kind: 'motion', obj: o, field, motion: copyMotion(o.userData.motion) });
+  if (redo.length || !(last?.kind === 'motion' && last.obj === o && last.field === field)) remember({ kind: 'motion', obj: o, field, motion: copyMotion(o.userData.motion) });
   change(o);
   markDirty(o);
   showSelection();
 }
-$('mKind').addEventListener('change', () => changeMotion('kind', o => {
-  const k = $('mKind').value, was = o.userData.motion;
-  o.userData.motion = k ? { ...newMotion(k), ...(was ? { pause: was.pause, delay: was.delay, once: was.once, trigger: was.trigger } : {}) } : null;
-  motionStart = performance.now();
-}));
-$('motionEdit').addEventListener('change', e => {
-  const el = e.target, m = selected?.userData.motion;
-  if (!m || el.id === 'mKind' || !el.matches('input, select')) return;
-  const num = () => Math.min(el.max === '' ? Infinity : +el.max, Math.max(el.min === '' ? -Infinity : +el.min, parseFloat(el.value)));
-  if ((el.type === 'number' && Number.isNaN(parseFloat(el.value)))) return showSelection();
-  changeMotion(el.id || el.dataset.mv || `spot${el.dataset.mp}`, () => {
-    if (el.dataset.mv) m.to[+el.dataset.k] = num();
-    else if (el.dataset.mp !== undefined) m.points[+el.dataset.mp][+el.dataset.k] = num();
-    else if (el.id === 'mTrigger') m.trigger = el.value === '' ? null : objects[+el.value];
-    else {
-      const field = { mBack: 'back', mAxis: 'axis', mSteps: 'steps', mAngle: 'angle', mHinge: 'hinge', mSeconds: 'seconds', mPause: 'pause', mDelay: 'delay',
-                      mReverse: 'reverse', mSmooth: 'smooth', mOnce: 'once' }[el.id];
-      m[field] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (field === 'steps' ? Math.round(num()) : num()) : el.value;
-    }
+const MOTION_RANGE = { steps: [1, 36], angle: [1, 180], seconds: [0.1, 600], pause: [0, 600], delay: [0, 600] };
+// an edit from the Inspector's Motion section: 'kind', 'to.<k>', 'spot.<n>.<k>' or a setting, with what the input holds
+function setMotion(field, raw) {
+  if (field === 'kind') return changeMotion('kind', o => {
+    const was = o.userData.motion;
+    o.userData.motion = raw ? { ...newMotion(raw), ...(was ? { pause: was.pause, delay: was.delay, once: was.once, trigger: was.trigger } : {}) } : null;
+    motionStart = performance.now();
+  });
+  const m = selected?.userData.motion;
+  if (!m) return;
+  const [lo, hi] = MOTION_RANGE[field] ?? [-Infinity, Infinity], num = Math.min(hi, Math.max(lo, parseFloat(raw)));
+  if (typeof raw === 'string' && /^(to|spot)\.|^(steps|angle|seconds|pause|delay)$/.test(field) && Number.isNaN(num)) return showSelection();
+  changeMotion(field.replace(/\.\d+$/, ''), () => {
+    const [part, a, b] = field.split('.');
+    if (part === 'to') m.to[+a] = num;
+    else if (part === 'spot') m.points[+a][+b] = num;
+    else if (part === 'trigger') m.trigger = raw === '' ? null : objects[+raw];
+    else m[part] = typeof raw === 'boolean' ? raw : part in MOTION_RANGE ? (part === 'steps' ? Math.round(num) : num) : raw;
     if (m.kind === 'slide' && m.back === 'start') m.back = 'same';
     motionStart = performance.now();
   });
-});
-for (const [id, change] of [['mAddSpot', m => m.points.push([...m.points.at(-1)].map((v, k) => v + (k === 0 ? 1000 : 0)))],
-                            ['mDropSpot', m => { if (m.points.length > 1) m.points.pop(); }]]) {
-  $(id).addEventListener('click', () => changeMotion(id, o => { change(o.userData.motion); $('mSpots').replaceChildren(); }));
 }
+const addSpot = () => changeMotion('spots', o => o.userData.motion.points.push([...o.userData.motion.points.at(-1)].map((v, k) => v + (k === 0 ? 1000 : 0))));
+const dropSpot = () => changeMotion('spots', o => { if (o.userData.motion.points.length > 1) o.userData.motion.points.pop(); });
 
 // The Script (script.js): run here into a plan, which saving writes as Kismet (rules.js). A script that comes with an
 // opened map is shown, not run, until you apply it: it is code from that map. The preview plays the plan's reactions
@@ -950,16 +820,15 @@ const eventLabel = e => ({ start: 'start', reset: 'reset', enter: `${e.zone ?? e
   reached: `${e.checkpoint} reached`, after: `after ${e.seconds} s`, every: `every ${e.seconds} s`, pressed: `${e.button} pressed`, signal: `signal ${e.name}`,
   lava: `lava (${e.by})`, goal: `goal (${e.team})`, finished: `${e.clip} finished`, reversed: `${e.clip} back at its start` })[e.on];
 function renderScript() {
-  if (document.activeElement !== $('scriptSource')) $('scriptSource').value = script.source;
   const p = script.plan;
-  $('scriptStatus').textContent = script.error ?? (p ? `${p.rules.length} rules, ${p.clips.length} movements; saved with the map`
-    : script.source.trim() ? 'Not run yet: Apply runs it (it is code from this map)' : 'No script');
-  $('scriptStatus').className = script.error ? 'warn' : 'muted';
+  ui.scriptSource.value = script.source;
+  ui.scriptStatus.value = { error: !!script.error, text: script.error ?? (p ? `${p.rules.length} rules, ${p.clips.length} movements; saved with the map`
+    : script.source.trim() ? 'Not run yet: Apply runs it (it is code from this map)' : 'No script') };
   const seen = new Map();
   for (const r of p?.rules ?? []) if (!['finished', 'reversed', 'after', 'every'].includes(r.event.on)) seen.set(JSON.stringify(r.event), r.event);
-  $('scriptFire').replaceChildren(...[...seen.values()].map(e => Object.assign(document.createElement('button'), {
-    textContent: eventLabel(e), onclick: () => fire(x => JSON.stringify(x) === JSON.stringify(e) || (e.on === 'enter' && x.on === 'enter' && x.zone === e.zone && x.by === 'any')) })));
+  ui.scriptEvents.value = [...seen.values()].map(event => ({ label: eventLabel(event), event }));
 }
+const fireEvent = e => fire(x => JSON.stringify(x) === JSON.stringify(e) || (e.on === 'enter' && x.on === 'enter' && x.zone === e.zone && x.by === 'any'));
 const preview = { flags: new Map(), counters: new Map(), clips: [], lights: new Map(), hidden: new Set(), timers: [], once: new Set() };
 function resetPreview() {
   preview.timers.forEach(t => { clearTimeout(t); clearInterval(t); });
@@ -1014,7 +883,8 @@ function react(a, it) {
   }
 }
 function showText({ text, seconds, size, at, color }) {   // as the game draws it: offset from the middle of a 1080-high screen
-  const k = view.clientHeight / 1080, el = Object.assign(document.createElement('div'), { textContent: text });
+  const k = view.clientHeight / 1080, el = Object.assign(document.createElement('div'), { textContent: text,
+    className: 'absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-bold text-shadow-md' });
   Object.assign(el.style, { left: `calc(50% + ${at[0] * k}px)`, top: `calc(50% + ${at[1] * k}px)`, fontSize: `${12 * size * Math.max(k, 0.5)}px`, color: `rgb(${color.join(',')})` });
   $('scriptTexts').append(el);
   preview.timers.push(setTimeout(() => el.remove(), seconds * 1000));
@@ -1032,18 +902,9 @@ function advanceClips(dt) {                       // clips the preview plays; re
     }
   }
 }
-$('scriptButton').addEventListener('click', () => { $('scriptPanel').hidden = !$('scriptPanel').hidden; if (!$('scriptPanel').hidden) $('scriptSource').focus(); });
-$('scriptClose').addEventListener('click', () => { $('scriptPanel').hidden = true; });
-$('scriptSource').addEventListener('input', e => { script.source = e.target.value; script.plan = null; script.error = null; renderScript(); updateDirty(); });
-$('scriptSource').addEventListener('keydown', e => {
-  e.stopPropagation();                            // typing isn't a shortcut
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); runPlan(); }
-  if (e.key === 'Tab') { e.preventDefault(); document.execCommand('insertText', false, '  '); }
-});
-$('scriptRun').addEventListener('click', runPlan);
-$('scriptStart').addEventListener('click', startPreview);
-$('objName').addEventListener('change', e => {
-  const o = selected, v = e.target.value.trim();
+function setScriptSource(source) { script.source = source; script.plan = null; script.error = null; renderScript(); updateDirty(); }
+function rename(raw) {                            // the Inspector's Name
+  const o = selected, v = raw.trim();
   if (!o) return;
   if (!/^[\w-]{1,40}$/.test(v)) return setStatus('A name is 1 to 40 letters, digits, - or _.', 'warn'), showSelection();
   if (objects.some(x => x !== o && !x.userData.deleted && idOf(x) === v)) return setStatus(`Something else is already named ${v}.`, 'warn'), showSelection();
@@ -1051,7 +912,8 @@ $('objName').addEventListener('change', e => {
   labelTargets = null;
   scheduleOutline();
   if (script.plan) runPlan();                     // names may now resolve differently
-});
+  showSelection();
+}
 
 function syncLightPreview() {                     // a fixed set of view lights, so materials never recompile
   const t = orbit.target, near = kind => objects.filter(o => o.userData.light?.kind === kind && (preview.lights.get(o) ?? o.userData.light.on) && !o.userData.deleted)
@@ -1079,7 +941,7 @@ function placeBallStart() {
   if (ball.userData.placed) {
     if (!ball.userData.onRoof || !start) return;
     a.loc = roofSpot(start);
-  } else if (start && (spawnBall || objects.some(o => o.userData.lava && o.userData.checkpoint === 'ball' && !o.userData.deleted))) {
+  } else if (start && (spawnBall || objects.some(o => o.userData.lava?.ball && !o.userData.deleted))) {
     const onTop = !!spawnBall?.onTop, forward = ueAxes(start.rot)[0];
     a.loc = [start.loc[0] + forward[0] * (onTop ? BALL_TOP_AHEAD : BALL_AHEAD), start.loc[1] + forward[1] * (onTop ? BALL_TOP_AHEAD : BALL_AHEAD), start.loc[2] + (onTop ? BALL_LIFT : BALL_FRONT_LIFT)];
   } else {
@@ -1103,9 +965,11 @@ function settleBall(obj) {                        // let go over the spawn car: 
   markDirty(obj);
 }
 
-const dirty = new Set(), removed = new Set(), added = [], undo = [];
+const dirty = new Set(), removed = new Set(), added = [], undo = [], redo = [];
 let fresh = false;                                // a new map started from the open one: its scripts get emptied on save
-const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0) + (lighting !== lightingSaved) + hudChanged() + (script.source !== scriptSaved);
+let restored = 0;                                 // changes built into the map reopened after a reload (keepSession)
+let keeping = false, keepTimer = 0, kept = null;  // keepSession: running yet, the next one due, the file kept for the open map
+const changeCount = () => dirty.size + removed.size + added.length + (ter ? ter.dirty.size : 0) + (lighting !== lightingSaved) + hudChanged() + (script.source !== scriptSaved) + (!pkg && starterGround.userData.surface !== undefined) + restored;
 const group = new THREE.Group();
 scene.add(group);
 const selBox = new THREE.BoxHelper(undefined, 0xffd24a);
@@ -1128,23 +992,12 @@ function readBack(obj) {                          // three object -> actor trans
   if (!obj.userData.ballSpawn) a.scale3d = [obj.scale.x / c[0], obj.scale.z / c[2], obj.scale.y / c[1]].map(v => v / a.scale);
 }
 
-// confirm() as a page dialog: the desktop app's browser pane answers native dialogs with "no" without showing them
-function confirmed(text, ok) {
-  const d = $('ask');
-  d.querySelector('p').textContent = text;
-  d.querySelector('[value=ok]').textContent = ok;
-  d.showModal();
-  return new Promise(resolve => {             // not on 'close', which the pane delivers seconds late
-    d.onsubmit = e => resolve(e.submitter?.value === 'ok');
-    d.oncancel = () => resolve(false);
-  });
-}
+const confirmed = (text, ok) => new Promise(answer => { ui.ask.value = { text, ok, answer }; });   // ui.js Ask
 
 async function openFile(file, ask = true) {
   if (!file) return false;
   if (ask && changeCount() && !await confirmed(`Open ${file.name}? Your ${changeCount()} unsaved changes are discarded.`, 'Discard and open')) return false;
-  $('loading').hidden = false;
-  $('loading').textContent = `Loading ${file.name}…`;
+  ui.loading.value = `Loading ${file.name}…`;
   await new Promise(r => setTimeout(r, 30));      // let the message paint before parsing blocks the page
   const bytes = new Uint8Array(await file.arrayBuffer());
   let data, parsed;
@@ -1152,8 +1005,7 @@ async function openFile(file, ask = true) {
     parsed = new Package(bytes);
     data = describe(parsed);
   } catch (err) {
-    $('loading').hidden = !!mapName;
-    $('loading').textContent = 'Open a map to start.';
+    ui.loading.value = mapName ? null : 'Open a map to start.';
     setStatus(`${file.name}: ${err.message}`, 'warn');
     return false;
   }
@@ -1165,12 +1017,20 @@ async function openFile(file, ask = true) {
 // the blank map (blank.js).
 const STARTER_ZONE = [0, 0, 0, 509, 511.6, 353.3];     // checkpoint zone size until a real map supplies its own
 const starterGround = new THREE.Mesh(new THREE.PlaneGeometry(64000, 64000).rotateX(-Math.PI / 2), terrainMat);
+{
+  const { position, uv } = starterGround.geometry.attributes;   // a texture every 500 units, laid as the blank map's floor lays it
+  for (let k = 0; k < position.count; k++) uv.setXY(k, position.getX(k) / 500, position.getZ(k) / 500);
+}
+// the blank map it gets built on, for its surfaces: blank.js writes the same exports every time, so their references
+// are the ones the built map has. The ground's `surface` is what the floor gets; STARTER_GROUND until then.
+const starterPkg = new Package(blankMap()), starterData = describe(starterPkg);
+const surfacePkg = () => pkg ?? starterPkg;
 function loadStarter() {
   select(null);
   setSculpt(false);
   group.clear();
   forgetSurfaces();
-  dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; fresh = false;
+  dirty.clear(); removed.clear(); added.length = 0; undo.length = redo.length = 0; fresh = false; restored = 0;
   mapName = source = pkg = null;
   actors = [{ i: null, name: 'PlayerStart', cls: 'PlayerStart', mesh: null, loc: [0, 0, RESPAWN_CLEARANCE], rot: [0, 0, 0], scale3d: [1, 1, 1], scale: 1, bounds: null, meshIndex: null }];
   palette = []; objects = [spawnObject(actors[0]), ballObject(ballOfNoOne(), false), baseSun()];
@@ -1185,23 +1045,25 @@ function loadStarter() {
   group.add(starterGround, ...objects);           // the floor (unraised terrain stays hidden under it), the spawn and the ball
   fitGrid();
   renderPalette();
-  $('terrainMat').parentElement.hidden = true;                  // surfaces come with the map it gets built on
-  $('surface').innerHTML = '';
-  lastSurface = null;
+  offerSurfaces(starterData);
+  ui.terrain.value = { ...ui.terrain.value, value: STARTER_GROUND };
+  starterGround.userData.surface = undefined;
+  refreshSurfaces();
   lighting = lightingSaved = 'map';
-  $('lightingMenu').hidden = false;
+  hasSuns = true;
   hud = hudSaved = NO_HUD;
   renderHud();
   renderLighting();
-  $('sculpt').disabled = false;
-  $('mapName').textContent = 'Starter map';
-  $('mapName').title = 'Sculpt the ground and add shapes and checkpoints.';
+  ui.canSculpt.value = true;
+  ui.mapName.value = 'Starter map';
+  ui.mapTitle.value = 'Sculpt the ground and add shapes and checkpoints.';
   saveName = 'my-map.udk';
   orbit.target.set(0, 0, 0);
   camera.position.set(-1400, 900, 1100);
   applyFilter();
   updateDirty();
-  $('loading').hidden = true;
+  gameLooksSoon();
+  ui.loading.value = null;
 }
 async function newMap() {
   if (changeCount() && !await confirmed(`Start a new map? Your ${changeCount()} unsaved changes are discarded.`, 'Discard and start new')) return;
@@ -1210,22 +1072,25 @@ async function newMap() {
 }
 
 // A new map has no file yet: Save as and Load into game first build it on the blank map.
-async function buildOnBlank() {
-  // the starter: raised ground by grid vertex, checkpoints relative to its floor, the car at the origin facing +X
+function starterState() {                         // what the starter holds, as plain data
+  // raised ground by grid vertex, checkpoints relative to its floor, the car at the origin facing +X
   const heights = [];
   for (const t of ter.tiles.values()) {
     t.heights.forEach((h, v) => { if (h > 0) heights.push([t.tx * ter.tile + v % (ter.tile + 1), t.ty * ter.tile + Math.floor(v / (ter.tile + 1)), h]); });
   }
-  const whole = lavaValues(starterGround, 0)[1];
-  const checkpoints = added.filter(o => o.userData.checkpoint).map(o => {
+  const whole = lavaValues(starterGround, 0)[1], cps = added.filter(o => o.userData.checkpoint);
+  const checkpoints = cps.map(o => {
     readBack(o);
     const a = o.userData.actor;
-    return { src: o, id: o.userData.aiId, kind: o.userData.checkpoint, loc: [...a.loc], rot: [...a.rot], ballOnTop: o.userData.ballOnTop, scale3d: [...a.scale3d], title: o.userData.title,
-             panel: !!o.userData.panel, lava: !!o.userData.lava, whole: !!o.userData.lava && same(a.scale3d.slice(0, 2), whole.slice(0, 2), 1e-3) };
+    return { id: o.userData.aiId, kind: o.userData.checkpoint, loc: [...a.loc], rot: [...a.rot], ballOnTop: o.userData.ballOnTop, scale3d: [...a.scale3d], title: o.userData.title,
+             panel: o.userData.panel && { ...o.userData.panel }, lava: o.userData.lava, onFloor: o.userData.floor === starterGround,
+             whole: !!o.userData.lava && same(a.scale3d.slice(0, 2), whole.slice(0, 2), 1e-3) };
   });
   const shapes = added.filter(o => o.userData.shape).map(o => {
     readBack(o);
-    return { id: o.userData.aiId, key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d], motion: o.userData.motion };
+    const m = o.userData.motion;                  // its trigger as the checkpoint's place in the list
+    return { id: o.userData.aiId, key: o.userData.shape, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d],
+             surface: o.userData.surface, motion: m && { ...copyMotion(m), trigger: m.trigger ? cps.indexOf(m.trigger) : null } };
   });
   const lights = added.filter(o => o.userData.newLight).map(o => {
     readBack(o);
@@ -1233,60 +1098,77 @@ async function buildOnBlank() {
   });
   const zones = added.filter(o => o.userData.zone).map(o => {
     readBack(o);
-    return { id: o.userData.aiId, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d], panel: !!o.userData.panel, gravity: o.userData.gravity };
+    return { id: o.userData.aiId, loc: [...o.userData.actor.loc], rot: [...o.userData.actor.rot], scale3d: [...o.userData.actor.scale3d], panel: o.userData.panel && { ...o.userData.panel }, gravity: o.userData.gravity };
   });
-  const scriptSource = script.source, scriptRan = !!script.plan;
   readBack(objects.find(o => o.userData.spawn));
   readBack(ballObj());
-  const name = saveName, mood = lighting, screen = hud, starterSpawn = structuredClone(spawnActor()), starterBall = ballObj().userData.placed ? [...ballObj().userData.actor.loc] : null;
-  if (!await openFile(new File([blankMap()], name), false)) return false;
-  const start = spawnActor();
-  startFresh();
-  const spawn = objects.find(o => o.userData.actor === start);
-  const floor = floorHeight(), dx = Math.round(start.loc[0] / ter.cell), dy = Math.round(start.loc[1] / ter.cell);
+  return { heights, checkpoints, shapes, lights, zones, scriptSource: script.source, scriptRan: !!script.plan, name: saveName, mood: lighting, screen: hud,
+           terrain: ui.terrain.value.value, floor: starterGround.userData.surface, images: Object.fromEntries(images),
+           spawn: structuredClone(spawnActor()), ball: ballObj().userData.placed ? [...ballObj().userData.actor.loc] : null };
+}
+// Put starter state `s` into the open map, `dx`, `dy` grid cells over and `floor` up
+function placeStarterState(s, dx, dy, floor) {
+  for (const [value, img] of Object.entries(s.images ?? {})) images.set(value, img);
+  offerImages();
+  const start = spawnActor(), spawn = objects.find(o => o.userData.actor === start);
+  const at = loc => [loc[0] + dx * ter.cell, loc[1] + dy * ter.cell, loc[2] + floor];
   ter.base = floor - ter.sink;
   const touched = new Set();
-  for (const [gx, gy, h] of heights) setHeight(gx + dx, gy + dy, h, touched);
+  for (const [gx, gy, h] of s.heights) setHeight(gx + dx, gy + dy, h, touched);
   for (const t of touched) { refreshTile(t); ter.dirty.add(tileKey(t.tx, t.ty)); }
-  const hit = floorHit(), made = new Map();
-  for (const c of checkpoints) {
-    const [loc, scale3d] = c.whole && hit ? lavaValues(hit.object, hit.point.y) : [[c.loc[0] + dx * ter.cell, c.loc[1] + dy * ter.cell, c.loc[2] + floor], c.scale3d];
+  const hit = floorHit(), ground = pkg ? aiFloor() : starterGround;
+  const t = ui.terrain.value;
+  if (s.terrain && !t.locked && (typeof s.terrain === 'string' || surfaceOptions().some(o => o.value === s.terrain))) ui.terrain.value = { ...t, value: s.terrain };
+  const floorSurface = s.floor ?? (pkg ? STARTER_GROUND : undefined);   // the blank map's floor: the starter's default unless one was picked
+  if (floorSurface !== undefined && ground && (ground === starterGround || surfaceOf(ground) !== undefined)) setFloorSurface(ground, floorSurface);
+  const made = s.checkpoints.map(c => {
+    const [loc, scale3d] = c.whole && hit ? lavaValues(hit.object, hit.point.y) : [at(c.loc), c.scale3d];
     const obj = makeCheckpoint(c.kind, loc, c.rot, c.ballOnTop, scale3d, c.lava);
-    made.set(c.src, obj);
     obj.userData.aiId = c.id;
     obj.userData.title = c.title ?? '';
-    if (c.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
-  }
-  for (const sh of shapes) {
-    const obj = placeShape(sh.key, [sh.loc[0] + dx * ter.cell, sh.loc[1] + dy * ter.cell, sh.loc[2] + floor], sh.rot, sh.scale3d, false);
+    if (c.panel) { obj.userData.panel = { material: c.panel.material ?? null }; obj.material = lookOf(obj); }
+    if (c.onFloor) obj.userData.floor = ground;
+    return obj;
+  });
+  for (const sh of s.shapes) {
+    const obj = placeShape(sh.key, at(sh.loc), sh.rot, sh.scale3d, false);
     obj.userData.aiId = sh.id;
-    if (sh.motion) obj.userData.motion = { ...copyMotion(sh.motion), trigger: made.get(sh.motion.trigger) ?? null };
+    if (sh.surface !== undefined) { obj.userData.surface = sh.surface; obj.material = shapeLook(sh.surface); }
+    if (sh.motion) obj.userData.motion = { ...copyMotion(sh.motion), trigger: made[sh.motion.trigger] ?? null };
   }
-  for (const l of lights) placeLight(l.light.kind, [l.loc[0] + dx * ter.cell, l.loc[1] + dy * ter.cell, l.loc[2] + floor], l.rot, l.light).userData.aiId = l.id;
-  for (const z of zones) {
-    const obj = makeZone([z.loc[0] + dx * ter.cell, z.loc[1] + dy * ter.cell, z.loc[2] + floor], z.rot, z.scale3d, z.gravity);
+  for (const l of s.lights) placeLight(l.light.kind, at(l.loc), l.rot, l.light).userData.aiId = l.id;
+  for (const z of s.zones) {
+    const obj = makeZone(at(z.loc), z.rot, z.scale3d, z.gravity);
     obj.userData.aiId = z.id;
-    if (z.panel) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }
+    if (z.panel) { obj.userData.panel = { material: z.panel.material ?? null }; obj.material = lookOf(obj); }
   }
-  script.source = scriptSource;
-  if (scriptRan) runPlan();
-  start.loc = [starterSpawn.loc[0] + dx * ter.cell, starterSpawn.loc[1] + dy * ter.cell, starterSpawn.loc[2] + floor];
-  start.rot = starterSpawn.rot;
+  script.source = s.scriptSource;
+  if (s.scriptRan) runPlan(); else renderScript();
+  start.loc = at(s.spawn.loc);
+  start.rot = s.spawn.rot;
   applyActor(spawn);
   settleSpawn(spawn);
-  lighting = mood;
-  hud = screen;
+  lighting = s.mood;
+  hud = s.screen;
   renderHud();
   renderLighting();
-  if (starterBall) {
+  if (s.ball) {
     const ball = ballObj();
-    ball.userData.actor.loc = [starterBall[0] + dx * ter.cell, starterBall[1] + dy * ter.cell, starterBall[2] + floor];
+    ball.userData.actor.loc = at(s.ball);
     applyActor(ball);
     settleBall(ball);
   }
   select(null);
-  saveName = name;
+  saveName = s.name;
+  refreshSurfaces();
   updateDirty();
+}
+async function buildOnBlank() {
+  const s = starterState();
+  if (!await openFile(new File([blankMap()], s.name), false)) return false;
+  const start = spawnActor();
+  startFresh();
+  placeStarterState(s, Math.round(start.loc[0] / ter.cell), Math.round(start.loc[1] / ter.cell), floorHeight());
   return true;
 }
 
@@ -1312,10 +1194,10 @@ function loadMap(name, bytes, parsed, data) {
   setSculpt(false);
   group.clear();
   forgetSurfaces();
-  dirty.clear(); removed.clear(); added.length = 0; undo.length = 0; fresh = false;
+  dirty.clear(); removed.clear(); added.length = 0; undo.length = redo.length = 0; fresh = false; restored = 0;
   ({ actors, palette, zone, spawnBall } = data);
   lighting = lightingSaved = data.lights.length && data.lights.every(m => m === data.lights[0]) && data.lights[0] || 'map';
-  $('lightingMenu').hidden = !data.lights.length;
+  hasSuns = !!data.lights.length;
   hud = hudSaved = data.hud ? { ...data.hud } : NO_HUD;
   renderHud();
   renderLighting();
@@ -1324,22 +1206,15 @@ function loadMap(name, bytes, parsed, data) {
   mapName = name;
   source = bytes;
   pkg = parsed;
-  $('mapName').textContent = `${name} · ${(bytes.length / 1e6).toFixed(bytes.length < 1e7 ? 1 : 0)} MB`;
-  $('mapName').title = name;
+  ui.mapName.value = `${name} · ${(bytes.length / 1e6).toFixed(bytes.length < 1e7 ? 1 : 0)} MB`;
+  ui.mapTitle.value = name;
   renderPalette();
   const t = data.terrain;
   ter = { tile: t.tile, cell: t.cell, sink: t.sink, base: t.base, tiles: new Map(), dirty: new Set() };
   for (const { tx, ty, heights } of t.tiles) makeTile(tx, ty, Float32Array.from(heights));
-  const earthy = data.materials.find(m => /sand|grass|dirt|rock|ground|snow|terrain/i.test(m.name)) || data.materials[0];
-  $('terrainMat').innerHTML = data.materials.map(m => `<option value="${m.ref}">${m.name}</option>`).join('');
-  if (earthy) $('terrainMat').value = t.material ?? earthy.ref;
-  $('terrainMat').disabled = t.material !== null;              // placed tiles keep the surface they were saved with
-  $('terrainMat').parentElement.hidden = false;
-  $('surface').innerHTML = $('terrainMat').innerHTML;
-  if (data.tintable && !data.materials.some(m => fiery(m.name))) $('surface').add(new Option(`Lava red (a red copy of ${data.tintable})`, 'lava'));
-  lastSurface = earthy?.ref ?? null;
-  refreshSurfaces();
-  $('sculpt').disabled = !data.materials.length;
+  offerSurfaces(data, t.material);
+  for (const t of ter.tiles.values()) t.mesh.material = terrainLook();   // not refreshSurfaces: `objects` are still the last map's
+  ui.canSculpt.value = !!data.materials.length;
   objects = actors.filter(a => !/^Pylon/.test(a.cls)).map(a => {   // the Pylon (game setup with the spawn) stays as it is
     if (a.cls.startsWith('PlayerStart')) return group.add(spawnObject(a)).children.at(-1);
     if (a.i === data.ballSpawn) {
@@ -1367,7 +1242,10 @@ function loadMap(name, bytes, parsed, data) {
                                     title: cp.title ?? undefined });
       Object.assign(obj.userData.original, { ballOnTop: cp.ballOnTop, title: cp.title ?? undefined });
     }
-    if (lava) Object.assign(obj.userData, { checkpoint: lava.ball ? 'ball' : 'car', lava: true });
+    if (lava) {
+      Object.assign(obj.userData, { checkpoint: 'lava', lava: { car: lava.car, ball: lava.ball } });
+      obj.userData.original.lava = obj.userData.lava;
+    }
     if (cp || lava) obj.material = lookOf(obj);
     applyActor(obj);
     if (cp) decorateCheckpoint(obj);
@@ -1426,14 +1304,14 @@ function loadMap(name, bytes, parsed, data) {
     .flatMap(o => { const b = boxOf(o); return [b.min.x, b.max.x, b.min.z, b.max.z].map(Math.abs); })));
   updateDirty();
   loadMeshes();
-  if ($('gameTextures').checked) useGameLooks(false).catch(err => setStatus(err.message, 'warn'));
+  gameLooksSoon();
   objects.forEach(fitGhosts);                     // now that the ground under the checkpoints has its real shape
   setTimeout(collectShapes, 0);                   // after the map shows: its shapes join your library
   const start = actors.find(a => a.cls.startsWith('PlayerStart')) || actors[0];
   const target = toThree(start.loc);
   orbit.target.copy(target);
   camera.position.copy(target).add(new THREE.Vector3(3000, 2500, 3000));
-  $('loading').hidden = true;
+  ui.loading.value = null;
   setStatus(`${actors.length} objects loaded`, '');
 }
 
@@ -1463,6 +1341,7 @@ function loadMeshes() {
   }
   if (selected) attachGizmo(selected);
   applyFilter();
+  renderGround();                                 // the floor's surfaces are known now
 }
 
 // Surfaces drawn the way the map shows them: its own textures, or a colour (see looks.js); the flat per-mesh colour
@@ -1470,16 +1349,24 @@ function loadMeshes() {
 // Game surfaces (game.js): with View > Game textures, their texture and tint read from the game's own packages.
 const surfaceCache = new Map(), textureCache = new Map(), gameLooks = new Map(), gameWanted = new Set();
 function surfaceMaterial(ref, fallback) {
-  if (!pkg || !ref) return fallback;
+  if (!ref) return fallback;
   if (ref === 'lava' && !surfaceCache.has(ref)) surfaceCache.set(ref, new THREE.MeshStandardMaterial({ color: '#ff4a1c', roughness: 0.8, flatShading: true }));
-  if (ref < 0) gameWanted.add(ref);
+  if (String(ref).startsWith('image:')) {
+    const img = images.get(ref);
+    if (img && !surfaceCache.has(ref)) surfaceCache.set(ref, new THREE.MeshStandardMaterial({ map: imageTexture(img), roughness: 0.8, metalness: 0.05, flatShading: true }));
+    return surfaceCache.get(ref) ?? fallback;
+  }
+  const borrowed = String(ref).startsWith('extra:');
+  if (borrowed && !donorRef(ref)) return fallback;   // surfaces.upk still loading
+  if (ref < 0 || (borrowed && donorRef(ref) < 0)) gameWanted.add(ref);
   const game = gameLooks.get(ref);
   if (game && !surfaceCache.has(ref)) {
     surfaceCache.set(ref, new THREE.MeshStandardMaterial({ map: game.texture && imageTexture(game.texture), roughness: 0.8, metalness: 0.05, flatShading: true,
       color: game.color ? new THREE.Color().setRGB(...game.color.map(c => Math.min(1, Math.max(0, c)))) : 0xffffff }));
   }
   if (!surfaceCache.has(ref)) {
-    const look = surfaceLook(pkg, ref), map = look.texture === null ? null : texture(look.texture);
+    const [from, at] = borrowed ? [donor, donorRef(ref)] : [surfacePkg(), ref];
+    const look = surfaceLook(from, at), map = look.texture === null ? null : texture(look.texture, from);
     surfaceCache.set(ref, !map && !look.color ? null : new THREE.MeshStandardMaterial({
       map, color: map ? 0xffffff : look.color, roughness: 0.8, metalness: 0.05, flatShading: true,
       ...(look.emissive && map ? { emissiveMap: map, emissive: 0xffffff, emissiveIntensity: 0.5 } : {}),
@@ -1487,12 +1374,13 @@ function surfaceMaterial(ref, fallback) {
   }
   return surfaceCache.get(ref) ?? fallback;
 }
-function texture(i) {
-  if (!textureCache.has(i)) {
-    const img = textureImage(pkg, i);
-    textureCache.set(i, img && imageTexture(img));
+function texture(i, from = surfacePkg()) {        // texture i of the map, or of surfaces.upk
+  const key = from === donor ? `extra:${i}` : i;
+  if (!textureCache.has(key)) {
+    const img = textureImage(from, i);
+    textureCache.set(key, img && imageTexture(img));
   }
-  return textureCache.get(i);
+  return textureCache.get(key);
 }
 function imageTexture(img) {
   return Object.assign(new THREE.DataTexture(img.rgba, img.width, img.height), { wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
@@ -1506,20 +1394,36 @@ function forgetSurfaces() {
   gameLooks.clear();                              // its references are the map's
   gameWanted.clear();
 }
-function meshLook(a, groups) {                    // a mesh actor's materials: per part, the component's surface or the mesh's own
-  const own = materialFor(a), mats = (groups.length ? groups : [{ material: 0 }]).map((g, k) => surfaceMaterial(a.materials?.[k] || g.material, own));
+function meshLook(a, groups, materials = a.materials) {   // a mesh actor's materials: per part, the component's surface or the mesh's own
+  const own = materialFor(a), mats = (groups.length ? groups : [{ material: 0 }]).map((g, k) => surfaceMaterial(materials?.[k] || g.material, own));
   return mats.length === 1 ? mats[0] : mats;
 }
-const terrainLook = () => surfaceMaterial($('terrainMat').options.length ? +$('terrainMat').value : 0, terrainMat);
+const terrainLook = () => surfaceMaterial(ui.terrain.value.value ?? 0, terrainMat);
 const shapeLook = (ref = lastSurface) => surfaceMaterial(ref, shapeMat);
 function refreshSurfaces() {                      // terrain, new shapes and the map's meshes follow their surfaces
   for (const t of ter?.tiles.values() ?? []) t.mesh.material = terrainLook();
+  starterGround.material = surfaceMaterial(starterGround.userData.surface ?? STARTER_GROUND, terrainMat);
   for (const o of added) if (o.userData.shape) o.material = shapeLook(o.userData.surface);
   for (const o of objects) {
-    if (!o.userData.groups || o.userData.checkpoint || o.userData.copy) continue;
-    o.material = o.userData.surface !== undefined && o.userData.surface !== o.userData.original?.surface
-      ? surfaceMaterial(o.userData.surface, materialFor(o.userData.actor)) : meshLook(o.userData.actor, o.userData.groups);
+    if (!o.userData.groups || o.userData.checkpoint || (o.userData.copy && o.userData.shape)) continue;
+    const s = o.userData.surface;
+    o.material = Array.isArray(s) ? meshLook(o.userData.actor, o.userData.groups, s)
+      : s !== undefined && s !== o.userData.original?.surface ? surfaceMaterial(s, materialFor(o.userData.actor)) : meshLook(o.userData.actor, o.userData.groups);
   }
+  renderGround();
+}
+const groundOf = () => pkg ? aiFloor() : starterGround;   // the floor the Map's Ground surface sets
+function renderGround() {
+  const floor = groundOf(), ground = floor && (floor === starterGround ? floor.userData.surface ?? STARTER_GROUND : surfaceOf(floor));
+  ui.mapProps.value = { ...ui.mapProps.value, ground: ground === undefined || ground === null ? null : surfaceChoice([ground].flat()[0]) };
+}
+function setGround(raw) {
+  const floor = groundOf(), v = surfaceValue(raw);
+  if (!floor) return;
+  setFloorSurface(floor, v);
+  if (ui.terrain.value.locked) return;           // hills not saved yet look the same, undone with the floor
+  undo.at(-1).terrain = ui.terrain.value.value;
+  setTerrainSurface(v);
 }
 
 // The game folder, read-only, for game textures: remembered from Game > Load (or picked here); `ask` (a click)
@@ -1550,10 +1454,20 @@ async function gameTexturesIndex(dir, openFile) {
   gameIndexMemo = { stamp, index };
   return index;
 }
+// the package path of game surface `r`: an import of the map, or a borrowed surface that is one (the water, the
+// grass); null for anything else
+function gamePath(r) {
+  const [from, at] = typeof r === 'string' ? [donor, donorRef(r)] : [surfacePkg(), r];
+  if (!(at < 0) || !/^Material/.test(from.imports[-at - 1]?.cls ?? '')) return null;
+  const path = [];
+  for (let q = at; q < 0; q = from.imports[-q - 1].outer) path.unshift(from.imports[-q - 1].name);
+  return path;
+}
+const gameLooksSoon = () => ui.view.value.gameTextures && useGameLooks(false).catch(err => setStatus(err.message, 'warn'));
 async function useGameLooks(ask) {               // read the looks of the game surfaces the map shows, then redraw them
-  const map = pkg, dir = await gameTexturesFolder(ask);
-  if (!dir) return ask || setStatus('Game textures: tick View > Game textures to let the editor read the game folder.', '');
-  const want = [...gameWanted].filter(r => !gameLooks.has(r) && /^Material/.test(map.imports[-r - 1]?.cls ?? ''));
+  const map = surfacePkg(), dir = await gameTexturesFolder(ask);
+  if (!dir) return ask || ui.status.value.text || setStatus('Game textures need the game folder again: turn View > Game textures off and on.', '');   // a hint: it never covers another message
+  const want = [...gameWanted].filter(r => !gameLooks.has(r) && gamePath(r));
   const read = file => async (offset, size) => new Uint8Array(await file.slice(offset, offset + size).arrayBuffer());
   const openFile = name => dir.getFileHandle(`${name}.upk`).then(h => h.getFile()).then(f => openGame(read(f)));
   const opened = new Map(), open = name => {
@@ -1564,10 +1478,8 @@ async function useGameLooks(ask) {               // read the looks of the game s
   const index = want.length ? await gameTexturesIndex(dir, openFile) : null;
   for (const [k, r] of want.entries()) {
     setStatus(`Reading game textures… ${k + 1} of ${want.length}`, '');
-    const path = [];
-    for (let q = r; q < 0; q = map.imports[-q - 1].outer) path.unshift(map.imports[-q - 1].name);
-    const look = await gameLook(open, cache, path, index).catch(() => null);
-    if (pkg !== map) return;                      // another map was opened meanwhile
+    const look = await gameLook(open, cache, gamePath(r), index).catch(() => null);
+    if (surfacePkg() !== map) return;             // another map was opened meanwhile
     gameLooks.set(r, look);
   }
   for (const r of gameLooks.keys()) { surfaceCache.get(r)?.dispose(); surfaceCache.delete(r); }
@@ -1577,7 +1489,7 @@ async function useGameLooks(ask) {               // read the looks of the game s
 }
 
 function applyFilter() {
-  const q = $('filter').value.trim().toLowerCase();
+  const q = ui.filter.value.trim().toLowerCase();
   let shown = 0;
   for (const obj of objects) {
     const a = obj.userData.actor;
@@ -1587,14 +1499,16 @@ function applyFilter() {
       const ground = size.y < Math.max(1000, 0.12 * Math.max(size.x, size.z));   // floors and rolling hills stay in view; domes, walls, mountains go
       obj.userData.huge = !obj.userData.lava && !ground && obj.geometry.boundingSphere.radius * Math.max(obj.scale.x, obj.scale.y, obj.scale.z) > 15000;
     }
+    const view = ui.view.value;
     obj.visible = !obj.userData.deleted && !obj.userData.respawnFor
-      && ($('showHuge').checked || !obj.userData.huge)
+      && (view.huge || !obj.userData.huge)
       && (!q || `${a.name} ${a.cls} ${a.mesh || ''}`.toLowerCase().includes(q))
-      && (obj.userData.ballSpawn || !isVolume(a) || $(obj.userData.checkpoint || obj.userData.zone ? 'showCheckpoints' : 'showVolumes').checked)
-      && ($('showMarkers').checked || !!a.bounds || !!obj.userData.spawn || !!obj.userData.ballSpawn);
+      && (obj.userData.ballSpawn || !isVolume(a) || (obj.userData.checkpoint || obj.userData.zone ? view.checkpoints : view.volumes))
+      && (view.markers || !!a.bounds || !!obj.userData.spawn || !!obj.userData.ballSpawn)
+      && !obj.userData.eyeOff;
     shown += obj.visible;
   }
-  $('count').textContent = objects.length ? `${shown} of ${objects.length} objects shown` : '';
+  ui.count.value = objects.length ? `${shown} of ${objects.length} objects shown` : '';
 }
 
 function select(obj) {
@@ -1626,183 +1540,192 @@ function setMode(mode) {
   gizmo.setMode(mode);
   if (selected && !abilities(selected).modes.length) gizmo.detach();
   gizmo.showX = gizmo.showZ = !(mode === 'rotate' && selected && abilities(selected).yawOnly);   // three's Y is up: yaw only
-  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  ui.mode.value = mode;
   showSelection();
 }
 // The surface the inspector offers for `o`, or undefined when there is none to pick: a checkpoint's visible
-// panel, a new shape, or a saved mesh of one part
+// panel, a new shape, or a saved mesh's (an array, one per part, when it has several). A saved mesh of several
+// parts keeps `surface` as the component writes it: per part, 0 for the mesh's own.
 function surfaceOf(o) {
-  const u = o.userData, a = u.actor;
+  const u = o.userData, a = u.actor, floor = u.lava && floorOf(o);
+  if (floor) {
+    const s = floor === starterGround ? floor.userData.surface ?? STARTER_GROUND : surfaceOf(floor);
+    return Array.isArray(s) ? s[0] : s;
+  }
   if (u.checkpoint) return u.panel ? u.panel.material ?? panelSurface(u.lava) : undefined;
   if (u.shape) return u.surface ?? lastSurface;
-  if (!u.copy && a.cls === 'StaticMeshActor' && a.meshIndex !== null && u.parts === 1) return u.surface ?? (a.materials?.[0] || u.ownSurface);
-  return undefined;
+  if (a.cls !== 'StaticMeshActor' || a.meshIndex === null || !u.parts) return undefined;
+  return u.parts === 1 ? u.surface ?? (a.materials?.[0] || u.ownSurface) : u.groups.map((g, k) => (u.surface ?? a.materials ?? [])[k] || g.material);
+}
+// what a Surface list shows for `v`: a label of its own when the list lacks it (a part's own material, say)
+const surfaceChoice = v => ({ value: v, missing: typeof v === 'number' && v && !surfaceOptions().some(o => o.value === v) ? surfacePkg().ref(v) : null });
+function infoOf(o) {                              // the Inspector's heading: what `o` is and does
+  const u = o.userData, a = u.actor, own = a.i === null ? '(new)' : a.name;
+  if (u.placeholder) return { title: 'Sun', note: '(comes with the blank map)', text: 'A new map gets three sun lights: a key light, a soft fill and one from above. Lighting under Map (with nothing selected) sets their mood; the Add tab has more lights.' };
+  if (u.spawn) return { title: 'Spawn', note: a.name, text: 'Where your car starts, facing the way it points, and comes back to on resets until you reach a checkpoint. Drag it anywhere: it settles just above the ground under it.' };
+  if (u.ballSpawn) return { title: u.placed ? 'Ball spawn' : 'Ball start', note: null, text: `${u.placed
+    ? `Where the ball starts, and comes back to on resets until you reach a checkpoint${u.onRoof ? ": on the spawn car's roof, following the car" : ''}.`
+    : 'Where the game puts the ball now.'} Drag it to give the ball a spawn of its own: let go over the car to start on its roof, anywhere else to rest on the ground.` };
+  if (u.shape) return { title: a.name, note: `(${u.shape.startsWith('std:') ? 'built-in shape' : 'from ' + (library.get(u.shape.slice(4))?.source ?? 'your library')})`,
+                        text: `${a.i === null ? 'A new mesh' : 'A shape added in the editor'}; the car collides with ${u.motion ? 'its box, as it moves' : 'its shape'}.` };
+  if (u.lava) return { title: 'Lava', note: own, text: [u.lava.car && 'When your car touches it, it goes back to the last checkpoint, as after a reset.',
+    u.lava.ball && 'When the ball touches it, the car goes back to the last checkpoint with a fresh ball (in front of the car after a car checkpoint).', 'Before the first checkpoint, that is the spawn.'].filter(Boolean).join(' ') };
+  if (u.checkpoint) {
+    const gate = isGate(a), ball = u.checkpoint === 'ball';
+    return { title: `${ball ? 'Ball' : 'Car'} ${gate ? 'gate' : 'checkpoint'}`, note: own, text: `${ball
+      ? `Becomes your respawn point when the ball ${gate ? 'passes through' : 'gets into'} it.`
+      : `Becomes your respawn point when your car ${gate ? 'passes through' : 'drives or flies into'} it.`} After a reset the car appears ${gate ? `just past the gate (${GATE_PAST} units)` : 'inside it'}, on the ground when it reaches some, facing the arrow${ball
+      ? `, with the new ball ${u.ballOnTop ? 'just over the roof' : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.` };
+  }
+  if (u.gravity !== undefined) return { title: 'Gravity zone', note: own, text: "Inside it, the car and ball fall with this gravity instead of the map's (Rocket League's is −650): less floats, more is heavy, above 0 pulls up." };
+  if (u.zone) return { title: 'Trigger zone', note: own, text: `Sets off script events when the car or ball goes in or out: zone('${idOf(o)}').enter('car'), .leave(). Nothing happens unless the Script uses it.` };
+  if (u.light) return { title: LIGHT_KINDS[u.light.kind].name, note: own, text: {
+    point: 'Shines every way, fading out to its radius.',
+    spot: "Shines a cone the way it points: rotate it to aim. Full brightness inside the core, fading out to the cone's edge.",
+    sun: "Light from far away, the way the arrow points; where it stands doesn't matter.",
+    sky: "Even light from all around; where it stands doesn't matter.",
+  }[u.light.kind] };
+  return { title: a.name, note: null, text: `${a.cls}${a.mesh ? ' · ' + a.mesh : ''}` };
+}
+function inspect(o) {                             // what the Inspector shows for `o` (ui.js Inspector)
+  const u = o.userData, a = u.actor, can = abilities(o), l = u.light, lava = u.lava, single = !(u.spawn || u.ballSpawn || u.placeholder);   // one of each per map
+  const surface = surfaceOf(o), parts = Array.isArray(surface), offered = surfaceOptions().length > 0, untitled = u.title === undefined;
+  return {
+    info: infoOf(o),
+    name: single ? idOf(o) : null,
+    transform: { loc: can.modes.length ? a.loc.map(v => Math.round(v)) : null, rot: can.modes.includes('rotate') ? a.rot.map(v => +(v * 360 / 65536).toFixed(1)) : null,
+                 scale: can.modes.includes('scale') ? a.scale3d.map(v => +(v * a.scale).toFixed(3)) : null, yawOnly: can.yawOnly },
+    surface: offered && surface !== undefined && !parts ? surfaceChoice(surface) : null,
+    parts: offered && parts ? surface.map(surfaceChoice) : null,
+    zone: u.checkpoint || u.zone || u.gravity !== undefined ? {
+      gate: u.checkpoint && !lava ? isGate(a) : null,
+      panel: u.checkpoint || (u.zone && u.gravity === undefined) ? !!u.panel : null,
+      title: u.checkpoint && !lava ? { value: u.title ?? '', disabled: untitled, placeholder: untitled ? 'Saved without a title' : 'Checkpoint N' } : null,   // untitled: saved before checkpoints had a text
+      lava: lava ? { car: lava.car, ball: lava.ball } : null,
+      gravity: u.gravity !== undefined ? u.gravity ?? '' : null,
+      ball: u.checkpoint === 'ball' && !lava ? { onTop: !!u.ballOnTop, old: u.oldBallCheckpoint ? 'Made by an older version of the editor: its ball always drops onto the car' : null } : null,
+    } : null,
+    light: l ? { color: '#' + l.color.map(v => v.toString(16).padStart(2, '0')).join(''), brightness: +l.brightness.toFixed(3), radius: 'radius' in l ? Math.round(l.radius ?? 0) : null,
+                 outer: l.kind === 'spot' ? +(l.outer ?? 0).toFixed(1) : null, inner: l.kind === 'spot' ? +(l.inner ?? 0).toFixed(1) : null, shadows: l.shadows, on: l.on } : null,
+    motion: motionOf(o),
+    actions: single,
+  };
 }
 function showSelection() {
-  if (!selected) {
-    $('selInfo').textContent = 'Nothing selected. Click an object in the view or in the Map list, or place one from the Add tab.';
-    $('selEdit').hidden = true;
-    showLightGuide(null);
-    showMotionGuide(null);
-    return;
-  }
-  readBack(selected);
-  selBox.setFromObject(selected);
-  const a = selected.userData.actor, isNew = a.i === null;
-  $('selInfo').innerHTML = selected.userData.placeholder
-    ? `<div class="kv"><b>Sun</b> <span class="muted">(comes with the blank map)</span></div><div class="kv muted">A new map gets three sun lights: a key light, a soft fill and one from above. Lighting ▾ in the toolbar sets their mood; the Add tab has more lights.</div>`
-    : selected.userData.spawn
-    ? `<div class="kv"><b>Spawn</b> <span class="muted">${a.name}</span></div><div class="kv muted">Where your car starts, facing the way it points, and comes back to on resets until you reach a checkpoint. Drag it anywhere: it settles just above the ground under it.</div>`
-    : selected.userData.ballSpawn
-    ? `<div class="kv"><b>${selected.userData.placed ? 'Ball spawn' : 'Ball start'}</b></div><div class="kv muted">${selected.userData.placed
-        ? `Where the ball starts, and comes back to on resets until you reach a checkpoint${selected.userData.onRoof ? ': on the spawn car\'s roof, following the car' : ''}.`
-        : 'Where the game puts the ball now.'} Drag it to give the ball a spawn of its own: let go over the car to start on its roof, anywhere else to rest on the ground.</div>`
-    : selected.userData.shape
-    ? `<div class="kv"><b>${a.name}</b> <span class="muted">(${selected.userData.shape.startsWith('std:') ? 'built-in shape' : 'from ' + (library.get(selected.userData.shape.slice(4))?.source ?? 'your library')})</span></div><div class="kv muted">${isNew ? 'A new mesh' : 'A shape added in the editor'}; the car collides with ${selected.userData.motion ? 'its box, as it moves' : 'its shape'}.</div>`
-    : selected.userData.lava
-    ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} lava</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
-        ? 'When the ball touches it, the car goes back to the last checkpoint with a fresh ball (in front of the car after a car checkpoint).'
-        : 'When your car touches it, it goes back to the last checkpoint, as after a reset.'} Before the first checkpoint, that is the spawn.</div>`
-    : selected.userData.checkpoint
-    ? `<div class="kv"><b>${selected.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${isGate(a) ? 'gate' : 'checkpoint'}</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${selected.userData.checkpoint === 'ball'
-        ? `Becomes your respawn point when the ball ${isGate(a) ? 'passes through' : 'gets into'} it.`
-        : `Becomes your respawn point when your car ${isGate(a) ? 'passes through' : 'drives or flies into'} it.`}
-        After a reset the car appears ${isGate(a) ? `just past the gate (${GATE_PAST} units)` : 'inside it'}, on the ground when it reaches some, facing the arrow${selected.userData.checkpoint === 'ball'
-        ? `, with the new ball ${selected.userData.ballOnTop ? 'just over the roof' : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.</div>`
-    : selected.userData.gravity !== undefined
-    ? `<div class="kv"><b>Gravity zone</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">Inside it, the car and ball fall with this gravity instead of the map's (Rocket League's is −650): less floats, more is heavy, above 0 pulls up.</div>`
-    : selected.userData.zone
-    ? `<div class="kv"><b>Trigger zone</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">Sets off script events when the car or ball goes in or out: zone('${idOf(selected)}').enter('car'), .leave(). Nothing happens unless the Script uses it.</div>`
-    : selected.userData.light
-    ? `<div class="kv"><b>${LIGHT_KINDS[selected.userData.light.kind].name}</b> <span class="muted">${isNew ? '(new)' : a.name}</span></div><div class="kv muted">${{
-        point: 'Shines every way, fading out to its radius.',
-        spot: 'Shines a cone the way it points: rotate it to aim. Full brightness inside the core, fading out to the cone\'s edge.',
-        sun: 'Light from far away, the way the arrow points; where it stands doesn\'t matter.',
-        sky: 'Even light from all around; where it stands doesn\'t matter.',
-      }[selected.userData.light.kind]}</div>`
-    : `<div class="kv"><b>${a.name}</b></div><div class="kv muted">${a.cls}${a.mesh ? ' · ' + a.mesh : ''}</div>`;
-  $('selEdit').hidden = false;
-  $('nameRow').hidden = !!(selected.userData.spawn || selected.userData.ballSpawn || selected.userData.placeholder);
-  if (document.activeElement !== $('objName')) $('objName').value = idOf(selected);
-  const l = selected.userData.light;
-  $('lightEdit').hidden = !l;
-  if (l) {
-    $('lightRadiusRow').hidden = !('radius' in l);
-    $('lightOuterRow').hidden = $('lightInnerRow').hidden = l.kind !== 'spot';
-    const shown = { lightColor: '#' + l.color.map(v => v.toString(16).padStart(2, '0')).join(''), lightBrightness: +l.brightness.toFixed(3),
-                    lightRadius: Math.round(l.radius ?? 0), lightOuter: +(l.outer ?? 0).toFixed(1), lightInner: +(l.inner ?? 0).toFixed(1) };
-    for (const [id, v] of Object.entries(shown)) if (document.activeElement !== $(id)) $(id).value = v;
-    $('lightShadows').checked = l.shadows;
-    $('lightOn').checked = l.on;
+  if (selected) {
+    readBack(selected);
+    selBox.setFromObject(selected);
   }
   showLightGuide(selected);
-  showMotion(selected);
   showMotionGuide(selected);
-  $('duplicate').hidden = $('delete').hidden = !!selected.userData.spawn || !!selected.userData.ballSpawn || !!selected.userData.placeholder;   // one of each per map
-  const can = abilities(selected);
-  document.querySelectorAll('[data-mode]').forEach(b => { b.hidden = !can.modes.includes(b.dataset.mode); });
-  $('locRow').hidden = !can.modes.length;
-  $('rotRow').hidden = !can.modes.includes('rotate');
-  $('scaleRow').hidden = !can.modes.includes('scale');
-  document.querySelectorAll('#rotRow input').forEach(inp => inp.classList.toggle('unused', can.yawOnly && inp.dataset.k !== '1'));
-  $('cpPanel').hidden = !selected.userData.checkpoint && !(selected.userData.zone && selected.userData.gravity === undefined);
-  $('gravityRow').hidden = selected.userData.gravity === undefined;
-  $('gravityZ').value = selected.userData.gravity ?? '';
-  $('cpShape').hidden = !selected.userData.checkpoint || !!selected.userData.lava;
-  $('panelOn').checked = !!selected.userData.panel;
-  $('cpTitleRow').hidden = !selected.userData.checkpoint || !!selected.userData.lava;
-  const untitled = selected.userData.title === undefined;   // saved before checkpoints had a text
-  $('cpTitle').disabled = untitled;
-  $('cpTitle').placeholder = untitled ? 'Saved without a title' : 'Checkpoint N';
-  if (document.activeElement !== $('cpTitle')) $('cpTitle').value = selected.userData.title ?? '';
-  const surface = surfaceOf(selected);
-  $('surfaceRow').hidden = surface === undefined || !$('surface').options.length;
-  if (surface != null && ![...$('surface').options].some(o => o.value === String(surface))) $('surface').add(new Option(pkg.ref(surface), surface));
-  if (!$('surfaceRow').hidden) $('surface').value = String(surface ?? '');
-  document.querySelectorAll('[data-gate]').forEach(b => b.classList.toggle('active', !!selected.userData.checkpoint && (b.dataset.gate === 'gate') === isGate(a)));
-  const ballPlace = selected.userData.checkpoint === 'ball' && !selected.userData.lava;
-  $('ballPlace').hidden = !ballPlace;
-  document.querySelectorAll('[data-ball]').forEach(b => {
-    b.classList.toggle('active', ballPlace && (b.dataset.ball === 'top') === !!selected.userData.ballOnTop);
-    b.disabled = !!selected.userData.oldBallCheckpoint;
-    b.title = selected.userData.oldBallCheckpoint ? 'Made by an older version of the editor: its ball always drops onto the car' : b.title;
-  });
-  const vals = { loc: a.loc.map(v => Math.round(v)), rot: a.rot.map(v => +(v * 360 / 65536).toFixed(1)), scale: a.scale3d.map(v => +(v * a.scale).toFixed(3)) };
-  document.querySelectorAll('#selEdit input[data-f]').forEach(inp => {
-    if (document.activeElement !== inp) inp.value = vals[inp.dataset.f][+inp.dataset.k];
-  });
+  ui.modes.value = selected ? abilities(selected).modes : null;
+  ui.inspect.value = selected ? inspect(selected) : null;
 }
-document.querySelectorAll('#selEdit input[data-f]').forEach(inp => inp.addEventListener('change', () => {
-  if (!selected) return;
+// The Inspector's edits (ui.js act): what an input holds, checked here
+function setTransform(f, k, raw) {
+  const v = parseFloat(raw);
+  if (!selected || Number.isNaN(v)) return showSelection();
   pushUndo(selected);
-  const a = selected.userData.actor, k = +inp.dataset.k, v = parseFloat(inp.value);
-  if (Number.isNaN(v)) return;
-  if (inp.dataset.f === 'loc') a.loc[k] = v;
+  const a = selected.userData.actor;
+  if (f === 'loc') a.loc[k] = v;
   if (selected.userData.ballSpawn) Object.assign(selected.userData, { placed: true, onRoof: false });
-  if (inp.dataset.f === 'rot') a.rot[k] = Math.round(v * 65536 / 360);
-  if (inp.dataset.f === 'scale') a.scale3d[k] = v / a.scale;
+  if (f === 'rot') a.rot[k] = Math.round(v * 65536 / 360);
+  if (f === 'scale') a.scale3d[k] = v / a.scale;
   applyActor(selected);
   attachGizmo(selected);
   markDirty(selected);
   showSelection();
-}));
-
-const LIGHT_INPUTS = { lightColor: 'color', lightBrightness: 'brightness', lightRadius: 'radius', lightOuter: 'outer', lightInner: 'inner', lightShadows: 'shadows', lightOn: 'on' };
-for (const [id, field] of Object.entries(LIGHT_INPUTS)) $(id).addEventListener(id === 'lightColor' ? 'input' : 'change', () => {
-  const l = selected?.userData.light, el = $(id);
+}
+const LIGHT_RANGE = { brightness: [0, 100], radius: [10, 100000], outer: [1, 89], inner: [0, 89] };
+function setLight(field, raw) {
+  const l = selected?.userData.light;
   if (!l) return;
-  const v = el.type === 'checkbox' ? el.checked : el.type === 'color' ? [1, 3, 5].map(k => parseInt(el.value.slice(k, k + 2), 16))
-    : Math.min(+el.max, Math.max(+el.min, parseFloat(el.value)));
-  if (Number.isNaN(v)) return;
+  const v = typeof raw === 'boolean' ? raw : field === 'color' ? [1, 3, 5].map(k => parseInt(raw.slice(k, k + 2), 16))
+    : Math.min(LIGHT_RANGE[field][1], Math.max(LIGHT_RANGE[field][0], parseFloat(raw)));
+  if (Number.isNaN(v)) return showSelection();
   const last = undo.at(-1);                       // dragging through colours is one step to undo
-  if (!(last?.kind === 'light' && last.obj === selected && last.field === field)) undo.push({ kind: 'light', obj: selected, field, light: structuredClone(l) });
+  if (redo.length || !(last?.kind === 'light' && last.obj === selected && last.field === field)) remember({ kind: 'light', obj: selected, field, light: structuredClone(l) });
   l[field] = v;
   if (field === 'outer') l.inner = Math.min(l.inner, v);
   if (field === 'inner') l.outer = Math.max(l.outer, v);
   refreshLight(selected);
   markDirty(selected);
   showSelection();
-});
-
-$('gravityZ').addEventListener('change', () => {
-  const el = $('gravityZ'), v = Math.min(+el.max, Math.max(+el.min, parseFloat(el.value)));
-  if (selected?.userData.gravity === undefined || Number.isNaN(v) || v === selected.userData.gravity) return;
-  undo.push({ kind: 'gravity', obj: selected, gravity: selected.userData.gravity });
+}
+function setGravity(raw) {
+  const v = Math.min(20000, Math.max(-20000, parseFloat(raw)));
+  if (selected?.userData.gravity === undefined || Number.isNaN(v) || v === selected.userData.gravity) return showSelection();
+  remember({ kind: 'gravity', obj: selected, gravity: selected.userData.gravity });
   selected.userData.gravity = v;
   markDirty(selected);
   showSelection();
-});
+}
 
 function pushUndo(obj) {
   if (!obj) return;
-  undo.push({ kind: 'move', obj, state: { pos: obj.position.clone(), quat: obj.quaternion.clone(), scale: obj.scale.clone() } });
+  remember({ kind: 'move', obj, state: { pos: obj.position.clone(), quat: obj.quaternion.clone(), scale: obj.scale.clone() } });
 }
-function popUndo() {
-  const u = undo.pop();
-  if (!u) return;
+function remember(step) {                         // a new edit: the step that undoes it, and nothing left to redo
+  undo.push(step);
+  redo.length = 0;
+}
+function popUndo() { if (undo.length) redo.push(revert(undo.pop())); }
+function popRedo() { if (redo.length) undo.push(revert(redo.pop())); }
+function revert(u) {                              // puts back what step u holds, and returns the step that puts back what was there
+  const { obj } = u, d = obj?.userData;
+  let back;
   if (u.kind === 'add') {
-    if (selected === u.obj) select(null);
-    group.remove(u.obj);
-    objects.splice(objects.indexOf(u.obj), 1);
-    added.splice(added.indexOf(u.obj), 1);
+    back = { kind: 'unadd', obj, at: objects.indexOf(obj), addedAt: added.indexOf(obj) };
+    if (selected === obj) select(null);
+    group.remove(obj);
+    objects.splice(back.at, 1);
+    added.splice(back.addedAt, 1);
+  } else if (u.kind === 'unadd') {
+    back = { kind: 'add', obj };
+    group.add(obj);
+    objects.splice(u.at, 0, obj);
+    added.splice(u.addedAt, 0, obj);
+    select(obj);
   } else if (u.kind === 'delete') {
-    u.obj.userData.deleted = false;
-    u.obj.userData.copy ? added.push(u.obj) : removed.delete(u.obj);
-    select(u.obj);
+    back = { kind: 'undelete', obj };
+    d.deleted = false;
+    d.copy ? added.push(obj) : removed.delete(obj);
+    select(obj);
+  } else if (u.kind === 'undelete') {
+    back = { kind: 'delete', obj };
+    if (selected === obj) select(null);
+    d.deleted = true;
+    d.copy ? added.splice(added.indexOf(obj), 1) : removed.add(obj);
   } else if (u.kind === 'motion') {
-    u.obj.userData.motion = u.motion;
-    markDirty(u.obj);
-    if (u.obj === selected) showSelection();
+    back = { ...u, motion: copyMotion(d.motion) };
+    d.motion = u.motion;
+    markDirty(obj);
+    if (obj === selected) showSelection();
   } else if (u.kind === 'gravity') {
-    u.obj.userData.gravity = u.gravity;
-    markDirty(u.obj);
-    if (u.obj === selected) showSelection();
+    back = { ...u, gravity: d.gravity };
+    d.gravity = u.gravity;
+    markDirty(obj);
+    if (obj === selected) showSelection();
+  } else if (u.kind === 'surface') {
+    back = { ...u, surface: d.surface, ...('terrain' in u ? { terrain: ui.terrain.value.value } : {}) };
+    d.surface = u.surface;
+    if ('terrain' in u) ui.terrain.value = { ...ui.terrain.value, value: u.terrain };
+    refreshSurfaces();
+    obj === starterGround ? updateDirty() : markDirty(obj);
+    if (selected) showSelection();
+  } else if (u.kind === 'lava') {
+    back = { ...u, lava: d.lava };
+    d.lava = u.lava;
+    markDirty(obj);
+    if (obj === selected) showSelection();
   } else if (u.kind === 'light') {
-    u.obj.userData.light = u.light;
-    refreshLight(u.obj);
-    markDirty(u.obj);
-    if (u.obj === selected) showSelection();
+    back = { ...u, light: structuredClone(d.light) };
+    d.light = u.light;
+    refreshLight(obj);
+    markDirty(obj);
+    if (obj === selected) showSelection();
   } else if (u.kind === 'sculpt') {
+    back = { kind: 'sculpt', before: new Map([...u.before.keys()].map(key => [key, ter.tiles.get(key)?.heights.slice() ?? null])) };
     for (const [key, heights] of u.before) {
       const t = ter.tiles.get(key);
       if (!heights) t && dropTile(t);
@@ -1811,12 +1734,14 @@ function popUndo() {
       ter.dirty.add(key);
     }
   } else {
-    u.obj.position.copy(u.state.pos); u.obj.quaternion.copy(u.state.quat); u.obj.scale.copy(u.state.scale);
-    markDirty(u.obj);
-    if (u.obj === selected) { attachGizmo(selected); showSelection(); }
+    back = { kind: 'move', obj, state: { pos: obj.position.clone(), quat: obj.quaternion.clone(), scale: obj.scale.clone() } };
+    obj.position.copy(u.state.pos); obj.quaternion.copy(u.state.quat); obj.scale.copy(u.state.scale);
+    markDirty(obj);
+    if (obj === selected) { attachGizmo(selected); showSelection(); }
   }
   applyFilter();
   updateDirty();
+  return back;
 }
 
 function duplicateSelected() {
@@ -1824,7 +1749,7 @@ function duplicateSelected() {
   readBack(selected);
   const width = boxOf(selected).getSize(new THREE.Vector3()).x;
   const loc = selected.userData.actor.loc;
-  copyObject(selected, [loc[0] + ($('snap').checked ? width : Math.max(width * 1.2, 300)), loc[1], loc[2]]);   // snapping: right against it
+  copyObject(selected, [loc[0] + (ui.snap.value ? width : Math.max(width * 1.2, 300)), loc[1], loc[2]]);   // snapping: right against it
 }
 function placeNew(obj) {
   applyActor(obj);
@@ -1832,7 +1757,7 @@ function placeNew(obj) {
   group.add(obj);
   objects.push(obj);
   added.push(obj);
-  undo.push({ kind: 'add', obj });
+  remember({ kind: 'add', obj });
   select(obj);
   applyFilter();
   updateDirty();
@@ -1878,11 +1803,13 @@ function setGate(obj, gate) {
   markDirty(obj);
   showSelection();
 }
+// `lava` ({car, ball}: which touches reset) makes it a lava zone; true, from starters kept before, is lava of `kind`
 function makeCheckpoint(kind, loc, rot, ballOnTop = false, scale3d = [1, 1, 1], lava = false) {
+  if (lava === true) lava = { car: kind !== 'ball', ball: kind === 'ball' };
   const a = { i: null, name: lava ? 'Lava' : 'Checkpoint', cls: 'TriggerVolume', mesh: null, loc, rot, scale3d: [...scale3d],
               scale: 1, bounds: zone.bounds };
   const obj = new THREE.Mesh(geometryFor(zone.bounds));
-  obj.userData = { actor: a, copy: true, checkpoint: kind, ballOnTop, panel: null, lava, title: '' };
+  obj.userData = { actor: a, copy: true, checkpoint: lava ? 'lava' : kind, ballOnTop, panel: null, lava, title: '' };
   obj.material = lookOf(obj);
   decorateCheckpoint(obj);
   placeNew(obj);
@@ -1909,27 +1836,50 @@ function lavaValues(floor, top) {                 // [loc, scale3d] of a lava zo
   const center = [(box.min.x + box.max.x) / 2, (box.min.z + box.max.z) / 2, top + (LAVA_ABOVE - LAVA_BELOW) / 2];
   return [center.map((v, k) => v - b[k] * s[k]), s];
 }
-function addLava(kind) {
+// Floor is lava: the floor itself takes the lava texture when it can take a surface (tiled, unlike a panel
+// stretched over the whole floor). Returns whether it did.
+function lavaFloor(floor) {
+  if (!donorRef(LAVA_FLOOR) || (floor !== starterGround && (!floor?.userData.actor || surfaceOf(floor) === undefined))) return false;
+  setFloorSurface(floor, LAVA_FLOOR);
+  return true;
+}
+// The floor's surface, on every part (undefined: its own again). The starter's ground keeps it until the blank map's
+// floor takes it.
+function setFloorSurface(floor, v) {
+  const u = floor.userData;
+  remember({ kind: 'surface', obj: floor, surface: u.surface });
+  u.surface = v !== undefined && u.parts > 1 ? u.groups.map(() => v) : v;
+  refreshSurfaces();
+  floor === starterGround ? updateDirty() : markDirty(floor);
+}
+// The floor a lava zone shows on, its look picked with the lava (null: none, the lava has a panel or nothing). Saved
+// maps don't say: it is the map's floor when the lava has no panel.
+function floorOf(lava) {
+  const u = lava.userData;
+  if (u.floor !== undefined || u.panel) return u.floor ?? null;
+  const floor = pkg ? aiFloor() : starterGround;
+  return u.floor = floor && (floor === starterGround || surfaceOf(floor) !== undefined) ? floor : null;
+}
+function addLava() {
   if (!zone) return setStatus('This map has no trigger zone to copy for lava.', 'warn');
   const other = objects.find(o => o.userData.lava && !o.userData.deleted);
-  let loc, scale3d;
-  if (other) {                                    // the floor already has lava: the other kind goes on the same spot
-    readBack(other);
-    ({ loc, scale3d } = other.userData.actor);
-  } else {
-    const hit = floorHit(), start = spawnActor();
-    if (!hit || !start) return setStatus('Found no floor under the spawn to cover with lava.', 'warn');
-    [loc, scale3d] = lavaValues(hit.object, hit.point.y);
-    placeShape('std:Platform', [start.loc[0], start.loc[1], hit.point.y], [0, 0, 0], [1, 1, 1], false);
-    const spawn = objects.find(o => o.userData.actor === start);
-    pushUndo(spawn);
-    settleSpawn(spawn);                           // onto the platform
+  if (other) {
+    select(other);
+    return setStatus('The floor is lava already: pick what resets in the Inspector.', 'warn');
   }
-  const obj = makeCheckpoint(kind, [...loc], [0, 0, 0], false, [...scale3d], true);
-  obj.userData.panel = other ? null : { material: null };   // shown in game in a fiery surface; the other kind's panel already shows this spot
+  const hit = floorHit(), start = spawnActor();
+  if (!hit || !start) return setStatus('Found no floor under the spawn to cover with lava.', 'warn');
+  const [loc, scale3d] = lavaValues(hit.object, hit.point.y), textured = lavaFloor(hit.object);
+  placeShape('std:Platform', [start.loc[0], start.loc[1], hit.point.y], [0, 0, 0], [1, 1, 1], false);
+  const spawn = objects.find(o => o.userData.actor === start);
+  pushUndo(spawn);
+  settleSpawn(spawn);                             // onto the platform
+  const obj = makeCheckpoint('lava', loc, [0, 0, 0], false, scale3d, { car: true, ball: true });
+  obj.userData.panel = textured ? null : { material: null };   // shown in game in a fiery surface, unless the floor itself shows it
+  obj.userData.floor = textured ? hit.object : null;
   obj.material = lookOf(obj);
   showSelection();
-  setStatus(`${kind === 'ball' ? 'Ball' : 'Car'} lava over the floor${other ? ', where the other lava is' : ', and a platform under the spawn to start on'}. Raise ground or add shapes above it to build the course.`, 'ok');
+  setStatus('Lava over the floor, and a platform under the spawn to start on. Raise ground or add shapes above it to build the course.', 'ok');
 }
 // Terrain: one heightfield under the whole map, kept as tiles of TILE x TILE cells. Only tiles with raised
 // ground exist; heights are relative to the terrain base, which sits just under the floor.
@@ -1966,7 +1916,7 @@ function makeTile(tx, ty, heights) {
   const g = new THREE.BufferGeometry();
   g.setIndex(index);
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.BufferAttribute(pos.filter((_, k) => k % 3 !== 1).map(v => v / 1000), 2));   // as saved: a repeat every 1000 units
+  g.setAttribute('uv', new THREE.BufferAttribute(pos.filter((_, k) => k % 3 !== 1).map(v => v / 500), 2));   // as saved: a repeat every 500 units
   const t = { tx, ty, heights, mesh: new THREE.Mesh(g, terrainLook()) };
   ter.tiles.set(tileKey(tx, ty), t);
   group.add(t.mesh);
@@ -2016,18 +1966,11 @@ function setSculpt(on) {
     select(null);
     if (ter.base === null) ter.base = floorHeight() - ter.sink;
   }
-  $('sculpt').classList.toggle('active', sculpting);
-  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', !sculpting && b.dataset.mode === gizmo.mode));
-  $('brush').hidden = !sculpting;
-  $('selection').hidden = sculpting;
+  ui.sculpting.value = sculpting;
   brushRing.visible = false;
 }
 function setTool(tool) {
-  brushTool = tool;
-  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
-  $('brushHint').textContent = (tool === 'road'
-    ? 'Drag along the road. The circle is its width; it climbs evenly from where you press to where you let go'
-    : 'Drag on the ground to paint · Shift: lower') + ' · ⌥-drag: orbit';
+  brushTool = ui.brushTool.value = tool;
 }
 function brushHit() {
   ray.setFromCamera(pointer, camera);
@@ -2038,7 +1981,7 @@ function showBrush() {
   brushRing.visible = sculpting && !!brushPoint;
   if (!brushPoint) return;
   brushRing.position.copy(brushPoint).setY(brushPoint.y + 5);
-  brushRing.scale.setScalar(+$('brushSize').value);
+  brushRing.scale.setScalar(ui.brushSize.value);
 }
 function sculptStep(dt) {
   const p = brushPoint;
@@ -2049,7 +1992,7 @@ function sculptStep(dt) {
     roadLine.visible = true;
     return;
   }
-  const r = +$('brushSize').value, s = +$('brushStrength').value, c = ter.cell;
+  const r = ui.brushSize.value, s = ui.brushStrength.value, c = ter.cell;
   const tool = stroke.invert && brushTool === 'raise' ? 'lower' : stroke.invert && brushTool === 'lower' ? 'raise' : brushTool;
   const next = [];
   for (let gy = Math.ceil((p.z - r) / c); gy <= Math.floor((p.z + r) / c); gy++) {
@@ -2080,7 +2023,7 @@ scene.add(roadLine);
 function paveRoad(path) {
   // Flat across: inside the brush radius of the path the ground takes the road height, which climbs evenly
   // along the path from start to end; the next half radius blends back into the terrain.
-  const r = +$('brushSize').value, reach = 1.5 * r, c = ter.cell;
+  const r = ui.brushSize.value, reach = 1.5 * r, c = ter.cell;
   const lengths = [0];
   for (let k = 1; k < path.length; k++) lengths.push(lengths[k - 1] + Math.hypot(path[k].x - path[k - 1].x, path[k].z - path[k - 1].z));
   const total = lengths.at(-1) || 1, h0 = Math.max(0, path[0].y - ter.base), h1 = Math.max(0, path.at(-1).y - ter.base);
@@ -2109,12 +2052,12 @@ function endStroke() {
     paveRoad(stroke.path);
     roadLine.visible = false;
   }
-  if (stroke.before.size) undo.push({ kind: 'sculpt', before: stroke.before });
+  if (stroke.before.size) remember({ kind: 'sculpt', before: stroke.before });
   stroke = null;
   orbit.enabled = true;
 }
 
-let picked = null, paletteOpen = new Set(['Checkpoints', 'Lights', 'Library']);
+let paletteOpen = new Set(['Checkpoints', 'Lights', 'Library']);
 try { paletteOpen = new Set(JSON.parse(localStorage.getItem('rlme.addOpen')) ?? paletteOpen); } catch { /* storage blocked */ }
 const SKIES = /sky ?dome|fog ?ring/i;
 function libraryShapes() {                        // without sky domes, and each shape once though many maps have it
@@ -2123,45 +2066,38 @@ function libraryShapes() {                        // without sky domes, and each
   return items.filter(s => s.source !== mapName && !SKIES.test(s.name) && !seen.has(same(s)) && seen.add(same(s)));
 }
 function renderPalette() {
-  const q = $('paletteFilter').value.trim().toLowerCase(), hit = text => text.toLowerCase().includes(q);
-  const row = ([value, text, title = text]) => {
-    const el = Object.assign(document.createElement('div'), { className: value === picked ? 'item sel' : 'item', textContent: text, title });
-    el.dataset.value = value;
-    return el;
-  };
+  const q = ui.paletteFilter.value.trim().toLowerCase(), hit = text => text.toLowerCase().includes(q);
+  const row = ([value, text, title = text], top = false) => ({ value, text, title, top });
   const fold = (key, text, fill) => {
-    const d = document.createElement('details');
-    d.open = !!q || paletteOpen.has(key);
-    d.dataset.key = key;
-    d.append(Object.assign(document.createElement('summary'), { textContent: text }));
-    if (d.open) fill(d);                          // closed folders stay empty until opened
-    return d;
+    const open = !!q || paletteOpen.has(key);
+    return { key, text, open, children: open ? fill() : [] };   // closed folders stay empty until opened
   };
   const group = (label, items, count = '') => {
     const found = items.filter(([, text]) => hit(`${label} ${text}`));
-    return found.length ? fold(label, `${label}${count && ` (${found.length})`}`, d => d.append(...found.map(row))) : null;
+    return found.length ? fold(label, `${label}${count && ` (${found.length})`}`, () => found.map(r => row(r))) : null;
   };
   const maps = Map.groupBy(libraryShapes().filter(s => hit(`${s.source} ${s.name}`)), s => s.source.replace(/\.(udk|upk)$/i, ''));
   const folders = [...maps].sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   const zoned = list => zone ? list : [];         // these copy a trigger zone, which the starter and most maps have
   const nodes = [
     group('Checkpoints', zoned([['cp:car', 'Car · box'], ['cp:car:gate', 'Car · gate'], ['cp:ball', 'Ball · box'], ['cp:ball:gate', 'Ball · gate']])),
-    group('Floor is lava', zoned([['lava:ball', 'The ball resets'], ['lava:car', 'The car resets']])),
+    ...zoned([['lava', 'Floor is lava', 'Lava over the whole floor: touching it resets you. What resets is in the Inspector.']]).filter(([, text]) => hit(text))
+      .map(r => row(r, true)),
     group('Zones', zoned([['zone:box', 'Trigger · box', 'A zone for scripts'], ['zone:gate', 'Trigger · gate', 'A zone for scripts'],
                           ['zone:gravity', 'Gravity', 'Gravity of its own inside: lower, heavier or upward']])),
     group('Lights', Object.entries(LIGHT_KINDS).map(([k, v]) => [`light:${k}`, v.name])),
     group('Built-in shapes', Object.keys(BUILT_IN).map(k => [`std:${k}`, k])),
     group('This map', palette.map(p => [`map:${p.template}`, `${p.mesh}  ×${p.count}`]), true),
-    folders.length ? fold('Library', `Library · ${folders.length} map${folders.length === 1 ? '' : 's'}`, d => d.append(...folders.map(([map, shapes]) =>
-      fold(`Library/${map}`, `${map} (${shapes.length})`, dd => dd.append(...shapes.map(s => row([`lib:${s.id}`, s.name, `${s.name} · ${map}`]))))))) : null,
+    folders.length ? fold('Library', `Library · ${folders.length} map${folders.length === 1 ? '' : 's'}`, () => folders.map(([map, shapes]) =>
+      fold(`Library/${map}`, `${map} (${shapes.length})`, () => shapes.map(s => row([`lib:${s.id}`, s.name, `${s.name} · ${map}`]))))) : null,
   ].filter(Boolean);
-  $('palette').replaceChildren(...(nodes.length ? nodes : [Object.assign(document.createElement('div'), { className: 'empty', textContent: 'No matches' })]));
+  ui.palette.value = { nodes, empty: 'No matches' };
 }
 function addFromPalette() {
-  const value = picked;
+  const value = ui.picked.value;
   if (!value) return setStatus('Pick a shape in the list first.', 'warn');
   if (value.startsWith('cp:')) return addCheckpoint(value.split(':')[1], value.endsWith(':gate'));
-  if (value.startsWith('lava:')) return addLava(value.slice(5));
+  if (value === 'lava') return addLava();
   if (value.startsWith('zone:')) {
     if (!zone) return setStatus('This map has no trigger zone to copy.', 'warn');
     const loc = fromThree(orbit.target);
@@ -2204,7 +2140,7 @@ function placeShape(key, loc, rot = [0, 0, 0], scale3d = [1, 1, 1], rest = true)
 }
 async function loadLibrary() {
   try {
-    const db = await database();
+    const db = await database('shapes');
     const items = await new Promise((resolve, reject) => {
       const req = db.transaction('shapes').objectStore('shapes').getAll();
       req.onsuccess = () => resolve(req.result);
@@ -2227,13 +2163,13 @@ function collectShapes() {                        // the open map's shapes join 
 }
 function copyObject(source, loc) {
   readBack(source);
-  const src = source.userData.actor, { checkpoint, shape, ballOnTop, lava, surface, newLight, mover, zone, gravity } = source.userData;
+  const src = source.userData.actor, { checkpoint, shape, ballOnTop, lava, surface, newLight, mover, zone, gravity, parts, groups, ownSurface } = source.userData;
   const panel = source.userData.panel ? { material: source.userData.panel.material } : null;
   const a = { ...src, i: null, src: src.src ?? src.i, name: (src.mesh || src.name) + ' copy',
               loc: [...loc], rot: [...src.rot], scale3d: [...src.scale3d] };
   const obj = source.userData.light ? lightObject(a, settingsOf(source.userData.light)) : new THREE.Mesh(source.geometry, source.material);
   obj.userData = { actor: a, copy: true, checkpoint, shape, ballOnTop, panel, lava, surface, light: obj.userData.light, newLight, mover, motion: copyMotion(source.userData.motion), zone,
-                   ...(gravity !== undefined ? { gravity } : {}),
+                   ...(gravity !== undefined ? { gravity } : {}), ...(groups ? { parts, groups, ownSurface } : {}),   // a mesh's parts: its surfaces stay editable
                    ...(checkpoint ? { title: source.userData.title ?? '' } : {}) };
   if (checkpoint || zone) obj.material = lookOf(obj);
   if (checkpoint) decorateCheckpoint(obj);
@@ -2244,13 +2180,14 @@ function deleteSelected() {
   const obj = selected;
   select(null);
   removeObject(obj);
+  if (obj.userData.lava && obj.userData.floor) setFloorSurface(obj.userData.floor, undefined);   // the floor shows its own again
   applyFilter();
   updateDirty();
 }
 function removeObject(obj) {
   obj.userData.deleted = true;
   obj.userData.copy ? added.splice(added.indexOf(obj), 1) : removed.add(obj);
-  undo.push({ kind: 'delete', obj });
+  remember({ kind: 'delete', obj });
 }
 
 // AI agents build maps through window.mapAI (ai-guide.md): steps of JSON in map units and degrees, the map's facts
@@ -2280,7 +2217,7 @@ const footOf = (a, foot) => rotated(a.rot, foot).map((v, k) => r1(a.loc[k] + v))
 let aiCount = 0;
 const idOf = o => o.userData.aiId ??= o.userData.copy ? `${o.userData.lava ? 'lava' : o.userData.checkpoint ? 'checkpoint' : o.userData.light ? 'light' : o.userData.zone ? 'zone' : 'shape'}#${++aiCount}` : `map#${o.userData.actor.i}`;
 const surfaceKey = name => name.replace(/^MAT_|_(INST|MIC|MAT|Mat)$/g, '');
-const aiSurfaces = () => new Map([...$('surface').options].map(op => [op.value === 'lava' ? 'lava' : surfaceKey(op.text), surfaceValue(op.value)]));
+const aiSurfaces = () => new Map(surfaceOptions().map(op => [op.value === 'lava' ? 'lava' : surfaceKey(op.text), op.value]));
 const surfaceRef = name => [...aiSurfaces()].find(([k]) => k.toLowerCase() === surfaceKey(name).toLowerCase())?.[1];
 const surfaceName = ref => [...aiSurfaces()].find(([, v]) => v === ref)?.[0] ?? null;
 function aiFloor() {                              // the widest flat solid the map came with: what lava covers
@@ -2302,9 +2239,10 @@ function aiObjects() {                            // [floor, what an agent works
   })];
 }
 const aiFind = id => aiObjects()[1].find(o => idOf(o) === id);
+const lavaKind = ({ car, ball }) => car && ball ? 'both' : car ? 'car' : ball ? 'ball' : 'none';
 const aiLava = () => {
-  const kinds = new Set(objects.filter(o => o.userData.lava && !o.userData.deleted).map(o => o.userData.checkpoint));
-  return kinds.size === 2 ? 'both' : [...kinds][0] ?? 'none';
+  const zones = objects.filter(o => o.userData.lava && !o.userData.deleted).map(o => o.userData.lava);
+  return lavaKind({ car: zones.some(l => l.car), ball: zones.some(l => l.ball) });
 };
 
 function aiErrors(step) {                         // what is wrong with a step before anything changes
@@ -2404,10 +2342,11 @@ function aiSetLava(kind) {
   for (const o of objects.filter(o => o.userData.lava && !o.userData.deleted)) removeObject(o);
   const floor = aiFloor(), kinds = LAVA_KINDS[kind];
   if (kinds.length && (!floor || !zone)) throw new Error('this map has no floor or trigger zone for lava');
-  kinds.forEach((k, n) => {
-    const [loc, scale3d] = lavaValues(floor, boxOf(floor).max.y), obj = makeCheckpoint(k, loc, [0, 0, 0], false, scale3d, true);
-    if (!n) { obj.userData.panel = { material: null }; obj.material = lookOf(obj); }   // one red panel shows both kinds
-  });
+  if (!kinds.length) return;
+  const [loc, scale3d] = lavaValues(floor, boxOf(floor).max.y);
+  const obj = makeCheckpoint('lava', loc, [0, 0, 0], false, scale3d, { car: kinds.includes('car'), ball: kinds.includes('ball') });
+  obj.userData.panel = { material: null };
+  obj.material = lookOf(obj);
 }
 function aiSpawn({ at, yaw = 0 }) {
   const obj = objects.find(o => o.userData.spawn), a = obj.userData.actor;
@@ -2471,7 +2410,7 @@ async function aiApply(step) {
 function aiEntry(o) {
   readBack(o);
   const u = o.userData, a = u.actor, b = boxOf(o), e = { id: idOf(o) };
-  if (u.lava) Object.assign(e, { kind: 'lava', resets: u.checkpoint });
+  if (u.lava) Object.assign(e, { kind: 'lava', resets: lavaKind(u.lava) });
   else if (u.zone) {
     const s = a.scale3d.map(v => v * a.scale);
     Object.assign(e, { kind: 'zone', at: footOf(a, zoneFoot(a.bounds, s)), yaw: deg(a.rot[1]), size: s.map((v, k) => r1(2 * a.bounds[3 + k] * v)), visible: !!u.panel,
@@ -2518,7 +2457,7 @@ function aiWarnings() {                           // what keeps the map from pla
   }
   const ball = ballObj(), b = ball.userData.actor.loc;
   if (ball.userData.placed && !ball.userData.onRoof && !groundHit([b[0], b[1], b[2] + 1], BALL_REST + 50)) out.push('ball: in the air; it falls when the map starts');
-  const over = !ball.userData.placed && !spawnBall && !objects.some(o => o.userData.lava && o.userData.checkpoint === 'ball' && !o.userData.deleted)
+  const over = !ball.userData.placed && !spawnBall && !objects.some(o => o.userData.lava?.ball && !o.userData.deleted)
     && groundHit([b[0], b[1], LIMIT], 2 * LIMIT);
   if (over && over.point.y > b[2]) out.push(`ball: Free Play starts it at the field centre under ${over.object === floor ? 'the floor' : idOf(over.object)}; place it with "ball", or keep (0, 0) clear`);
   return out;
@@ -2547,7 +2486,7 @@ async function aiLook(view = 'top', { labels = true } = {}) {
     return { ok: false, error: 'look takes "top", "overview", "spawn", an object id, or {from: [x, y, z], at: [x, y, z]}' };
   }
   select(null);
-  $('showIds').checked = labels;
+  ui.view.value = { ...ui.view.value, ids: labels };
   const s = spawnActor(), [ahead, right] = ueAxes(s.rot).map(toThree), up = new THREE.Vector3(0, 1, 0), tan = Math.tan(camera.fov * Math.PI / 360);
   const box = new THREE.Box3().expandByPoint(toThree(s.loc)).expandByPoint(toThree(ballObj().userData.actor.loc));
   for (const o of aiObjects()[1]) if (!o.userData.lava && !['sun', 'sky'].includes(o.userData.light?.kind)) box.union(boxOf(o));   // far-off suns don't count
@@ -2584,17 +2523,18 @@ async function aiLook(view = 'top', { labels = true } = {}) {
 let labelTargets = null;                          // [object, id] to label; recounted when the map changes
 const labelEls = new Map();
 function drawLabels() {
-  $('labels').hidden = !$('showIds').checked || !pkg;
+  $('labels').hidden = !ui.view.value.ids || !pkg;
   if ($('labels').hidden) return;
   const { clientWidth: w, clientHeight: h } = view, seen = new Set();
   labelTargets ??= [...aiObjects()[1].filter(o => !o.userData.lava).map(o => [o, idOf(o)]), [objects.find(o => o.userData.spawn), 'spawn'], [ballObj(), 'ball']];
   for (const [o, id] of labelTargets) {
     if (!o) continue;
     const b = boxOf(o), p = new THREE.Vector3((b.min.x + b.max.x) / 2, b.max.y, (b.min.z + b.max.z) / 2).project(camera);
-    if (!labelEls.has(o)) labelEls.set(o, $('labels').appendChild(document.createElement('span')));
+    if (!labelEls.has(o)) labelEls.set(o, $('labels').appendChild(Object.assign(document.createElement('span'), {
+      className: 'absolute left-0 top-0 whitespace-nowrap rounded bg-base-300/80 px-1.5 font-mono text-[11px] leading-snug' })));
     const el = labelEls.get(o);
     if (el.textContent !== id) el.textContent = id;
-    el.hidden = p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1;
+    el.hidden = !o.visible || p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1;
     el.style.transform = `translate(${(p.x + 1) / 2 * w}px, ${(1 - p.y) / 2 * h}px) translate(-50%, -100%)`;
     seen.add(o);
   }
@@ -2618,7 +2558,10 @@ function changes(obj) {                           // transform fields that diffe
   if (obj.userData.checkpoint && !obj.userData.lava && title !== undefined && (o ? title !== o.title : title)) e.title = title;
   const want = obj.userData.panel, had = obj.userData.savedPanel;
   if (o && obj.userData.checkpoint && (!!want !== !!had || (want && had && want.material !== had.material))) e.panel = true;
-  if (o && obj.userData.surface !== undefined && obj.userData.surface !== o.surface) e.surface = obj.userData.surface;
+  const lava = obj.userData.lava;
+  if (o?.lava && (lava.car !== o.lava.car || lava.ball !== o.lava.ball)) e.lava = true;   // written anew in its place (changeSet)
+  const s = obj.userData.surface;
+  if (o && s !== undefined && (Array.isArray(s) ? s.some((m, k) => m !== (a.materials?.[k] || 0)) : s !== o.surface)) e.surface = s;
   if (o && (obj.userData.mover || obj.userData.shape) && motionKey(obj) !== o.motion) e.motion = true;   // the movers are written as a whole (changeSet)
   if (obj.userData.gravity !== undefined && (!o || obj.userData.gravity !== o.gravity)) e.gravity = obj.userData.gravity;
   const l = obj.userData.light;
@@ -2655,8 +2598,9 @@ function scheduleOutline() {
   outlinePending = true;
   setTimeout(() => { outlinePending = false; renderOutline(); });
 }
+const outlineLists = new Map();                   // fold key -> what it holds, for its eye
 function renderOutline() {                        // • marks what isn't saved yet
-  const q = $('filter').value.trim().toLowerCase(), tree = new Map(GROUPS.map(g => [g, new Map()]));
+  const q = ui.filter.value.trim().toLowerCase(), tree = new Map(GROUPS.map(g => [g, new Map()]));
   for (const o of objects) {
     if (o.userData.deleted || o.userData.respawnFor) continue;
     const a = o.userData.actor, [g, sub] = groupOf(o);
@@ -2669,63 +2613,56 @@ function renderOutline() {                        // • marks what isn't saved 
   const numbers = {};
   const label = o => {
     if (o.userData.spawn) return `Spawn · ${where(o)}`;
+    if (o.userData.placeholder) return `Sun · ${where(o)}`;
     if (o.userData.ballSpawn) return `${o.userData.placed ? 'Ball spawn' : 'Ball start'} · ${where(o)}`;
     const name = ownName(o);
     if (name) return `${name} · ${where(o)}`;
     if (!o.userData.checkpoint) return `${o.userData.actor.name} · ${where(o)}`;
-    const kind = `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${o.userData.lava ? 'lava' : isGate(o.userData.actor) ? 'gate' : 'checkpoint'}`;
+    const kind = o.userData.lava ? 'Lava' : `${o.userData.checkpoint === 'ball' ? 'Ball' : 'Car'} ${isGate(o.userData.actor) ? 'gate' : 'checkpoint'}`;
     numbers[kind] = (numbers[kind] || 0) + 1;
     return `${kind} ${numbers[kind]} · ${where(o)}`;
   };
-  const row = (o, text, key, value) => {
-    const el = Object.assign(document.createElement('div'), { className: o === selected ? 'item sel' : 'item', textContent: text, title: o.userData.actor.name });
-    el.dataset[key] = value;
-    return el;
+  const eye = list => ({ some: list.some(o => o.userData.eyeOff), every: list.every(o => o.userData.eyeOff) });   // hidden in the view only; the saved map keeps it
+  const item = (o, text, top = false) => ({ i: objects.indexOf(o), text: (o.userData.copy ? '• ' : '') + text, title: o.userData.actor.name, sel: o === selected, top, eye: eye([o]) });
+  const fold = (key, text, list, fill) => {
+    const open = !!q || openGroups.has(key);
+    outlineLists.set(key, list);
+    return { key, text, open, eye: eye(list), children: open ? fill() : [] };   // closed groups stay empty until opened
   };
-  const item = (o, text) => row(o, (o.userData.copy ? '• ' : '') + text, 'i', objects.indexOf(o));
-  const fold = (key, text, fill) => {
-    const d = document.createElement('details');
-    d.open = !!q || openGroups.has(key);
-    d.dataset.key = key;
-    d.append(Object.assign(document.createElement('summary'), { textContent: text }));
-    if (d.open) fill(d);                          // closed groups stay empty until opened
-    return d;
-  };
+  outlineLists.clear();
   const nodes = [];
   for (const [g, subs] of tree) {
     const total = [...subs.values()].reduce((n, list) => n + list.length, 0);
     if (!total) continue;
     if (g === 'Spawn') {
-      nodes.push(...subs.get('').map(o => { const el = item(o, label(o)); el.classList.add('top'); return el; }));
+      nodes.push(...subs.get('').map(o => item(o, label(o), true)));
       continue;
     }
-    nodes.push(fold(g, `${g} (${total})`, d => {
-      for (const [sub, list] of [...subs].sort(([x], [y]) => x.localeCompare(y))) {
-        if (!sub) d.append(...list.map(o => item(o, label(o))));
-        else d.append(fold(`${g}/${sub}`, `${sub} ×${list.length}`, dd => dd.append(...list.map(o => item(o, where(o))))));
-      }
-    }));
+    nodes.push(fold(g, `${g} (${total})`, [...subs.values()].flat(), () => [...subs].sort(([x], [y]) => x.localeCompare(y)).flatMap(([sub, list]) =>
+      sub ? [fold(`${g}/${sub}`, `${sub} ×${list.length}`, list, () => list.map(o => item(o, where(o))))] : list.map(o => item(o, label(o))))));
   }
-  $('outline').replaceChildren(...(nodes.length ? nodes : [Object.assign(document.createElement('div'), { className: 'empty', textContent: q ? 'No matches' : 'Nothing here yet' })]));
-  if (revealing) $('outline').querySelector(`.item[data-i="${objects.indexOf(revealing)}"]`)?.scrollIntoView({ block: 'nearest' });
+  ui.outline.value = { nodes, empty: q ? 'No matches' : 'Nothing here yet' };
+  if (revealing) ui.reveal.value = { i: objects.indexOf(revealing) };
   revealing = null;
 }
 function updateDirty() {
-  $('dirty').textContent = changeCount();
+  ui.dirty.value = changeCount();
+  keepSoon();
   labelTargets = null;
   placeBallStart();
   if (!gizmo.dragging) scheduleOutline();          // positions refresh once a drag ends
 }
 
-function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.className = kind; }
+function setStatus(text, kind) { ui.status.value = { text, kind }; }
 
-function changeSet() {                            // [what build() applies, summary]
-  if (!script.plan && script.source.trim() && script.source !== scriptSaved) {   // written here and not applied yet: it is yours, so run it
+function changeSet(run = true) {                  // [what build() applies, summary]; run: a script typed but not applied runs first
+  if (run && !script.plan && script.source.trim() && script.source !== scriptSaved) {   // written here and not applied yet: it is yours, so run it
     runPlan();
     if (script.error) throw new Error(`Script: ${script.error}`);
   }
-  const edits = [...dirty].filter(o => !removed.has(o) && !o.userData.ballSpawn).map(o => { const { motion, ...e } = changes(o); return { i: o.userData.actor.i, ...e }; });
-  const duplicates = added.filter(o => !o.userData.checkpoint && !o.userData.shape && !o.userData.newLight && !o.userData.zone).map(o => ({ src: o.userData.actor.src, ...changes(o) }));
+  const edits = [...dirty].filter(o => !removed.has(o) && !o.userData.ballSpawn).map(o => { const { motion, lava, ...e } = changes(o); return { i: o.userData.actor.i, ...e }; });
+  const duplicates = added.filter(o => !o.userData.checkpoint && !o.userData.shape && !o.userData.newLight && !o.userData.zone)
+    .map(o => ({ src: o.userData.actor.src, ...changes(o), ...(o.userData.surface !== undefined ? { material: o.userData.surface } : {}) }));
   const triggerZones = added.filter(o => o.userData.zone).map(o => { const { loc, rot, scale3d, gravity } = changes(o); return { loc, rot, scale3d, ...(o.userData.gravity !== undefined ? { gravity } : {}) }; });
   const lights = added.filter(o => o.userData.newLight).map(o => {
     const { loc, rot, light } = changes(o);
@@ -2735,9 +2672,15 @@ function changeSet() {                            // [what build() applies, summ
   const shapeGeometry = Object.fromEntries([...new Set(shapes.map(s => s.key))].map(k => [k, asMeshInput(shapeData(k))]));
   const shapeMaterial = lastSurface;
   const checkpoints = added.filter(o => o.userData.checkpoint)
-    .map(o => ({ ...changes(o), ball: o.userData.checkpoint === 'ball', lava: !!o.userData.lava,
-                 respawn: o.userData.lava ? null : respawnValues(o) }));
+    .map(o => o.userData.lava ? { ...changes(o), lava: true, ...o.userData.lava }
+      : { ...changes(o), ball: o.userData.checkpoint === 'ball', respawn: respawnValues(o) });
   const removes = [...removed].map(o => o.userData.actor.i), respawns = [], panels = [];
+  for (const o of dirty) {                        // saved lava that resets on other touches now: a new zone in its place
+    if (removed.has(o) || !changes(o).lava) continue;
+    const { loc, rot, scale3d, scale } = o.userData.actor;
+    removes.push(o.userData.actor.i);
+    checkpoints.push({ loc: [...loc], rot: [...rot], scale3d: [...scale3d], scale, lava: true, ...o.userData.lava });
+  }
   const lit = edits.filter(e => e.light).length, moved = edits.filter(e => Object.keys(e).some(k => k !== 'i' && k !== 'light')).length;
   const surfaces = edits.filter(e => 'surface' in e).map(e => ({ i: e.i, material: e.surface }));
   const panelAt = (o, material) => {
@@ -2775,7 +2718,7 @@ function changeSet() {                            // [what build() applies, summ
     if (ball.userData.actor.i === null) ballSpawn = { loc };
     else if (!same(loc, ball.userData.original.loc, 0.01)) edits.push({ i: ball.userData.actor.i, loc });
   }
-  const terrain = ter.dirty.size ? { base: ter.base, material: +$('terrainMat').value, tiles: [...ter.dirty].map(key => {
+  const terrain = ter.dirty.size ? { base: ter.base, material: ui.terrain.value.value, tiles: [...ter.dirty].map(key => {
     const [tx, ty] = key.split(',').map(Number);
     return { tx, ty, heights: apron(tx, ty) };
   }) } : null;
@@ -2803,12 +2746,12 @@ function changeSet() {                            // [what build() applies, summ
   const meta = { objects: objects.filter(o => !o.userData.deleted && (ownId(o) || o.userData.shape || o.userData.zone))
     .map(o => ({ ref: refOf(o), ...(ownId(o) ? { name: ownId(o) } : {}), ...(o.userData.shape ? { shape: o.userData.shape } : {}), ...(o.userData.zone ? { zone: true } : {}) })) };
   return [{ edits, duplicates, lights, movers, triggerZones, script: scriptChange(), conversions, meta, checkpoints, terrain, removes, fresh, shapes, shapeGeometry, shapeMaterial, respawns, panels, surfaces, ballSpawn,
-            lighting: lighting !== lightingSaved ? lighting : null, hud: hudChanged() ? hud : null },
+            lighting: lighting !== lightingSaved ? lighting : null, hud: hudChanged() ? hud : null, images: Object.fromEntries(images) },
           fresh ? `new map, ${summary}` : summary];
 }
 function editedMap() {                            // [map bytes with every change applied, summary]
   const [changes, summary] = changeSet();
-  return [build(source, changes), summary];
+  return [build(source, changes, donor), summary];
 }
 const failed = err => err.name === 'SecurityError'   // the browser wants a fresh click before it shows a file dialog
   ? setStatus('Ready: click that button once more to pick where it goes.', 'ok')
@@ -2839,21 +2782,25 @@ async function save() {
   } catch (err) { failed(err); }
 }
 
-// The game folder (TAGame/CookedPCConsole) is asked for once and remembered in IndexedDB.
-let dbOpen = null;
-function database() {
-  dbOpen ??= new Promise((resolve, reject) => {
-    const open = indexedDB.open('rl-map-editor', 2);
-    open.onupgradeneeded = () => {
-      for (const name of ['handles', 'shapes']) if (!open.result.objectStoreNames.contains(name)) open.result.createObjectStore(name);
+// IndexedDB: the game folder (TAGame/CookedPCConsole), asked for once, and the shape library in one database, the map
+// kept for a reload in another. Neither is opened at a set version: an upgrade waits for every editor tab still open
+// on the old one, and until then nothing can be read or kept.
+const DATABASES = { 'rl-map-editor': ['handles', 'shapes'], 'rl-map-editor-session': ['session'] };
+const dbOpens = new Map();
+function database(store) {                        // the database that holds `store`
+  const name = store === 'session' ? 'rl-map-editor-session' : 'rl-map-editor';
+  if (!dbOpens.has(name)) dbOpens.set(name, new Promise((resolve, reject) => {
+    const open = indexedDB.open(name);
+    open.onupgradeneeded = () => {                // only when it is new
+      for (const s of DATABASES[name]) if (!open.result.objectStoreNames.contains(s)) open.result.createObjectStore(s);
     };
     open.onsuccess = () => resolve(open.result);
-    open.onerror = () => reject(open.error);
-  });
-  return dbOpen;
+    open.onerror = () => { dbOpens.delete(name); reject(open.error); };
+  }));
+  return dbOpens.get(name);
 }
 async function stored(store, key, value) {        // read a value (value undefined) or store one
-  const db = await database();
+  const db = await database(store);
   return new Promise((resolve, reject) => {
     const s = db.transaction(store, 'readwrite').objectStore(store);
     const req = value === undefined ? s.get(key) : s.put(value, key);
@@ -2862,6 +2809,74 @@ async function stored(store, key, value) {        // read a value (value undefin
   });
 }
 const remembered = (key, value) => stored('handles', key, value);
+
+// The map being edited is kept in IndexedDB as you work, so a reload brings it back: the opened file (once per file),
+// what build() applies on top of it and the script as typed; the starter, which has no file, as its plain state.
+function keepSoon() {                             // a newly opened file at once, edits a moment after the last one
+  if (!keeping) return;
+  clearTimeout(keepTimer);
+  keepTimer = setTimeout(keepSession, source && kept?.bytes !== source ? 0 : 250);   // short: a write started as the page unloads gets dropped
+}
+async function storeAll(store, entries) {         // [key, value] pairs in one transaction: all of them land, or none
+  const db = await database(store);
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(store, 'readwrite');
+    for (const [key, value] of entries) t.objectStore(store).put(value, key);
+    t.oncomplete = resolve;
+    t.onerror = t.onabort = () => reject(t.error);
+  });
+}
+async function keepSession() {
+  clearTimeout(keepTimer);
+  keepTimer = 0;
+  try {
+    const view = { pos: camera.position.toArray(), target: orbit.target.toArray() };
+    if (!source) return await storeAll('session', [['map', changeCount() ? { starter: starterState(), view } : null]]);
+    const file = kept?.bytes === source ? kept : { id: Date.now(), bytes: source };
+    const changes = changeCount() - restored ? changeSet(false)[0] : null;
+    // the file as a Blob: Chrome refuses a byte array this big (Medieval Rings' 674 MB) as one value, not a Blob
+    await storeAll('session', [...(file === kept ? [] : [['source', { id: file.id, blob: new Blob([source]) }]]),
+      ['map', { source: file.id, name: mapName, saveName, count: changeCount(), changes, script: script.source, view }]]);
+    if (file !== kept) console.info(`Kept ${mapName} for a reload`);
+    kept = file;
+  } catch (err) {
+    console.warn('The map could not be kept for a reload:', err);
+    setStatus(`Your map is not kept for a reload: ${err.message}`, 'warn');
+  }
+}
+async function restoreSession() {
+  let back = false;                               // only a map that came back is kept again; else the record waits for an edit
+  try {
+    const rec = await stored('session', 'map');
+    if (rec?.starter) {
+      placeStarterState(rec.starter, 0, 0, 0);
+      setStatus('Your map is back as you left it.', 'ok');
+      back = true;
+    } else if (rec) {
+      $('bootText').textContent = `Opening ${rec.name}…`;
+      await nextFrame();                          // shown before building and parsing block the page
+      const src = await stored('session', 'source');
+      if (src?.id !== rec.source) throw new Error('its file was not kept with it');
+      const bytes = src.blob ? new Uint8Array(await src.blob.arrayBuffer()) : src.bytes;
+      if (!await openFile(new File([rec.changes ? build(bytes, rec.changes, await extras) : bytes], rec.name), false)) return;
+      saveName = rec.saveName;
+      script.source = rec.script;
+      renderScript();
+      const count = rec.count ?? +!!rec.unsaved;   // records kept before the count was
+      restored = Math.max(0, count - changeCount());   // what the reopened map no longer shows as changes, such as a typed script, still does
+      updateDirty();
+      setStatus(count ? `${rec.name} is back with your ${count} unsaved change${count === 1 ? '' : 's'}. Save as keeps them in a file.` : `${rec.name} is open again.`, 'ok');
+      back = true;
+    }
+    if (rec?.view) { camera.position.fromArray(rec.view.pos); orbit.target.fromArray(rec.view.target); }
+  } catch (err) {
+    setStatus(`The map from before the reload could not be opened: ${err.message}`, 'warn');
+  } finally {
+    keeping = true;
+    if (back) keepSoon();
+    setTimeout(() => $('app').classList.remove('booting'));   // after the Map list's own refresh, queued before it
+  }
+}
 const SLOT = 'Labs_Underpass_P.upk', BACKUP = 'Labs_Underpass_P.upk.original';
 async function gameFolder() {
   if (!window.showDirectoryPicker) throw new Error('Loading into the game needs Chrome or Edge. Use Save as, then copy the file over Labs_Underpass_P.upk in the game folder.');
@@ -2973,12 +2988,13 @@ const typing = el => el.tagName === 'SELECT' || (el.tagName === 'INPUT' && !['ra
 window.addEventListener('keyup', e => held.delete(e.key.toLowerCase()));
 window.addEventListener('blur', () => held.clear());
 window.addEventListener('keydown', e => {
-  if (typing(e.target) || $('ask').open) return;
-  if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); return popUndo(); }
+  if (typing(e.target) || ui.ask.value) return;
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); return e.shiftKey ? popRedo() : popUndo(); }
+  if (e.ctrlKey && e.key === 'y') { e.preventDefault(); return popRedo(); }
   if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); return save(); }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'o') { e.preventDefault(); return $('open').click(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'o') { e.preventDefault(); return $('file').click(); }
   if (e.key === '?') return toggleHelp();
-  if (e.key === 'Escape' && !$('help').hidden) return toggleHelp(false);
+  if (e.key === 'Escape' && ui.helpOpen.value) return toggleHelp(false);
   if ((e.metaKey || e.ctrlKey) && e.key === 'd') { e.preventDefault(); return duplicateSelected(); }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return deleteSelected(); }
   const k = e.key.toLowerCase();
@@ -2987,166 +3003,168 @@ window.addEventListener('keydown', e => {
   if (k === '2') setMode('rotate');
   if (k === '3') setMode('scale');
   if (k === 'f') focus();
-  if (k === 'g') setSnap(!$('snap').checked);
+  if (k === 'g') setSnap(!ui.snap.value);
   if (k === '[' || k === ']') setSnapStep(SNAP_STEPS[Math.max(0, Math.min(SNAP_STEPS.length - 1, SNAP_STEPS.indexOf(snapStep) + (k === ']' ? 1 : -1)))]);
   if (k === 't') setSculpt(!sculpting);
   if (k === 'escape') sculpting ? setSculpt(false) : select(null);
 });
-document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
-$('filter').addEventListener('input', () => { applyFilter(); scheduleOutline(); });
-$('outline').addEventListener('click', e => {
-  const el = e.target.closest('.item');
-  if (!el) return;
-  if (sculpting) setSculpt(false);
-  select(objects[+el.dataset.i]);
-  focus();
-});
-$('outline').addEventListener('toggle', e => {    // remember open groups; an opened one gets its rows
-  const d = e.target, key = d.dataset?.key;
-  if (!key || d.open === openGroups.has(key)) return;
-  if (d.open) { openGroups.add(key); scheduleOutline(); } else openGroups.delete(key);
-}, true);
-$('showVolumes').addEventListener('change', applyFilter);
-$('showCheckpoints').addEventListener('change', applyFilter);
-$('lightingItems').addEventListener('change', e => {
-  lighting = e.target.value;
+// The left panel's actions (ui.js): the Map list and the Add palette
+const outlineActs = {
+  setFilter(q) { ui.filter.value = q; applyFilter(); scheduleOutline(); },
+  outlineRow(i) {
+    if (sculpting) setSculpt(false);
+    const o = objects[i];
+    if (o.userData.eyeOff) { o.userData.eyeOff = false; applyFilter(); }   // picking a hidden one from the list shows it again
+    select(o);
+    focus();
+  },
+  outlineEye({ i, key }) {                        // a row's, or a fold's for all it holds
+    const list = key === undefined ? [objects[i]] : outlineLists.get(key), hide = !list.every(o => o.userData.eyeOff);
+    for (const o of list) o.userData.eyeOff = hide;
+    if (hide && list.includes(selected)) select(null);
+    applyFilter();
+    scheduleOutline();
+  },
+  foldOutline(key, open) {                        // remember open groups, except ones a search opened; an opened one gets its rows
+    if (ui.filter.value.trim() || open === openGroups.has(key)) return;
+    if (open) { openGroups.add(key); scheduleOutline(); } else openGroups.delete(key);
+  },
+  setPaletteFilter(q) { ui.paletteFilter.value = q; renderPalette(); },
+  foldPalette(key, open) {
+    if (ui.paletteFilter.value.trim() || open === paletteOpen.has(key)) return;
+    if (open) paletteOpen.add(key); else paletteOpen.delete(key);
+    try { localStorage.setItem('rlme.addOpen', JSON.stringify([...paletteOpen])); } catch { /* storage blocked */ }
+    if (open) renderPalette();
+  },
+};
+function setLighting(mood) {                      // the map's Lighting and On screen settings (ui.js MapProps)
+  lighting = mood;
   renderLighting();
-  $('lightingMenu').open = false;
   updateDirty();
-});
-$('showMarkers').addEventListener('change', applyFilter);
-for (const id of ['hudTimer', 'hudDeaths']) $(id).addEventListener('change', () => {
-  hud = { timer: $('hudTimer').checked, deaths: $('hudDeaths').checked };
+}
+function setHud(key, on) {
+  hud = { ...hud, [key]: on };
+  renderHud();
   updateDirty();
-});
-$('showHuge').addEventListener('change', applyFilter);
+}
 function setSnap(on) {
-  $('snap').checked = on;
+  ui.snap.value = on;
   try { localStorage.setItem('rlme.snap', on ? '1' : ''); } catch { /* storage blocked */ }
 }
 function setSnapStep(step) {
-  snapStep = step;
-  $('snapStep').value = step;
+  snapStep = ui.snapStep.value = step;
   try { localStorage.setItem('rlme.snapStep', step); } catch { /* storage blocked */ }
 }
-const SNAP_STEPS = [...$('snapStep').options].map(o => +o.value);
 try {
   setSnap(localStorage.getItem('rlme.snap') === '1');
   setSnapStep(SNAP_STEPS.includes(+localStorage.getItem('rlme.snapStep')) ? +localStorage.getItem('rlme.snapStep') : 50);
 } catch { /* storage blocked */ }
-$('snap').addEventListener('change', e => setSnap(e.target.checked));
-$('snapStep').addEventListener('change', e => setSnapStep(+e.target.value));
 function placeSnapped() {                         // with snapping on, what you place lands with its lower corner on the grid
   const before = selected;
   addFromPalette();
-  if (!$('snap').checked || !selected || selected === before) return;
+  if (!ui.snap.value || !selected || selected === before) return;
   const min = boxOf(selected).min;
   selected.position.x += Math.round(min.x / snapStep) * snapStep - min.x;
   selected.position.z += Math.round(min.z / snapStep) * snapStep - min.z;
   markDirty(selected);
   select(selected);
 }
-try { $('gameTextures').checked = localStorage.getItem('rlme.gameTextures') === '1'; } catch { /* storage blocked */ }
-$('gameTextures').addEventListener('change', e => {
-  try { localStorage.setItem('rlme.gameTextures', e.target.checked ? '1' : ''); } catch { /* storage blocked */ }
-  if (e.target.checked) return useGameLooks(true).catch(err => { e.target.checked = false; setStatus(err.name === 'AbortError' ? 'Game textures stay off.' : err.message, 'warn'); });
-  for (const r of gameLooks.keys()) { surfaceCache.get(r)?.dispose(); surfaceCache.delete(r); }
-  gameLooks.clear();
-  refreshSurfaces();
-});
-$('save').addEventListener('click', save);
-$('play').addEventListener('click', play);
-$('undo').addEventListener('click', popUndo);
-$('duplicate').addEventListener('click', duplicateSelected);
-$('add').addEventListener('click', placeSnapped);
-$('sculpt').addEventListener('click', () => setSculpt(!sculpting));
-document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
-$('brushSize').addEventListener('input', showBrush);
-$('palette').addEventListener('click', e => {
-  const el = e.target.closest('.item');
-  if (!el) return;
-  picked = el.dataset.value;
-  $('palette').querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel'));
-  el.classList.add('sel');
-});
-$('palette').addEventListener('dblclick', e => { if (e.target.closest('.item')) placeSnapped(); });
-$('palette').addEventListener('toggle', e => {    // remember open folders, except ones a search opened
-  const d = e.target, key = d.dataset?.key;
-  if (!key || $('paletteFilter').value.trim() || d.open === paletteOpen.has(key)) return;
-  if (d.open) paletteOpen.add(key); else paletteOpen.delete(key);
-  try { localStorage.setItem('rlme.addOpen', JSON.stringify([...paletteOpen])); } catch { /* storage blocked */ }
-  if (d.open) renderPalette();
-}, true);
-function showTab(tab) {                           // the left panel: what's in the map, or what to add
-  document.querySelectorAll('[data-tab]').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === tab);
-    b.setAttribute('aria-selected', b.dataset.tab === tab);
-  });
-  $('mapTab').hidden = tab !== 'map';
-  $('addTab').hidden = tab !== 'add';
+function setView(key, on) {                       // the View menu
+  ui.view.value = { ...ui.view.value, [key]: on };
+  if (key === 'gameTextures') {
+    try { localStorage.setItem('rlme.gameTextures', on ? '1' : ''); } catch { /* storage blocked */ }
+    if (on) return useGameLooks(true).catch(err => { setView(key, false); setStatus(err.name === 'AbortError' ? 'Game textures stay off.' : err.message, 'warn'); });
+    for (const r of gameLooks.keys()) { surfaceCache.get(r)?.dispose(); surfaceCache.delete(r); }
+    gameLooks.clear();
+    return refreshSurfaces();
+  }
+  if (key !== 'ids' && key !== 'playMotion') applyFilter();   // those two the view reads every frame
 }
-document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
-$('paletteFilter').addEventListener('input', renderPalette);
-$('delete').addEventListener('click', deleteSelected);
-$('restore').addEventListener('click', restore);
-$('panelOn').addEventListener('change', e => {
+try { if (localStorage.getItem('rlme.gameTextures') === '1') ui.view.value = { ...ui.view.value, gameTextures: true }; } catch { /* storage blocked */ }
+function setPanel(on) {                           // a checkpoint's or zone's panel, visible in game
   if (!selected?.userData.checkpoint && !selected?.userData.zone) return;
-  selected.userData.panel = e.target.checked ? { material: selected.userData.savedPanel?.material ?? panelSurface(selected.userData.lava) } : null;
+  selected.userData.panel = on ? { material: selected.userData.savedPanel?.material ?? panelSurface(selected.userData.lava) } : null;
   selected.material = lookOf(selected);
   markDirty(selected);
   showSelection();
-});
-$('cpTitle').addEventListener('input', e => {
+}
+function setTitle(text) {
   if (!selected?.userData.checkpoint || selected.userData.title === undefined) return;
-  selected.userData.title = e.target.value.trim();
+  selected.userData.title = text.trim();
   markDirty(selected);
-});
-$('terrainMat').addEventListener('change', refreshSurfaces);
-$('surface').addEventListener('change', e => {
-  const u = selected?.userData, v = surfaceValue(e.target.value);
+}
+function setSurface(raw) {
+  const u = selected?.userData, v = surfaceValue(raw);
   if (!u) return;
-  if (u.checkpoint) { if (u.panel) u.panel.material = v; }
+  if (u.lava && floorOf(selected)) setFloorSurface(floorOf(selected), v);
+  else if (u.checkpoint) { if (u.panel) u.panel.material = v; }
   else {
+    remember({ kind: 'surface', obj: selected, surface: u.surface });
     u.surface = v;
     if (u.shape) lastSurface = v;
     selected.material = u.shape ? shapeLook(v) : surfaceMaterial(v, materialFor(u.actor));
   }
   markDirty(selected);
-});
-document.querySelectorAll('[data-gate]').forEach(b => b.addEventListener('click', () => {
-  if (selected?.userData.checkpoint && !selected.userData.lava) setGate(selected, b.dataset.gate === 'gate');
-}));
-document.querySelectorAll('[data-ball]').forEach(b => b.addEventListener('click', () => {
+  showSelection();
+}
+function setPartSurface(k, raw) {
+  const u = selected.userData, v = surfaceValue(raw);
+  remember({ kind: 'surface', obj: selected, surface: u.surface });
+  u.surface = u.groups.map((g, j) => j === k ? (v === g.material ? 0 : v) : (u.surface ?? u.actor.materials ?? [])[j] || 0);
+  selected.material = meshLook(u.actor, u.groups, u.surface);
+  markDirty(selected);
+  showSelection();
+}
+function setLava(key, on) {
+  const u = selected.userData;
+  remember({ kind: 'lava', obj: selected, lava: u.lava });
+  u.lava = { ...u.lava, [key]: on };
+  markDirty(selected);
+  showSelection();
+}
+function setBallOnTop(top) {
   if (selected?.userData.checkpoint !== 'ball' || selected.userData.lava) return;
-  selected.userData.ballOnTop = b.dataset.ball === 'top';
+  selected.userData.ballOnTop = top;
   fitGhosts(selected);
   markDirty(selected);
   showSelection();
-}));
+}
+const inspectorActs = {
+  rename, setTransform, setSurface, setPartSurface, setPanel, setTitle, setLava, setGravity, setBallOnTop, setLight, setMotion, addSpot, dropSpot,
+  setGate: gate => { if (selected?.userData.checkpoint && !selected.userData.lava) setGate(selected, gate); },
+  duplicate: duplicateSelected, delete: deleteSelected, setLighting, setHud, setTerrainSurface,
+};
 // menus close once something in them is picked, or on a click elsewhere
-document.addEventListener('click', e => document.querySelectorAll('details.menu[open]').forEach(menu => {
-  if (!menu.contains(e.target) || e.target.closest('.items button')) menu.open = false;
+document.addEventListener('click', e => document.querySelectorAll('details.dropdown[open]').forEach(menu => {
+  if (!menu.contains(e.target) || e.target.closest('.dropdown-content button')) menu.open = false;
 }));
-function toggleHelp(show = $('help').hidden) { $('help').hidden = !show; }
-$('helpButton').addEventListener('click', () => toggleHelp());
-$('help').addEventListener('click', () => toggleHelp(false));
-$('open').addEventListener('click', () => $('file').click());
+function toggleHelp(show = !ui.helpOpen.value) { ui.helpOpen.value = show; }
 $('file').addEventListener('change', e => {
   const file = e.target.files[0];
   e.target.value = '';
   openFile(file);
 });
-$('newMap').addEventListener('click', newMap);
 view.addEventListener('dragover', e => e.preventDefault());
 view.addEventListener('drop', e => { e.preventDefault(); openFile(e.dataTransfer.files[0]); });
-window.addEventListener('beforeunload', e => { if (changeCount()) e.preventDefault(); });
+window.addEventListener('pagehide', () => { if (keepTimer) keepSession(); });
 
+mountUI({
+  newMap, open: () => $('file').click(), undo: popUndo, redo: popRedo, pickPicture, setGround, save, play, restore,
+  setMode, toggleSculpt: () => setSculpt(!sculpting), setSnap, setSnapStep, setView,
+  ...outlineActs, ...inspectorActs, place: placeSnapped,
+  toggleScript: () => { ui.scriptOpen.value = !ui.scriptOpen.value; },
+  setTool, setBrushSize: size => { ui.brushSize.value = size; showBrush(); }, setTerrainSurface,
+  setScriptSource, runScript: runPlan, startPreview, fireEvent,
+});
+lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });
 setMode('translate');
 setTool('raise');
 loadStarter();
+restoreSession();
+setTimeout(() => $('app').classList.remove('booting'), 15000);   // never stuck loading, whatever the storage does
 loadLibrary();
 window.editor = { objects: () => objects, camera, orbit, gizmo, pivot, select, duplicateSelected, deleteSelected, addFromPalette, addCheckpoint, addLava,
-                  save, popUndo, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, changeSet, ballObj, newMap, buildOnBlank, placeShape, library };
+                  save, popUndo, popRedo, addPicture, changeCount, terrain: () => ter, setSculpt, setTool, openFile, editedMap, changeSet, ballObj, newMap, buildOnBlank, placeShape, library };
 window.mapAI = { help: async () => (await fetch('ai-guide.md', { cache: 'no-store' })).text(), apply: aiApply, state: aiState, ground: aiGround, look: aiLook };
 console.info('AI agents: this editor has a map-building API. Run  await mapAI.help()  for the guide.');
 </script>
