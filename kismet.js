@@ -218,19 +218,26 @@ export function checkpointZones(pkg) {
   return found.map(c => ({ ...c, ball: balls.has(c.dest), ballOnTop: balls.get(c.dest)?.ballOnTop ?? false, modeVar: balls.get(c.dest)?.modeVar ?? null }));
 }
 
-// Lava zones as [{i, ball}]: touching one (with the car, or the ball when `ball`) teleports the car back to
-// LastCheckpoint, the way a Touch event leads into a Teleport there.
+// Lava zones as [{i, car, ball}]: touching one with the car (`car`) or the ball (`ball`) teleports the car back to
+// LastCheckpoint, the way the zone's Touch events lead into a Teleport there. Maps made before lava could do both
+// have a zone of each kind on one spot. Zones the level no longer spawns (lava written anew) are left out.
 export function lavaZones(pkg) {
   const live = liveNodes(pkg), last = namedVar(pkg, 'LastCheckpoint', live);
   if (last === null) return [];
-  const { props, links, touchOf } = graph(pkg, live), found = [];
+  const { props, links, callers } = graph(pkg, live), zones = new Map(), level = new Set(pkg.levelList());
+  const touches = (k, hops = 0) => pkg.classOf(pkg.exports[k]) === 'SeqEvent_Touch' ? [k] : hops < 3 ? (callers.get(k) || []).flatMap(c => touches(c, hops + 1)) : [];
   for (const k of live) {
     if (pkg.classOf(pkg.exports[k]) !== 'SeqAct_Teleport' || !(links(k).get('Destination') || []).includes(last + 1)) continue;
-    const t = touchOf(k);
-    if (t >= 0) found.push({ i: (props.get(t).Originator || 0) - 1, ball: props.get(t).bPlayerOnly === false });
+    for (const t of touches(k)) {
+      const i = (props.get(t).Originator || 0) - 1, z = zones.get(i) ?? { i, car: false, ball: false };
+      z[props.get(t).bPlayerOnly === false ? 'ball' : 'car'] = true;
+      zones.set(i, z);
+    }
   }
-  return found;
+  return [...zones.values()].filter(z => level.has(z.i));
 }
+// one entry per kind of touch: [{i, ball}]
+export const lavaTouches = zones => zones.flatMap(z => ['car', 'ball'].filter(k => z[k]).map(k => ({ i: z.i, ball: k === 'ball' })));
 
 // The ball a map hands you at the spawn `spawn` (an actor index), when the spawn counts as a ball checkpoint (ball
 // lava): {onTop}; else null
@@ -270,8 +277,8 @@ export const BALL_TOP_AHEAD = 40;                 // a ball on the car sits this
 // touching a car checkpoint with the car, or a ball checkpoint with the ball, makes it the respawn point, and a
 // reset teleports the car there (with a fresh ball dropped onto it for ball checkpoints). The respawn logic is
 // created once per map, or again when `fresh` (the main sequence was just emptied). Entries with `lava` are lava
-// zones instead: touching one with the car (or the ball, when `ball`) teleports the car back to the last checkpoint,
-// stopped, with a fresh ball as after a reset (always, for ball lava). With lava, the spawn `spawn` (an actor index)
+// zones instead: touching one with the car (when `car`, which defaults to not `ball`) or the ball (when `ball`)
+// teleports the car back to the last checkpoint, stopped, with a fresh ball as after a reset (always, for the ball). With lava, the spawn `spawn` (an actor index)
 // counts as the first checkpoint, a ball one when there is ball lava. `ballSpawn` (transform values) gives the ball
 // a spawn of its own, a marker zone there: while the car is still at its spawn, the fresh ball goes to that marker.
 // A checkpoint that becomes the respawn point shows "Checkpoint N" on screen for 2 seconds.
@@ -479,7 +486,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
 
   const triggers = [];
   let number = fresh ? 0 : checkpointZones(pkg).length;   // checkpoints are numbered on screen in the order they were added
-  checkpoints.forEach(({ values, ball, ballOnTop = false, respawn = null, lava: isLava = false, title = '' }, k) => {
+  checkpoints.forEach(({ values, ball, car = !ball, ballOnTop = false, respawn = null, lava: isLava = false, title = '' }, k) => {
     const trig = add.duplicate(template, [0, 0, 0], values);
     const dest = respawn ? add.duplicate(template, [0, 0, 0], respawn) : trig;   // the marker has no Touch event
     triggers.push(trig);
@@ -491,12 +498,12 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
                             varLink('Target', obj, [target], px + 90, { prop: 'Targets', delta: 68 })]],
       ...layout(2, parent, px, py, 128, 61)];
     // lava re-arms fast: a touch within the delay is dropped, and a car resting in lava never touches it again
-    const touch = (playerOnly, touched, instigator) => [
+    const touch = (playerOnly, touched, instigator, ty = y) => [
       ['Originator', O, trig + 1], ['MaxTriggerCount', I, 0], ['ReTriggerDelay', F, isLava ? 0.1 : 1.0], ...(playerOnly ? [] : [['bPlayerOnly', B, false]]),
       ['MaxWidth', I, 173],
-      ['OutputLinks', A, [outputLink('Touched', touched, y + 69, 14), outputLink('UnTouched', [], y + 90, 35), outputLink('Empty', [], y + 111, 56)]],
+      ['OutputLinks', A, [outputLink('Touched', touched, ty + 69, 14), outputLink('UnTouched', [], ty + 90, 35), outputLink('Empty', [], ty + 111, 56)]],
       ['VariableLinks', A, [varLink('Instigator', obj, instigator, x + 86, { writeable: true, delta: 54 })]],
-      ...layout(2, parent, x, y, 131, 176, `${ball ? 'Ball' : 'Car'} ${isLava ? 'lava' : 'checkpoint'} ${k + 1} Touch`)];
+      ...layout(2, parent, x, ty, 131, 176, `${playerOnly ? 'Car' : 'Ball'} ${isLava ? 'lava' : 'checkpoint'} ${k + 1} Touch`)];
     const differs = (a, b, next, px) => [
       ['InputLinks', A, [inputLink(y + 36, 'In', 23)]],
       ['OutputLinks', A, [outputLink('A == B', [], y + 26, 13), outputLink('A != B', next, y + 46, 33)]],
@@ -512,9 +519,10 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
       ...layout(3, parent, px, py, 150, 77)];
     if (isLava) {
       if (ball && !clearRef) throw new Error("ball lava: this map's ball respawn script was not found");
-      // teleport the car back and stop it, so it does not carry its speed on; a fresh ball as after a reset, and for
-      // ball lava always one: in front of the car when the last checkpoint was a car one
-      const r = refs(['player', 'dir', 'mag', 'teleport', 'stop', 'touch', ...(ball ? ['instigator', 'notCar', 'sameBall'] : []),
+      // teleport the car back and stop it, so it does not carry its speed on; a fresh ball as after a reset, and after
+      // a ball touch always one: in front of the car when the last checkpoint was a car one. The car's and the ball's
+      // Touch share the teleport.
+      const r = refs(['player', 'dir', 'mag', 'teleport', 'stop', ...(car ? ['carTouch'] : []), ...(ball ? ['touch', 'instigator', 'notCar', 'sameBall'] : []),
                       ...(ball && onTopRef ? ['zero', 'front'] : [])]);
       const vec = cls('SeqVar_Vector'), flt = cls('SeqVar_Float');
       node('SeqVar_Player', vars(x + 30, y + 220));
@@ -535,9 +543,9 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
                               varLink('Velocity Dir', vec, [r.dir], px + 302, { prop: 'VelocityDir', delta: 76 }),
                               varLink('Velocity Mag', flt, [r.mag], px + 371, { prop: 'VelocityMag', delta: 145 })]],
         ...layout(1, parent, px + 200, py, 214, 77)]);
+      if (car) node('SeqEvent_Touch', touch(true, [r.teleport, ...(hasBallRef ? [hasBallRef] : [])], [], ball ? y - 200 : y));
       if (!ball) {
-        node('SeqEvent_Touch', touch(true, [r.teleport, ...(hasBallRef ? [hasBallRef] : [])], []));
-        placed(r, 'car lava');
+        placed(r, 'lava');
         return;
       }
       node('SeqEvent_Touch', touch(false, [r.notCar], [r.instigator]));
@@ -558,7 +566,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
                                 varLink('Target', int, [onTopRef], px + 290, { prop: 'Target', writeable: true, delta: 68 })]],
           ...layout(2, parent, px + 200, py + 100, 128, 61)]);
       }
-      placed(r, 'ball lava');
+      placed(r, 'lava');
       return;
     }
     // only a checkpoint that isn't the last one already counts, and says so on screen: a reset inside a box
@@ -632,7 +640,7 @@ function blockNodes(pkg, live, prefix) {          // a block: its events named `
 
 // Replace the map's timer and death counter with `want` ({timer, deaths}; both off takes it out). `finish` is the
 // actor the last checkpoint makes the respawn point (null: there is none, and the timer never stops); `lava` the
-// lava zones ([{i, ball}]) whose touches count as deaths.
+// lava zones ([{i, car, ball}], see lavaZones) whose touches count as deaths.
 export function setHud(add, { timer = false, deaths = false }, finish, lava) {
   const pkg = add.pkg, seq = mainSequence(pkg), old = blockNodes(pkg, liveNodes(pkg), HUD);
   if (old.size) add.appendRefs(seq, 'SequenceObjects', [], r => !old.has(r - 1));
@@ -716,7 +724,7 @@ export function setHud(add, { timer = false, deaths = false }, finish, lava) {
   for (const n of names) node(...spec[n]);
   placed(r, 'timer and deaths');
 
-  if (deaths) lava.forEach(({ i, ball }, k) => {     // a touch of its own on each lava zone, beside the zone's reset
+  if (deaths) lavaTouches(lava).forEach(({ i, ball }, k) => {   // a touch of its own on each lava zone, beside the zone's reset
     const [x, y] = [x0 + 300 * k, y0 + 1000];
     const z = refs(ball ? ['instigator', 'notCar', 'touch'] : ['touch']);
     if (ball) {

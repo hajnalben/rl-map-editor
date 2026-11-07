@@ -2,7 +2,7 @@
 // and variables for its state, built from the node layouts working maps use (airdribblegauntlet, tower, The Path,
 // Leth's maps). The nodes are listed in a store node that also keeps the script's source and the objects its names
 // stand for, so the next save takes them all out before writing the script anew.
-import { A, B, E, F, I, KEY_RESET, N, O, S, T, checkpointZones, inputLink, lavaZones, layout, liveNodes, mainSequence, nodeProps, outputLink, textInfo, varLink, writer } from './kismet.js';
+import { A, B, E, F, I, KEY_RESET, N, O, S, T, checkpointZones, inputLink, lavaTouches, lavaZones, layout, liveNodes, mainSequence, nodeProps, outputLink, textInfo, varLink, writer } from './kismet.js';
 import { concat, pack } from './bytes.js';
 import { BUTTONS } from './script.js';
 
@@ -121,7 +121,7 @@ export function setScript(add, script) {
       }
       if (e.on === 'enter' || e.on === 'leave' || e.on === 'lava') {
         ctx.it = variable('SeqVar_Object');
-        const out = e.on === 'leave' ? 1 : 0, zones = e.on === 'lava' ? lava.filter(z => e.by === 'any' || (e.by === 'ball') === z.ball).map(z => [z.i, z.ball ? 'ball' : 'car'])
+        const out = e.on === 'leave' ? 1 : 0, zones = e.on === 'lava' ? lavaTouches(lava).filter(z => e.by === 'any' || (e.by === 'ball') === z.ball).map(z => [z.i, z.ball ? 'ball' : 'car'])
           : [[ref(e.zone), e.by]];
         if (!zones.length) throw new Error(`script: lava(${JSON.stringify(e.by)}): the map has no such lava`);
         return zones.flatMap(([zone, by]) => {

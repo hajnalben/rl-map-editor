@@ -199,7 +199,7 @@ on(reset, up.stop, open.set(false));
 | `zone(id).enter(by)`, `.leave(by)` | the car, ball or either (`"car"`, `"ball"`, `"any"`, the default) goes in or out |
 | `checkpoint(id).enter(by)`, `.leave(by)`, `.reached` | the same for a checkpoint; `reached`: it becomes the respawn point |
 | `reset` | the car respawns (a reset, the chat 1 reset key, lava, falling; not the first spawn) |
-| `lava(by)` | the car touches car lava, or the ball touches ball lava |
+| `lava(by)` | the car touches lava that resets on the car, or the ball lava that resets on the ball |
 | `pressed(button)` | a fresh press of `jump`, `boost`, `handbrake`, `ballcam`, `reset`, `chat1`…`chat4` |
 | `signal(name)` | `emit(name)` ran |
 | `goal(team)` | a goal: `"blue"`, `"orange"` or `"any"` (maps with goals) |
