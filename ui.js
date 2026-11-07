@@ -26,7 +26,7 @@ export const ui = {
   // the script panel: its source as typed, a line on it {text, error}, and the events the preview can set off [{label, event}]
   scriptOpen: signal(false), scriptSource: signal(''), scriptStatus: signal({ text: '', error: false }), scriptEvents: signal([]),
   loading: signal(null),                         // the message over the view while a map opens; null: none
-  // what Surface lists offer: [{value, text, group?}] (group 'From other maps' for borrowed ones); the terrain's
+  // what Surface lists offer: [{value, text, group?}] (group 'More surfaces' for the editor's own); the terrain's
   // {options, value, locked} (locked once its tiles are saved)
   surfaces: signal([]), terrain: signal({ options: [], value: null, locked: false }),
   // the Inspector: null with nothing selected (then mapProps), else what index.html's inspect() describes

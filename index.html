@@ -450,20 +450,20 @@ const lookOf = obj => (obj.userData.panel ? shownCheckpointMats : checkpointMats
 // 'lava' is a red copy of a surface, made when the map is saved.
 const fiery = name => /lava|magma|fire|ember|orange/i.test(name) || /(?<![a-z])red|Red/.test(name);   // not "Colored"
 const surfaceValue = v => v === 'lava' || v.startsWith('extra:') || v.startsWith('image:') ? v : +v;
-// Surfaces borrowed from other maps, offered in every map (surfaces.upk, made by surfaces.mjs) and copied into it
-// when used: value 'extra:<material name>'
-const EXTRA_SURFACES = { Text_LavaFloor: 'Lava (Lethamyr\'s lava floor)', Lake_01_Mat: 'Water (Deadeye Canyon lake)', Editor_Grass: 'Grass' };
-const LAVA_FLOOR = 'extra:Text_LavaFloor';
+// The editor's own surfaces, offered in every map (surfaces.upk, made by surfaces.mjs) and copied into it when used:
+// value 'extra:<material name>'
+const EXTRA_SURFACES = { Editor_Lava: 'Lava', Lake_01_Mat: 'Water (Deadeye Canyon lake)', Editor_Grass: 'Grass' };
+const LAVA_FLOOR = 'extra:Editor_Lava';
 const STARTER_GROUND = 'extra:Editor_Grass';   // a new map's ground and hills, until you pick another
 const extras = fetch('surfaces.upk').then(r => r.ok ? r.arrayBuffer() : null).then(b => b && new Package(new Uint8Array(b))).catch(() => null);
 let donor = null;
 extras.then(p => { donor = p; offerExtras(); refreshSurfaces(); gameLooksSoon(); });
 const donorRef = value => donor?.materials().find(m => bareName(m.name) === value.slice(6))?.ref;
 const surfaceOptions = () => ui.surfaces.value;   // [{value, text, group?}], as Surface lists show them
-function offerExtras() {                          // the borrowed surfaces this map doesn't have yet, after its own
+function offerExtras() {                          // the editor's surfaces this map doesn't have yet, after its own
   const shown = new Set(surfaceOptions().flatMap(o => [o.text, String(o.value)]));   // a copy the map has shows under the same label
   const more = Object.entries(EXTRA_SURFACES).filter(([name, label]) => donorRef(`extra:${name}`) && !shown.has(label) && !shown.has(`extra:${name}`))
-    .map(([name, label]) => ({ value: `extra:${name}`, text: label, group: 'From other maps' }));
+    .map(([name, label]) => ({ value: `extra:${name}`, text: label, group: 'More surfaces' }));
   if (more.length) ui.surfaces.value = [...surfaceOptions(), ...more];
 }
 // Pictures from this computer, as surfaces: value 'image:<id>', made into a texture and a material when the map is
@@ -509,7 +509,7 @@ function setTerrainSurface(value) {                // a reference, or a Surface 
 let lastSurface = null;                           // what new shapes get: the surface last picked for one (first the map's earthiest)
 function panelSurface(lava = false) {
   const options = surfaceOptions();
-  const look = (lava && options.find(o => o.value === LAVA_FLOOR || o.text === EXTRA_SURFACES.Text_LavaFloor)) || options.find(o => lava ? fiery(o.text) : /glass/i.test(o.text));
+  const look = (lava && options.find(o => o.value === LAVA_FLOOR || o.text === EXTRA_SURFACES.Editor_Lava)) || options.find(o => lava ? fiery(o.text) : /glass/i.test(o.text));
   return look ? look.value : lastSurface;
 }
 const terrainMat = new THREE.MeshStandardMaterial({ color: 0xa08a64, roughness: 0.9, flatShading: true });
@@ -1454,8 +1454,8 @@ async function gameTexturesIndex(dir, openFile) {
   gameIndexMemo = { stamp, index };
   return index;
 }
-// the package path of game surface `r`: an import of the map, or a borrowed surface that is one (the water, the
-// grass); null for anything else
+// the package path of game surface `r`: an import of the map, or one of the editor's surfaces that is one (the
+// water); null for anything else
 function gamePath(r) {
   const [from, at] = typeof r === 'string' ? [donor, donorRef(r)] : [surfacePkg(), r];
   if (!(at < 0) || !/^Material/.test(from.imports[-at - 1]?.cls ?? '')) return null;
