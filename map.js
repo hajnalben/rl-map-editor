@@ -8,6 +8,7 @@ import { unpackFrom } from './bytes.js';
 import { compact } from './compact.js';
 import { LIGHT_FIELDS, addLight, lightOf, setLight } from './lights.js';
 import { motionKeys, scaledBox } from './motion.js';
+import { addTexture } from './texture.js';
 import { scriptOf, setScript } from './rules.js';
 
 export function describe(pkg) {
@@ -69,6 +70,11 @@ function lavaSurface(add) {                       // a red copy of the map's tin
   packInto('<4f', blob, at, ...LAVA_COLOR);
   return add.addObject(e.cls, e.outer, 'Lava_INST', blob, e.flags) + 1;
 }
+// a picture's surface: `donor`'s Image_Surface (surfaces.mjs) showing a texture of `img` ({name, width, height, rgba})
+function imageSurface(add, donor, img) {
+  const ref = name => donor?.exports.findIndex(e => bareName(e.name) === name) + 1 || fail('the picture surface is not available');
+  return add.copyFrom(donor, ref('Image_Surface'), new Map([[ref('Image_Placeholder'), addTexture(add, `${img.name}_Texture`, img)]]), img.name);
+}
 
 // Map(mesh export index -> {corners, uvs, groups}) for drawing: triangle corners, their UVs and the mesh's parts
 // (see meshGeometry); only corners for meshes whose render data can't be read, and none for unreadable meshes.
@@ -92,6 +98,8 @@ function editorMovers(pkg) {
   const ids = new Set([...moversOf(pkg).map(m => m.i), ...Object.values(scriptOf(pkg)?.names ?? {})]);
   return pkg.levelActors().filter(a => ids.has(a.i) && a.cls === 'InterpActor' && a.meshIndex !== null);
 }
+export const bareName = name => name.replace(/(_\d+)+$/, '');   // a material's name without the numbers its copies get
+const fail = message => { throw new Error(message); };
 const sameSize = (a, b) => [0, 1, 2].every(k => Math.abs(Math.fround(a.scale3d[k] * a.scale) - Math.fround(b.scale3d[k] * b.scale)) < 1e-4);
 
 // The original map bytes (left untouched) with the editor's changes applied, re-read and checked. `fresh` empties
@@ -99,7 +107,8 @@ const sameSize = (a, b) => [0, 1, 2].every(k => Math.abs(Math.fround(a.scale3d[k
 // built from `shapeGeometry` ({key: geometryMesh arguments}) and drawn with `shapeMaterial`. `respawns` re-point saved
 // checkpoints ([{valueVar, zone, marker}]): to a new marker zone at `marker` (transform), or back to the zone itself.
 // `panels` ([{loc, rot, scale3d, scale, material}]) make checkpoints visible in game: an opaque box the size of the
-// zone that nothing collides with; `surfaces` ([{i, material}]) change the surface of saved mesh actors and panels.
+// zone that nothing collides with; `surfaces` ([{i, material}]) change the surface of saved mesh actors and panels
+// (`material`: one, or one per part of the mesh, 0 for the mesh's own), and a `duplicates` entry's `material` its copy's.
 // `lighting` sets the mood of the sun and sky lights (a LIGHTING key, or 'map' for as the map had them).
 // `hud` ({timer, deaths}) sets the timer and death counter; a map that has them gets them again, so they follow its
 // last checkpoint and lava zones.
@@ -116,12 +125,14 @@ const sameSize = (a, b) => [0, 1, 2].every(k => Math.abs(Math.fround(a.scale3d[k
 // source takes it out. Shapes a script moves, shows or hides must be movers (InterpActors).
 // `conversions` ([{i, loc, rot, scale3d, scale?, material?}]) turn saved mesh actors into movers (toMover); an {i}
 // anywhere above then means the mover. `meta` ({objects: [{ref, ...notes}]}) is the editor's notes (editorDataOf).
-// `checkpoints` entries with `lava` are lava zones (see addCheckpoints). `ballSpawn` ({loc}) gives the ball a spawn
+// `checkpoints` entries with `lava` are lava zones (see addCheckpoints): `car` and `ball` say which touches reset. `ballSpawn` ({loc}) gives the ball a spawn
 // of its own (a map that has one moves its marker through `edits`). A panel material of 'lava' is a red copy
-// of the map's tintable surface (describe().tintable), added once.
+// of the map's tintable surface (describe().tintable), added once. A material of 'extra:<name>' is surface <name>
+// of `donor` (the editor's surfaces.upk), copied in once unless the map already has it; 'image:<id>' is picture
+// `images[id]` made into a surface once (imageSurface).
 export function build(source, { edits = [], duplicates = [], removes = [], checkpoints = [], terrain: ground = null, fresh = false,
                                 shapes = [], shapeGeometry = {}, shapeMaterial = null, respawns = [], panels = [], surfaces = [], ballSpawn = null, lighting = null, hud = null,
-                                lights = [], movers = null, triggerZones = [], script = null, conversions = [], meta = null }) {
+                                lights = [], movers = null, triggerZones = [], script = null, conversions = [], meta = null, images = {} }, donor = null) {
   const pkg = new Package(source.slice());
   const before = pkg.levelList().length;
   // Rocket League's own Kismet classes that older saves imported from Engine, where the game can't find them
@@ -152,7 +163,11 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   if (missing.size || duplicates.length || removes.length || checkpoints.length || ground || fresh || shapes.length || unsetModes.length || markers.length || panels.length || surfaces.length || ballSpawn || lighting || titles.length || triggerZones.length || conversions.length || unsetGravity.size) {
     const add = new Additions(pkg);
     let lava = null;
-    const surface = m => m === 'lava' ? (lava ??= lavaSurface(add)) : m;
+    const extras = new Map(), named = (list, name) => list.find(m => bareName(m.name) === name)?.ref;
+    const extra = name => named(pkg.materials(), name) ?? add.copyFrom(donor, named(donor?.materials() ?? [], name) ?? fail(`the ${name} surface is not available`));
+    const surface = m => m === 'lava' ? (lava ??= lavaSurface(add))
+      : String(m).startsWith('extra:') ? extras.get(m) ?? extras.set(m, extra(m.slice(6))).get(m)
+      : String(m).startsWith('image:') ? extras.get(m) ?? extras.set(m, imageSurface(add, donor, images[m] ?? fail('a picture surface was lost'))).get(m) : m;
     const gravity = g => typeof g === 'number' ? { GravityZ: add.tag('GravityZ', 'FloatProperty', pack('<f', g)) } : {};
     for (const [v, value] of unsetModes) add.setProps(v, { IntValue: add.tag('IntValue', 'IntProperty', pack('<i', value)) });
     for (const [i, g] of unsetGravity) if (!missing.has(i)) add.setProps(i, gravity(g));
@@ -162,7 +177,14 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     if (fresh) add.clearRefs(mainSequence(pkg), 'SequenceObjects');
     for (const [i, values] of missing) add.setProps(i, { ...add.transformTags(values), ...gravity(unsetGravity.get(i)) });
     if (lighting) setLighting(add, lighting, new Set(edits.filter(e => e.light && ('color' in e.light || 'brightness' in e.light)).map(e => e.i)));
-    copies = duplicates.map(dup => add.duplicate(dup.src, [0, 0, 0], editValues(dup), { [dup.src]: [gravity(dup.gravity), null] }));
+    const materials = material => {
+      const parts = [material].flat().map(m => m ? Math.trunc(surface(m)) : 0);
+      return { Materials: add.tag('Materials', 'ArrayProperty', pack(`<${parts.length + 1}i`, parts.length, ...parts)) };
+    };
+    copies = duplicates.map(dup => {
+      const c = dup.material === undefined ? null : meshComponent(pkg, dup.src);
+      return add.duplicate(dup.src, [0, 0, 0], editValues(dup), { [dup.src]: [gravity(dup.gravity), null], ...(c === null ? {} : { [c]: [materials(dup.material), null] }) });
+    });
     for (const i of removes) add.remove(i);
     if (triggerZones.length && !pkg.zoneTemplate()) throw new Error('this map has no trigger zone to copy for trigger zones');
     zoneActors = triggerZones.map(z => {
@@ -179,22 +201,20 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
       const zone = pkg.zoneTemplate();
       if (!zone) throw new Error('this map has no trigger zone to copy for checkpoints');
       const spawn = pkg.levelActors().find(a => a.cls.startsWith('PlayerStart'))?.i ?? null;
-      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball, ballOnTop: !!c.ballOnTop, lava: !!c.lava, title: c.title ?? '',
+      triggers = addCheckpoints(add, zone.i, checkpoints.map(c => ({ values: editValues(c), ball: !!c.ball, car: c.car ?? !c.ball, ballOnTop: !!c.ballOnTop, lava: !!c.lava, title: c.title ?? '',
                                                                      respawn: c.respawn ? editValues(c.respawn) : null })), fresh, spawn,
                                 ballSpawn && editValues({ loc: ballSpawn.loc, rot: [0, 0, 0], scale3d: [0.1, 0.1, 0.1] }));
     }
-    if (ground) [tilesAdded, tilesRemoved] = saveTerrain(add, Number(ground.base), ground.material, ground.tiles);
+    if (ground) [tilesAdded, tilesRemoved] = saveTerrain(add, Number(ground.base), surface(ground.material), ground.tiles);
     if (shapes.length) shapeActors = addShapes(add, shapes.map(s => ({ key: s.key, values: editValues(s), material: s.material == null ? undefined : surface(s.material), mover: !!s.mover })),
-                                               shapeGeometry, shapeMaterial);
+                                               shapeGeometry, surface(shapeMaterial));
     if (panels.length) {
       const zone = pkg.zoneTemplate();
       if (!zone) throw new Error('this map has no trigger zone to size checkpoint panels');
       addShapes(add, panels.map(p => ({ key: 'panel', values: editValues(p), material: surface(p.material ?? null) })),
                 { panel: asMeshInput(boxShape(zone.bounds)) }, null, { name: 'CheckpointPanel', solid: false });
     }
-    for (const { i, material } of surfaces) {
-      add.setProps(meshComponent(pkg, i), { Materials: add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(surface(material)))) });
-    }
+    for (const { i, material } of surfaces) add.setProps(meshComponent(pkg, i), materials(material));
     out = add.save();
   }
   // lights on their own pass: a light's actor may have been rewritten above (moved, or its mood)
@@ -322,7 +342,7 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
   const savedZones = new Map(checkpointZones(saved).map(z => [z.i, z])), savedLava = new Map(lavaZones(saved).map(z => [z.i, z]));
   triggers.forEach((t, k) => {
     const c = checkpoints[k], z = (c.lava ? savedLava : savedZones).get(t);
-    if (c.lava) return check(z && z.ball === !!c.ball && !savedZones.has(t), `lava zone ${k + 1} wiring`);
+    if (c.lava) return check(z && z.ball === !!c.ball && z.car === (c.car ?? !c.ball) && !savedZones.has(t), `lava zone ${k + 1} wiring`);
     // maps made before the ball placement setting always drop the ball on top
     check(z && z.ball === !!c.ball && (!c.ball || z.modeVar === null || z.ballOnTop === !!c.ballOnTop) && (z.dest !== t) === !!c.respawn, `checkpoint ${k + 1} wiring`);
     check(c.title ? z.title === c.title : /^Checkpoint \d+$/.test(z.title), `checkpoint ${k + 1} title`);

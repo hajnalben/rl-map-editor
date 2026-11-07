@@ -3,12 +3,11 @@
 // needs any more are swapped for tiny valid stand-ins, and superseded copies left by append-only saves are dropped.
 import { concat, pack, packInto, unpackFrom } from './bytes.js';
 import { geometryMesh, read, write } from './mesh.js';
-import { Package } from './ue3.js';
+import { ATOMIC, Package, bulkAt, bulkHeaders } from './ue3.js';
 
 const HAS_STACK = 0x0200000000000000n;           // actors carry a script state frame
 const MATERIALISH = /Material/;                   // classes that point at textures from their native data
 const PAYLOAD = /Texture|Sound|Swf/;              // native data is pixels, audio or a movie: no references in it
-const ATOMIC = new Set(['Vector', 'Rotator', 'Color', 'LinearColor', 'Vector2D', 'IntPoint', 'Guid', 'Plane', 'Quat', 'Box']);
 const TINY_TEXTURE = { PF_DXT1: 8, PF_DXT3: 16, PF_DXT5: 16, PF_G8: 16, PF_V8U8: 32, PF_A8R8G8B8: 64 };   // bytes of a 4x4 mip
 
 function arrayRefs(pkg, e, name) {
@@ -122,11 +121,6 @@ function tinyMesh(pkg, i) {
   return [blob, [rawAt]];
 }
 
-export const bulkAt = (pkg, q) => {                      // an inline bulk header at q: its data starts right after it
-  const [flags, count, size, off] = unpackFrom('<Iiii', pkg.data, q);
-  return off === q + 16 && flags < 0x1000 && count >= 0 && size >= 0 ? size : null;
-};
-
 function tinyTexture(pkg, i) {                    // one blank 4x4 mip; the source art and big mips go
   const e = pkg.exports[i], format = pkg.get(e, 'Format', '<i');
   const block = format && TINY_TEXTURE[pkg.names[format[0]]];
@@ -152,14 +146,6 @@ function tinyTexture(pkg, i) {                    // one blank 4x4 mip; the sour
   for (let q = 0; q + 16 <= tail.length; q++) if (bulkAt(pkg, p + q) !== null) headers.push(head.length + 20 + 16 + block + 8 + q);
   const blob = concat(head, pack('<Iiii', 0, 0, 0, 0), pack('<i', 1), pack('<Iiii', 0, block, block, 0), new Uint8Array(block), pack('<ii', 4, 4), tail);
   return [blob, headers];
-}
-
-function bulkHeaders(pkg, e) {                   // positions of inline bulk headers in an object (fast path of bulkAt)
-  const dv = new DataView(pkg.data.buffer, pkg.data.byteOffset, pkg.data.byteLength), out = [];
-  for (let q = 0; q + 16 <= e.size; q++) {
-    if (dv.getInt32(e.off + q + 12, true) === e.off + q + 16 && bulkAt(pkg, e.off + q) !== null) out.push(q);
-  }
-  return out;
 }
 
 // The compacted package and what it saved: {bytes, before, shrunk: {meshes, textures}}.

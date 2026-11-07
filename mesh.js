@@ -215,14 +215,14 @@ export const SINK = 30.0;                         // flat terrain sits this far 
 // tiles, (TILE + 3)^2 values in rows of increasing Y, so normals agree across tile edges.
 export function tileGeometry(apron, tx, ty) {
   const w = TILE + 3, h = (i, j) => apron[(j + 1) * w + i + 1];
-  const mod1 = x => x - Math.floor(x);           // texture repeats every 1000 units, seamless across tiles
-  const u0 = mod1(tx * SPAN / 1000), v0 = mod1(ty * SPAN / 1000);
+  const mod1 = x => x - Math.floor(x);           // texture repeats every 500 units as on the floor, seamless across tiles
+  const u0 = mod1(tx * SPAN / 500), v0 = mod1(ty * SPAN / 500);
   const positions = [], uv0 = [], uv1 = [], normals = [], tangents = [];
   for (let j = 0; j <= TILE; j++) {
     for (let i = 0; i <= TILE; i++) {
       const dx = (h(i + 1, j) - h(i - 1, j)) / (2 * CELL), dy = (h(i, j + 1) - h(i, j - 1)) / (2 * CELL);
       positions.push([i * CELL, j * CELL, h(i, j)]);
-      uv0.push([u0 + i * CELL / 1000, v0 + j * CELL / 1000]);
+      uv0.push([u0 + i * CELL / 500, v0 + j * CELL / 500]);
       uv1.push([i / TILE, j / TILE]);
       normals.push(normalize([-dx, -dy, 1]));
       tangents.push([normalize([1, 0, dx]), normalize([0, 1, dy])]);

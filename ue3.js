@@ -3,6 +3,20 @@ import { calcsize, concat, latin1, latin1Bytes, pack, packInto, pyRound, unpackF
 
 const HAS_STACK = 0x0200000000000000n;           // RF_HasStack: actors carry a script state frame
 const PROBE = (0x0dn << 32n) | 0xffffffffn;       // a new actor's state frame probe mask, as most workshop maps' lights and movers have
+export const ATOMIC = new Set(['Vector', 'Rotator', 'Color', 'LinearColor', 'Vector2D', 'IntPoint', 'Guid', 'Plane', 'Quat', 'Box']);   // structs saved as raw bytes
+const REFERENCES = new Set(['ObjectProperty', 'ComponentProperty', 'ClassProperty', 'InterfaceProperty']);
+
+export const bulkAt = (pkg, q) => {               // an inline bulk header at q: its data starts right after it
+  const [flags, count, size, off] = unpackFrom('<Iiii', pkg.data, q);
+  return off === q + 16 && flags < 0x1000 && count >= 0 && size >= 0 ? size : null;
+};
+export function bulkHeaders(pkg, e) {             // positions of inline bulk headers in an object (fast path of bulkAt)
+  const dv = new DataView(pkg.data.buffer, pkg.data.byteOffset, pkg.data.byteLength), out = [];
+  for (let q = 0; q + 16 <= e.size; q++) {
+    if (dv.getInt32(e.off + q + 12, true) === e.off + q + 16 && bulkAt(pkg, e.off + q) !== null) out.push(q);
+  }
+  return out;
+}
 
 export class Package {
   constructor(buffer) {
@@ -36,9 +50,8 @@ export class Package {
     this.pos = this.importsAt = ioff;
     this.imports = [];
     for (let k = 0; k < icount; k++) {
-      this.fname();                               // class package
-      const cls = this.fname(), outer = this.unpack('<i')[0];
-      this.imports.push({ cls, outer, name: this.fname() });
+      const classPackage = this.fname(), cls = this.fname(), outer = this.unpack('<i')[0];
+      this.imports.push({ classPackage, cls, outer, name: this.fname() });
     }
     this.importTable = this.data.slice(ioff, this.pos);
     this.pos = eoff;
@@ -364,6 +377,60 @@ export class Additions {
     this.newImports.push(concat(this.fname(classPackage), this.fname(className), pack('<i', outer), this.fname(name)));
     this.importInfo.push({ cls: className, outer, name });
     return -(this.pkg.imports.length + this.newImports.length);
+  }
+
+  // Object `ref` of another package `src` brought into this one (a material from another map, with the textures
+  // it uses): an import by its path, an export copied whole at the top of the package after everything it refers
+  // to. Names are 8 bytes in any package, so re-pointing them at this package's names keeps the layout byte for
+  // byte, and inline bulk data (texture mips) only needs its file offset filled in. Returns the reference here.
+  // `done` maps source references to ones here, to use instead of copying them; `rename` names the copy of `ref`.
+  copyFrom(src, ref, done = new Map(), rename = null) {
+    if (!ref) return 0;
+    if (done.has(ref)) return done.get(ref);
+    if (ref < 0) {
+      const im = src.imports[-ref - 1], outer = this.copyFrom(src, im.outer, done);
+      const out = this.findImport(im.name, im.cls, outer) ?? this.addImport(im.classPackage, im.cls, outer, im.name);
+      done.set(ref, out);
+      return out;
+    }
+    const e = src.exports[ref - 1], blob = src.data.slice(e.off, e.off + e.size), at = q => q - e.off;
+    const name = q => {                           // re-point the FName at blob offset q
+      const [k, number] = unpackFrom('<ii', blob, q);
+      packInto('<ii', blob, q, this.name(src.names[k])[0], number);
+    };
+    const object = q => packInto('<i', blob, q, this.copyFrom(src, unpackFrom('<i', blob, q)[0], done));
+    const names = src.names, tagged = (q, end) => {
+      const k = unpackFrom('<i', blob, q)[0];
+      return q + 8 <= end && k >= 0 && k < names.length && (names[k] === 'None' || (names[unpackFrom('<i', blob, q + 8)[0]] ?? '').endsWith('Property'));
+    };
+    const props = (q, end) => {                   // a property list in [q, end): returns where it stops
+      while (q + 8 <= end) {
+        const tag = names[unpackFrom('<i', blob, q)[0]];
+        name(q);
+        if (tag === 'None') return q + 8;
+        const type = names[unpackFrom('<i', blob, q + 8)[0]], [size] = unpackFrom('<i', blob, q + 16);
+        name(q + 8);
+        q += 24;
+        let struct = null;
+        if (type === 'StructProperty' || type === 'ByteProperty') { struct = names[unpackFrom('<i', blob, q)[0]]; name(q); q += 8; }
+        if (type === 'BoolProperty') { q += 1; continue; }
+        if (REFERENCES.has(type)) object(q);
+        else if (type === 'NameProperty' || (type === 'ByteProperty' && size === 8)) name(q);
+        else if (type === 'StructProperty' && !ATOMIC.has(struct)) props(q, q + size);
+        else if (type === 'ArrayProperty' && size >= 4) {
+          const n = unpackFrom('<i', blob, q)[0];
+          if (n > 0 && tagged(q + 4, q + size)) for (let k = 0, p = q + 4; k < n; k++) p = props(p, q + size);
+          else if (size === 4 + 4 * n) for (let k = 0; k < n; k++) object(q + 4 + 4 * k);   // object refs (no other int arrays seen)
+        }
+        q += size;
+      }
+      return q;
+    };
+    // ponytail: what it refers to is copied first, so objects referring to each other in a loop aren't supported
+    props(at(src.netIndexAt(e)) + 4, blob.length);
+    const added = this.addObject(this.copyFrom(src, e.cls, done), 0, rename ?? src.names[e.nameRaw[0]], blob, e.flags, bulkHeaders(src, e), { netAt: at(src.netIndexAt(e)) });
+    done.set(ref, added + 1);
+    return added + 1;
   }
 
   // A brand-new object whose blob holds a NetIndex placeholder at `netAt` (0 for a plain object such as a Kismet

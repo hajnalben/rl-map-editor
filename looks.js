@@ -3,7 +3,7 @@
 // with a Diffuse (or Emissive, PaintTexture) texture or a Color; the game's own surfaces live in its encrypted
 // packages, so for those only the name gives a hint.
 import { unpackFrom } from './bytes.js';
-import { bulkAt } from './compact.js';
+import { bulkAt } from './ue3.js';
 import { nodeProps } from './kismet.js';
 
 const TEXTURE_PARAMS = ['Diffuse', 'Emissive', 'PaintTexture', 'SourceTexture'];
