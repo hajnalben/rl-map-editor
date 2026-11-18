@@ -6,10 +6,11 @@
 import { readFileSync, readdirSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
 import { basename } from 'path';
-import { packInto } from './bytes.js';
+import { deflateSync } from 'zlib';
+import { concat, pack, packInto, unpackFrom } from './bytes.js';
 import { build, describe } from './map.js';
 import { read, selfcheck, write } from './mesh.js';
-import { Package } from './ue3.js';
+import { Package, unpackage } from './ue3.js';
 import { surfaceLook, textureImage } from './looks.js';
 import { blankMap } from './blank.js';
 import { BUILT_IN, asMeshInput } from './shapes.js';
@@ -65,8 +66,38 @@ function fixture(name) {
   return built[name];
 }
 for (const file of readdirSync(new URL('fixtures/', import.meta.url)).filter(f => f.endsWith('.json'))) fixture(file.slice(0, -5));
+
+// A map as UDK saves it compressed: a chunk table in the summary, the rest in chunks of 128 KB blocks. Both kinds
+// unpack to the same bytes (LZO here as literal runs only; lzo1x's matches were checked against liblzo2 once).
+function compressedCopy(bytes, flag, squeeze) {
+  const n = unpackFrom('<i', bytes, 12)[0], flagsAt = 16 + (n < 0 ? -2 * n : n), start = unpackFrom('<i', bytes, flagsAt + 8)[0];
+  const at = flagsAt + 76 + 12 * unpackFrom('<i', bytes, flagsAt + 64)[0], BLOCK = 1 << 17, spans = [];
+  for (let u = start; u < bytes.length; u += 8 * BLOCK) spans.push([u, Math.min(8 * BLOCK, bytes.length - u)]);
+  const chunks = spans.map(([u, size]) => {
+    const blocks = [];
+    for (let b = 0; b < size; b += BLOCK) blocks.push(bytes.subarray(u + b, u + Math.min(size, b + BLOCK)));
+    const packed = blocks.map(squeeze);
+    return concat(pack('<I3i', 0x9E2A83C1, BLOCK, packed.reduce((s, p) => s + p.length, 0), size), ...blocks.map((b, k) => pack('<ii', packed[k].length, b.length)), ...packed);
+  });
+  let c = start + 16 * spans.length;
+  const table = spans.map(([u, size], k) => { c += chunks[k].length; return pack('<4i', u, size, c - chunks[k].length, chunks[k].length); });
+  const out = concat(bytes.subarray(0, at), pack('<Ii', flag, spans.length), ...table, bytes.subarray(at + 8, start), ...chunks);
+  packInto('<I', out, flagsAt, unpackFrom('<I', out, flagsAt)[0] | 0x02000000);   // PKG_StoreCompressed
+  return out;
+}
+const lzoLiterals = b => {                        // one literal run, then the end marker
+  const z = Math.floor((b.length - 19) / 255), run = b.length <= 238 ? [17 + b.length] : [0, ...Array(z).fill(0), b.length - 18 - 255 * z];
+  return concat(Uint8Array.from(run), b, Uint8Array.of(0x11, 0, 0));
+};
+for (const [kind, flag, squeeze] of [['zlib', 1, b => new Uint8Array(deflateSync(b))], ['LZO', 2, lzoLiterals]]) {
+  const map = built['new-map-grass'], back = await unpackage(compressedCopy(map, flag, squeeze));
+  if (back.length !== map.length || back.some((v, k) => v !== map[k])) throw new Error(`a ${kind}-compressed map does not unpack to its bytes`);
+  describe(new Package(back));
+  console.log(`compressed maps: a ${kind} copy unpacks byte for byte`);
+}
+
 for (const path of process.argv.slice(2).filter(a => a !== '--update')) {
-  const source = new Uint8Array(readFileSync(path)), pkg = new Package(source);
+  const source = await unpackage(new Uint8Array(readFileSync(path))), pkg = new Package(source);
   let meshes = 0;
   pkg.exports.forEach((e, i) => {
     if (pkg.classOf(e) !== 'StaticMesh') return;

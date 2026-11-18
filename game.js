@@ -6,7 +6,7 @@
 import { packInto, unpackFrom } from './bytes.js';
 import { decodeTexture } from './looks.js';
 import { nodeProps } from './kismet.js';
-import { Package } from './ue3.js';
+import { Package, unchunk } from './ue3.js';
 
 // the key RLUPKTool ships with, which opens the game's map packages
 const KEY = Uint8Array.from([0xC7, 0xDF, 0x6B, 0x13, 0x25, 0x2A, 0xCC, 0x71, 0x47, 0xBB, 0x51, 0xC9, 0x8A, 0xD7, 0xE3, 0x4B,
@@ -23,22 +23,6 @@ async function ecbDecrypt(data) {
   joined.set(pad, data.length);
   const out = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv: new Uint8Array(16) }, key, joined));
   for (let k = 16; k < out.length; k++) out[k] ^= data[k - 16];
-  return out;
-}
-
-async function inflate(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-async function unchunk(bytes) {                   // one compressed chunk: tag, block size, totals, block sizes, blocks
-  const [, , , total] = unpackFrom('<iiii', bytes, 0), sizes = [];
-  let r = 16;
-  for (let got = 0; got < total; r += 8) { const [cs, us] = unpackFrom('<ii', bytes, r); sizes.push(cs); got += us; }
-  const parts = [];
-  for (const cs of sizes) { parts.push(await inflate(bytes.subarray(r, r + cs))); r += cs; }
-  const out = new Uint8Array(parts.reduce((n, x) => n + x.length, 0));
-  parts.reduce((at, x) => (out.set(x, at), at + x.length), 0);
   return out;
 }
 

@@ -53,6 +53,81 @@ export function bulkHeaders(pkg, e) {             // positions of inline bulk he
   return out;
 }
 
+// Compressed packages. UE3 stores a package's tables and objects as chunks; each chunk is a tag, a block size, its
+// totals, then (compressed, uncompressed) sizes per block and the blocks. Zlib blocks (RL's own packages, game.js)
+// inflate with the platform's DecompressionStream; LZO1X blocks (UE3's other compression on PC) with lzo1x below.
+export async function inflate(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+/** @param {(block: Uint8Array, size: number) => Uint8Array | Promise<Uint8Array>} [unpack] */
+export async function unchunk(bytes, unpack = inflate) {
+  const [, , , total] = unpackFrom('<iiii', bytes, 0), sizes = [];
+  let r = 16;
+  for (let got = 0; got < total; r += 8) { const [cs, us] = unpackFrom('<ii', bytes, r); sizes.push([cs, us]); got += us; }
+  const parts = [];
+  for (const [cs, us] of sizes) { parts.push(await unpack(bytes.subarray(r, r + cs), us)); r += cs; }
+  const out = new Uint8Array(parts.reduce((n, x) => n + x.length, 0));
+  parts.reduce((at, x) => (out.set(x, at), at + x.length), 0);
+  return out;
+}
+// LZO1X decompression (as liblzo2's lzo1x_decompress) of `src` into `size` bytes
+export function lzo1x(src, size) {
+  const out = new Uint8Array(size);
+  let ip = 0, op = 0, t = src[ip], state = 'loop';
+  const copy = (from, n) => { for (let k = 0; k < n; k++) out[op++] = out[from + k]; };   // byte by byte: a match may overlap what it writes
+  const literals = n => { out.set(src.subarray(ip, ip + n), op); ip += n; op += n; };
+  const long = base => { let n = 0; while (src[ip] === 0) { n += 255; ip++; } return n + base + src[ip++]; };   // a length that went on in extra bytes
+  if (t > 17) { ip++; t -= 17; if (t < 4) state = 'next'; else { literals(t); state = 'first'; } }
+  for (;;) {
+    if (state === 'loop') {
+      t = src[ip++];
+      if (t < 16) { literals((t || long(15)) + 3); state = 'first'; } else state = 'match';
+    }
+    if (state === 'first') {
+      t = src[ip++];
+      if (t < 16) { const from = op - 0x801 - (t >> 2) - (src[ip++] << 2); copy(from, 3); state = 'done'; } else state = 'match';
+    }
+    if (state === 'next') { literals(t); t = src[ip++]; state = 'match'; }
+    if (state === 'match') {
+      if (t >= 64) { const from = op - 1 - ((t >> 2) & 7) - (src[ip++] << 3); copy(from, (t >> 5) + 1); }
+      else if (t >= 32) {
+        const n = (t & 31) || long(31), from = op - 1 - (src[ip] >> 2) - (src[ip + 1] << 6);
+        ip += 2; copy(from, n + 2);
+      } else if (t >= 16) {
+        const n = (t & 7) || long(7);
+        let from = op - ((t & 8) << 11) - (src[ip] >> 2) - (src[ip + 1] << 6);
+        ip += 2;
+        if (from === op) return out;              // the end marker
+        from -= 0x4000;
+        copy(from, n + 2);
+      } else { const from = op - 1 - (t >> 2) - (src[ip++] << 2); copy(from, 2); }
+      state = 'done';
+    }
+    t = src[ip - 2] & 3;                          // literals after a match: the low bits of its last-but-one byte
+    state = t ? 'next' : 'loop';
+  }
+}
+
+// A package UDK saved compressed, as it is uncompressed: its chunks unpacked where they belong and the chunk table
+// dropped from the summary (the chunks' offsets count a summary without it). Uncompressed bytes come back as they are.
+export async function unpackage(bytes) {
+  const n = unpackFrom('<i', bytes, 12)[0], flagsAt = 16 + (n < 0 ? -2 * n : n);
+  const at = flagsAt + 76 + 12 * unpackFrom('<i', bytes, flagsAt + 64)[0];   // past the counts, offsets, guid and generations
+  const [compression, count] = unpackFrom('<Ii', bytes, at);
+  if (!count) return bytes;
+  const unpack = compression & 1 ? inflate : compression & 2 ? lzo1x : null;
+  if (!unpack) throw new Error(`this map is compressed with LZX (compression ${compression}), which only the Xbox uses`);
+  const chunks = Array.from({ length: count }, (_, k) => unpackFrom('<4i', bytes, at + 8 + 16 * k));
+  const start = Math.min(...chunks.map(c => c[0])), rest = at + 8 + 16 * count;
+  const out = new Uint8Array(Math.max(...chunks.map(([u, s]) => u + s)));
+  out.set(bytes.subarray(0, at));                 // compression flags and chunk count stay 0
+  out.set(bytes.subarray(rest, rest + start - at - 8), at + 8);
+  for (const [uOff, , cOff, cSize] of chunks) out.set(await unchunk(bytes.subarray(cOff, cOff + cSize), unpack), uOff);
+  packInto('<I', out, flagsAt, unpackFrom('<I', out, flagsAt)[0] & ~0x02000000);   // PKG_StoreCompressed
+  return out;
+}
+
 export class Package {
   constructor(buffer) {
     this.data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
@@ -73,7 +148,7 @@ export class Package {
     this.pos += 12 * generations;
     this.unpack('<ii');                           // engine, cooker version
     const [compression, chunks] = this.unpack('<Ii');
-    if (compression || chunks) throw new Error('compressed packages are not supported');
+    if (compression || chunks) throw new Error('compressed: unpackage() it first');
 
     this.pos = noff;
     this.names = [];

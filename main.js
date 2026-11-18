@@ -2,11 +2,12 @@
 // and out, the game folder, and the keys. view.js draws the document, panels.js and ui.js show it, ai.js lets AI
 // agents build with the same actions.
 import { effect, computed } from '@preact/signals';
-import { Package } from './ue3.js';
+import { Package, unpackage } from './ue3.js';
 import { blankMap } from './blank.js';
 import { LIGHTING, bareName, build, describe, isOriginalGameMap } from './map.js';
 import { motionKeys, newMotion } from './motion.js';
 import { meshGeometry } from './shapes.js';
+import { surfaceLook, textureImage } from './looks.js';
 import { textureSize } from './texture.js';
 import { gameIndex, gameLook, openGame } from './game.js';
 import { eventLabel, previewOf, runSandboxed } from './script.js';
@@ -112,7 +113,7 @@ async function openBytes(bytes, file, recipe = null) {
   const at = spawn?.loc ?? [0, 0, 0];
   V.lookAt(at, file ? [at[0] + 3000, at[1] + 3000, at[2] + 2500] : [at[0] - 1900, at[1] + 1100, at[2] + 900]);
   ui.loading.value = null;
-  setTimeout(collectShapes, 0);                   // after the map shows: its shapes join your library
+  setTimeout(() => collectShapes(pkg, data, file ?? 'New map'), 0);   // after the map shows: its shapes join your library
   gameLooksSoon();
   runIfTrusted();
   keepSoon();
@@ -126,7 +127,7 @@ async function openFile(file, ask = true) {       // a map, a clip (.json), a 3D
   if (ask && ui.dirty.value && !await confirmed(`Open ${file.name}? Your ${ui.dirty.value} unsaved changes are discarded.`, 'Discard and open')) return false;
   ui.loading.value = `Loading ${file.name}…`;
   await nextFrame();                              // let the message paint before parsing blocks the page
-  const ok = await openBytes(new Uint8Array(await file.arrayBuffer()), file.name);
+  const ok = await unpackage(new Uint8Array(await file.arrayBuffer())).then(bytes => openBytes(bytes, file.name), err => setStatus(`${file.name}: ${err.message}`, 'warn'));
   if (ok) setStatus(`${doc().objects.length} objects loaded`);
   ui.loading.value = null;
   return ok;
@@ -790,7 +791,7 @@ async function restoreSession() {
 window.addEventListener('pagehide', () => { if (keepTimer) keepSession(); });
 
 // Your shape library: geometry of every shape in the maps you open, and the models you import, kept in this browser
-// (IndexedDB) and never uploaded. Placed in a map they become new meshes drawn with the chosen Surface.
+// (IndexedDB) and never uploaded. Placed in a map they become new meshes wearing their picture, else the chosen Surface.
 async function loadLibrary() {
   try {
     for (const item of await all('shapes')) ed.library.set(item.id, item);
@@ -798,16 +799,53 @@ async function loadLibrary() {
   } catch { /* storage blocked (private window): the library stays empty */ }
   libRev.value++;
 }
-function collectShapes() {                        // the open map's shapes join the library
-  const map = ed.file ?? 'New map', reader = ed.pkg, found = ed.map.palette.filter(p => !ed.library.has(`${map}:${p.mesh}`));
-  for (const p of found) {
+// A map's shapes join the library, each wearing what its biggest part shows in that map as a picture. Items kept
+// before they had looks (no `looked`) are read again. The count of shapes added.
+async function collectShapes(pkg, data, map) {
+  const prefix = map.replace(/\.(udk|upk)$/i, '');
+  let added = 0;
+  for (const p of data.palette) {
+    const id = `${map}:${p.mesh}`;
+    if (ed.library.get(id)?.looked) continue;
     try {
-      const item = { id: `${map}:${p.mesh}`, name: p.mesh, source: map, geometry: meshGeometry(reader, p.meshIndex) };
-      ed.library.set(item.id, item);
-      stored('shapes', item.id, item).catch(() => {});
+      const geometry = meshGeometry(pkg, p.meshIndex), groups = geometry.groups;
+      const big = groups.reduce((best, g, k) => g.count > groups[best].count ? k : best, 0);
+      const ref = data.actors.find(a => a.i === p.template)?.materials[big] || groups[big]?.material;
+      const image = ref > 0 ? await lookPicture(pkg, ref, `${prefix}_${p.mesh}`) : null;   // the game's own surfaces can't be read
+      const item = { id, name: p.mesh, source: map, geometry, looked: true, ...(image ? { image, imageValue: `image:${id}` } : {}) };
+      ed.library.set(id, item);
+      V.forgetShape(`lib:${id}`);
+      stored('shapes', id, item).catch(() => {});
+      added++;
     } catch { /* a mesh this editor can't read stays out */ }
   }
-  if (found.length) libRev.value++;
+  if (added) libRev.value++;
+  return added;
+}
+async function lookPicture(pkg, ref, name) {      // surface `ref` as a picture: its texture, or a swatch of its colour
+  const look = surfaceLook(pkg, ref), tex = look.texture !== null ? textureImage(pkg, look.texture, 512) : null;
+  if (!tex && !look.color) return null;
+  const rgb = !tex && look.color.slice(1).match(/../g).map(c => parseInt(c, 16));
+  const { width, height, rgba } = tex ?? { width: 4, height: 4, rgba: Uint8Array.from({ length: 64 }, (_, k) => k % 4 === 3 ? 255 : rgb[k % 4]) };
+  return pictureOf(await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), width, height)), name);
+}
+async function importFromMap(file) {              // a map's shapes into the library, without opening it
+  try {
+    setStatus(`Reading ${file.name}…`);
+    await nextFrame();
+    const pkg = new Package(await unpackage(new Uint8Array(await file.arrayBuffer()))), data = describe(pkg);
+    const count = await collectShapes(pkg, data, file.name), name = file.name.replace(/\.(udk|upk)$/i, '');
+    paletteOpen.value = new Set([...paletteOpen.value, 'Library', `Library/${name}`]);
+    setStatus(count ? `${count} shapes from ${name} are under Add > Library > ${name}, with their looks where the map has them.`
+      : `${name}: ${data.palette.length ? 'its shapes are in your library already' : 'no shapes to take'}.`, 'ok');
+  } catch (err) {
+    setStatus(`${file.name}: ${err.message}`, 'warn');
+  }
+}
+function pickMapItems() {
+  const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.udk,.upk' });
+  input.onchange = () => input.files[0] && importFromMap(input.files[0]);
+  input.click();
 }
 
 // The view's settings, snapping and the left panel's folds
@@ -907,7 +945,7 @@ const inspectorActs = {
   duplicate, delete: remove, makeArray, savePiece, exportPiece, copy: copySelection, setLighting, setHud, setTerrainSurface,
 };
 mountUI({
-  newMap, open: () => $('file').click(), undo, redo, pickPicture, pickModel, setGround, save, play, restore,
+  newMap, open: () => $('file').click(), undo, redo, pickPicture, pickModel, pickMapItems, setGround, save, play, restore,
   setMode: mode => { if (sculpting) setSculpt(false); setMode(mode); }, toggleSculpt: () => setSculpt(!sculpting), setSnap, setSnapStep, setView,
   ...outlineActs, ...inspectorActs, place: placeSnapped, deletePiece,
   toggleScript: () => { ui.scriptOpen.value = !ui.scriptOpen.value; },
@@ -924,4 +962,4 @@ const api = { doc, commit, select, selected, place, newShape, addLava, settleSpa
               writeHeights, nextFrame, LIGHT_AIM, NEW_LIGHT, surfaces, surfaceOf };
 installAI(api);
 window.editor = { doc, select, acts: { ...inspectorActs, setGround, place: addFromPalette }, undo, redo, changeSet, editedMap, openFile, newMap, addPicture,
-                  writeHeights, pasteClip, copy: () => clipOf(doc(), selSig.value, fingerprint()), importModel, setSculpt, view: V };
+                  writeHeights, pasteClip, copy: () => clipOf(doc(), selSig.value, fingerprint()), importModel, importFromMap, setSculpt, view: V };

@@ -33,10 +33,15 @@
   /* inspector: sections, and rows of a label column then one field or three */
   .section { @apply flex flex-col gap-2 border-t border-base-300 pt-3; }
   .section > h3 { @apply m-0 text-[11px] font-semibold uppercase tracking-wider text-base-content/60; }
-  .actions { @apply flex gap-2 border-t border-base-300 pt-3; }
+  .actions { @apply flex flex-col gap-1.5 border-t border-base-300 pt-3; }
+  .actions > div { @apply flex gap-1.5; } .actions .btn { @apply flex-1 px-2; }
   .section:not(:has(> :not(h3):not([hidden]))), .actions:not(:has(> :not([hidden]))) { display: none; }
   .field { @apply grid grid-cols-[5rem_1fr] items-center gap-2 text-base-content/60; }
   .vec { @apply grid grid-cols-[5rem_repeat(3,minmax(0,1fr))] items-center gap-1 text-base-content/60; }
+  .vec .input { @apply gap-1 px-1.5; } .vec .input > span { @apply text-[10px] font-semibold; }   /* the axis letter, then its number */
+  #right input[type=number]::-webkit-inner-spin-button { display: none; }   /* room for the number; arrow keys still step it */
+  /* buttons stand up from the panel (daisyUI's own are darker than it) */
+  #right .btn:not(.btn-primary, .btn-ghost) { --btn-color: var(--color-neutral); }
   .check { @apply flex cursor-pointer items-center gap-2; }
   #selEdit .check { @apply ml-22; }               /* under the fields, past the label column */
   #app:has(#scriptPanel:not([hidden])) #scriptButton { @apply bg-primary/15 text-primary; }

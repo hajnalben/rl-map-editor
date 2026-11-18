@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["wrangler@4", "dev", "--port", "8787"],
       "port": 8787
+    },
+    {
+      "name": "rl-map-editor-files",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-I", "-c", "import functools, http.server as h\nclass H(h.SimpleHTTPRequestHandler):\n    def end_headers(self):\n        self.send_header('Cache-Control', 'no-store')\n        super().end_headers()\nh.ThreadingHTTPServer(('127.0.0.1', 8766), functools.partial(H, directory='.')).serve_forever()"],
+      "port": 8766
     }
   ]
 }

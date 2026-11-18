@@ -165,7 +165,10 @@ function LeftPanel({ act }) {                    // the Map list and the Add pal
         <button class="btn btn-sm btn-primary flex-1" title="Place the picked shape or checkpoint where you're looking (or double-click it in the list)" onClick=${act.place}>Place</button>
         ${ui.picked.value?.startsWith('piece:') && html`<button class="btn btn-sm btn-ghost text-error" title="Delete this saved piece" onClick=${() => act.deletePiece(ui.picked.value)}>Delete</button>`}
       </div>
-      <button class="btn btn-sm w-full" title="A 3D model (.glb or .gltf with its files, .obj with a texture picture, .stl) as a shape: it joins Your models, the car collides with its shape" onClick=${act.pickModel}>Import model…</button>
+      <div class="flex gap-1.5">
+        <button class="btn btn-sm flex-1" title="A 3D model (.glb or .gltf with its files, .obj with a texture picture, .stl) as a shape: it joins Your models, the car collides with its shape" onClick=${act.pickModel}>3D model…</button>
+        <button class="btn btn-sm flex-1" title="The shapes of another workshop map (.udk), without opening it: they join Library, each with its texture or colour from that map" onClick=${act.pickMapItems}>From a map…</button>
+      </div>
     </section>`;
 }
 
@@ -179,9 +182,12 @@ const NumberField = ({ label, title, value, min, max, step, placeholder, onChang
 const SelectField = ({ label, title, value, options, onChange }) => html`
   <label class="field" title=${title}>${label} <select class="select select-sm w-full" value=${value} onChange=${e => onChange(e.currentTarget.value)}>${face(options.find(([v]) => String(v) === String(value))?.[1])}
     ${options.map(([v, text]) => html`<option value=${v}>${text}</option>`)}</select></label>`;
-const Vec = ({ label, title, values, step, titles = 'XYZ', unused = [], onChange }) => html`
-  <div class="vec" title=${title}><span>${label}</span>${values.map((v, k) => html`<input type="number" class="input input-sm w-full px-1.5 ${unused.includes(k) ? 'invisible' : ''}"
-    step=${step} title=${titles[k]} value=${v} onChange=${e => onChange(k, e.currentTarget.value)}/>`)}</div>`;
+// each field's axis letter in the gizmo's colour for it (the view's Y and Z are Unreal's Z and Y)
+const AXES = [['X', 'text-error'], ['Y', 'text-info'], ['Z', 'text-success']];
+const TURNS = [['P', 'text-info', 'Pitch'], ['Y', 'text-success', 'Yaw'], ['R', 'text-error', 'Roll']];
+const Vec = ({ label, title, values, step, axes = AXES, unused = [], onChange }) => html`
+  <div class="vec" title=${title}><span>${label}</span>${values.map((v, k) => html`<label class="input input-sm w-full ${unused.includes(k) ? 'invisible' : ''}" title=${axes[k][2]}>
+    <span class=${axes[k][1]}>${axes[k][0]}</span><input type="number" step=${step} value=${v} onChange=${e => onChange(k, e.currentTarget.value)}/></label>`)}</div>`;
 const Join = ({ buttons }) => html`<div class="join w-full">${buttons.map(([label, title, active, onClick, disabled]) => html`
   <button class="btn btn-sm join-item flex-1 ${active ? 'active' : ''}" title=${title} disabled=${disabled} onClick=${onClick}>${label}</button>`)}</div>`;
 const PICTURE = 'picture';                       // the Surface option that asks for a picture
@@ -281,19 +287,20 @@ function Zone({ z, act }) {
 function Arrange({ act }) {                      // copies in a row, and the selection kept as a piece or a file
   const [count, setCount] = useState(5), [by, setBy] = useState([600, 0, 0]);
   return html`<${Section} title="Arrange">
-    <label class="field" title="How many copies of the selection">Copies <input type="number" class="input input-sm w-full" min="1" max="200" step="1" value=${count} onChange=${e => setCount(e.currentTarget.value)}/></label>
     <${Vec} label="Apart" title="Each copy this far from the one before (units)" step="50" values=${by} onChange=${(k, v) => setBy(by.map((x, j) => j === k ? +v : x))}/>
-    <div class="flex gap-2"><button class="btn btn-sm flex-1" title="Copies in a row, each the distance above from the one before" onClick=${() => act.makeArray(count, by)}>Make copies</button></div>
+    <div class="field" title="How many copies of the selection">Copies <div class="flex gap-1.5">
+      <input type="number" class="input input-sm w-14" min="1" max="200" step="1" value=${count} onChange=${e => setCount(e.currentTarget.value)}/>
+      <button class="btn btn-sm flex-1 px-2 whitespace-nowrap" title="Copies in a row, each the distance above from the one before" onClick=${() => act.makeArray(count, by)}>Make copies</button></div></div>
   <//>`;
 }
 const Actions = ({ act }) => html`
   <div class="actions">
-    <button class="btn btn-sm flex-1" title=${`Duplicate (${MOD}D)`} onClick=${act.duplicate}>Duplicate</button>
-    <button class="btn btn-sm btn-ghost flex-1 text-error" title=${`Delete (${MAC ? '⌫' : 'Delete'})`} onClick=${act.delete}>Delete</button></div>
-  <div class="flex gap-1.5">
-    <button class="btn btn-xs btn-ghost flex-1" title=${`Copy, to paste where you look in this map or another (${MOD}C, ${MOD}V)`} onClick=${act.copy}>Copy</button>
-    <button class="btn btn-xs btn-ghost flex-1" title="Keep it under Add > Your pieces, for any map" onClick=${act.savePiece}>Save as piece</button>
-    <button class="btn btn-xs btn-ghost flex-1" title="Save it as a file to share: opening or dropping it places it" onClick=${act.exportPiece}>Export…</button></div>`;
+    <div><button class="btn btn-sm" title=${`Duplicate (${MOD}D)`} onClick=${act.duplicate}>Duplicate</button>
+      <button class="btn btn-sm" title=${`Copy, to paste where you look in this map or another (${MOD}C, ${MOD}V)`} onClick=${act.copy}>Copy</button>
+      <button class="btn btn-sm text-error" title=${`Delete (${MAC ? '⌫' : 'Delete'})`} onClick=${act.delete}>Delete</button></div>
+    <div><button class="btn btn-sm" title="Keep it under Add > Your pieces, for any map" onClick=${act.savePiece}>Save as piece</button>
+      <button class="btn btn-sm" title="Save it as a file to share: opening or dropping it places it" onClick=${act.exportPiece}>Export…</button></div>
+  </div>`;
 function Inspector({ act }) {
   if (ui.sculpting.value) return null;
   const s = ui.inspect.value;
@@ -315,7 +322,7 @@ function Inspector({ act }) {
         <input class="input input-sm w-full" maxlength="40" spellcheck="false" value=${s.name} onChange=${e => act.rename(e.currentTarget.value)}/></label>`}
       ${t.loc && html`<${Section} title="Transform">
         <${Vec} label="Location" values=${t.loc} onChange=${(k, v) => act.setTransform('loc', k, v)}/>
-        ${t.rot && html`<${Vec} label="Rotation°" values=${t.rot} titles=${['Pitch', 'Yaw', 'Roll']} unused=${t.yawOnly ? [0, 2] : []} onChange=${(k, v) => act.setTransform('rot', k, v)}/>`}
+        ${t.rot && html`<${Vec} label="Rotation°" values=${t.rot} axes=${TURNS} unused=${t.yawOnly ? [0, 2] : []} onChange=${(k, v) => act.setTransform('rot', k, v)}/>`}
         ${t.scale && html`<${Vec} label="Scale" step="0.05" values=${t.scale} onChange=${(k, v) => act.setTransform('scale', k, v)}/>`}
       <//>`}
       ${(s.surface || s.parts) && html`<${Section} title="Appearance">
