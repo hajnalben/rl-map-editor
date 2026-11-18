@@ -238,7 +238,7 @@ ui.palette = computed(() => {
   const fold = (key, text, fill) => { const shown = !!q || open.has(key); return { key, text, open: shown, children: shown ? fill() : [] }; };
   const group = (label, items, count = false) => {
     const found = items.filter(([, text]) => hit(`${label} ${text}`));
-    return found.length ? fold(label, `${label}${count && ` (${found.length})`}`, () => found.map(r => row(r))) : null;
+    return found.length ? fold(label, `${label}${count ? ` (${found.length})` : ''}`, () => found.map(r => row(r))) : null;
   };
   const shapes = libraryShapes(m.file), imported = shapes.filter(s => s.source === 'Imported'), maps = Map.groupBy(shapes.filter(s => s.source !== 'Imported' && hit(`${s.source} ${s.name}`)), s => s.source.replace(/\.(udk|upk)$/i, ''));
   const folders = [...maps].sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }));

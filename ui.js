@@ -30,7 +30,7 @@ export const ui = {
 };
 
 // The Lucide icons the panels use (lucide.dev, ISC licence): a path's data, or [element, attributes]
-const ICONS = {"BookOpen":["M12 5v16","M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z"],"ChevronDown":["m6 9 6 6 6-6"],"CircleHelp":[["circle",{"cx":"12","cy":"12","r":"10"}],"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3","M12 17h.01"],"CodeXml":["m18 16 4-4-4-4","m6 8-4 4 4 4","m14.5 4-5 16"],"EllipsisVertical":[["circle",{"cx":"12","cy":"12","r":"1"}],["circle",{"cx":"12","cy":"5","r":"1"}],["circle",{"cx":"12","cy":"19","r":"1"}]],"Eye":["M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0",["circle",{"cx":"12","cy":"12","r":"3"}]],"EyeOff":["M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49","M14.084 14.158a3 3 0 0 1-4.242-4.242","M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143","m2 2 20 20"],"FilePlus":["M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z","M14 2v5a1 1 0 0 0 1 1h5","M9 15h6","M12 18v-6"],"FolderOpen":["m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"],"Gamepad2":[["line",{"x1":"6","x2":"10","y1":"11","y2":"11"}],["line",{"x1":"8","x2":"8","y1":"9","y2":"13"}],["line",{"x1":"15","x2":"15.01","y1":"12","y2":"12"}],["line",{"x1":"18","x2":"18.01","y1":"10","y2":"10"}],"M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"],"Hexagon":["M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"],"Mountain":["m8 3 4 8 5-5 5 15H2L8 3z"],"Redo2":["m15 14 5-5-5-5","M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13"],"Save":["M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z","M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7","M7 3v4a1 1 0 0 0 1 1h7"],"Search":["m21 21-4.34-4.34",["circle",{"cx":"11","cy":"11","r":"8"}]],"Undo2":["M9 14 4 9l5-5","M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"],"Move":["M12 2v20","m15 19-3 3-3-3","m19 9 3 3-3 3","M2 12h20","m5 9-3 3 3 3","m9 5 3-3 3 3"],"Rotate3d":["m15.194 13.707 3.814 1.86-1.86 3.814","M16.47214 7.52786 A 5 10 0 1 0 13 21.79796","M21.79796 11 A 10 5 0 1 0 19 15.57071"],"Scaling":["M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7","M14 15H9v-5","M16 3h5v5","M21 3 9 15"]};
+const ICONS = {"BookOpen":["M12 5v16","M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z"],"ChevronDown":["m6 9 6 6 6-6"],"CircleHelp":[["circle",{"cx":"12","cy":"12","r":"10"}],"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3","M12 17h.01"],"CodeXml":["m18 16 4-4-4-4","m6 8-4 4 4 4","m14.5 4-5 16"],"EllipsisVertical":[["circle",{"cx":"12","cy":"12","r":"1"}],["circle",{"cx":"12","cy":"5","r":"1"}],["circle",{"cx":"12","cy":"19","r":"1"}]],"Eye":["M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0",["circle",{"cx":"12","cy":"12","r":"3"}]],"EyeOff":["M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49","M14.084 14.158a3 3 0 0 1-4.242-4.242","M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143","m2 2 20 20"],"FilePlus":["M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z","M14 2v5a1 1 0 0 0 1 1h5","M9 15h6","M12 18v-6"],"FolderOpen":["m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"],"Gamepad2":[["line",{"x1":"6","x2":"10","y1":"11","y2":"11"}],["line",{"x1":"8","x2":"8","y1":"9","y2":"13"}],["line",{"x1":"15","x2":"15.01","y1":"12","y2":"12"}],["line",{"x1":"18","x2":"18.01","y1":"10","y2":"10"}],"M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"],"Mountain":["m8 3 4 8 5-5 5 15H2L8 3z"],"Redo2":["m15 14 5-5-5-5","M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13"],"Save":["M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z","M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7","M7 3v4a1 1 0 0 0 1 1h7"],"Search":["m21 21-4.34-4.34",["circle",{"cx":"11","cy":"11","r":"8"}]],"Undo2":["M9 14 4 9l5-5","M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"],"Move":["M12 2v20","m15 19-3 3-3-3","m19 9 3 3-3 3","M2 12h20","m5 9-3 3 3 3","m9 5 3-3 3 3"],"Rotate3d":["m15.194 13.707 3.814 1.86-1.86 3.814","M16.47214 7.52786 A 5 10 0 1 0 13 21.79796","M21.79796 11 A 10 5 0 1 0 19 15.57071"],"Scaling":["M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7","M14 15H9v-5","M16 3h5v5","M21 3 9 15"]};
 export const Icon = ({ name, class: c = 'size-4' }) => h('svg', { xmlns: 'http://www.w3.org/2000/svg', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
   'stroke-width': 1.75, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: c }, ICONS[name].map(p => typeof p === 'string' ? h('path', { d: p }) : h(p[0], p[1])));
 
@@ -42,7 +42,7 @@ const VIEW = [
   ['playMotion', 'Play moving shapes', 'Moving shapes move in the view as they will in the game'],
   ['gameTextures', 'Game textures', "Textures and colours of the game's own surfaces, read from the game folder (TAGame/CookedPCConsole)"],
 ];
-const SNAP_TITLE = `Dragging lines edges up with the grid and with shapes nearby, sizes in grid steps, turns 15° at a time (G; hold ${MAC ? '⌘' : 'Ctrl'} while dragging to snap the other way)`;
+const SNAP_TITLE = `Dragging lines edges up with the grid and with shapes nearby, sizes in grid steps, turns 15° at a time; hold ${MAC ? '⌘' : 'Ctrl'} while dragging to snap the other way (G)`;
 
 function Toolbar({ act }) {
   const modes = ui.modes.value, view = ui.view.value;
@@ -50,7 +50,7 @@ function Toolbar({ act }) {
     disabled=${modes !== null && !modes.includes(mode)} title=${title} onClick=${() => act.setMode(mode)}><${Icon} name=${icon}/></button>`;
   return html`
     <div class="flex items-center gap-1 min-w-0">
-      <div class="flex items-center gap-2 pl-1 pr-2"><span class="grid size-6 shrink-0 place-items-center rounded-md bg-primary text-primary-content"><${Icon} name="Hexagon" class="size-3.5"/></span><span class="text-sm font-semibold tracking-tight whitespace-nowrap max-[1360px]:hidden">RL Map Editor</span></div>
+      <div class="flex items-center gap-2 pl-1 pr-2"><img src="icon.svg" alt="" class="size-7 shrink-0"/><span class="text-sm font-semibold tracking-tight whitespace-nowrap max-[1360px]:hidden">RL Map Editor</span></div>
       <button class="btn btn-sm btn-ghost btn-square" title="New map: flat grass, the car and the ball" onClick=${act.newMap}><${Icon} name="FilePlus"/></button>
       <button class="btn btn-sm btn-ghost btn-square" title=${`Open a Rocket League workshop map (.udk), a map piece (.json), a 3D model (.glb, .gltf, .obj, .stl) or a picture, or drop one on the view. Nothing leaves this computer. (${MOD}O)`} onClick=${act.open}><${Icon} name="FolderOpen"/></button>
       <button class="btn btn-sm btn-ghost btn-square" title=${`Undo (${MOD}Z)`} onClick=${act.undo}><${Icon} name="Undo2"/></button>
@@ -399,8 +399,52 @@ function Ask() {
   </dialog>`;
 }
 
+// Every `title` shows as our own tooltip: sooner than the browser's, styled, its shortcut "(⌘S)" as keys. While the
+// pointer is on an element its title moves to data-tip, so the browser's own doesn't show too; it comes back after.
+const KEY = /^(?:[⌘⇧⌥⌃]*.|Ctrl\+.+|Delete)$/u;
+function tooltips() {
+  const tip = Object.assign(document.createElement('div'), { id: 'tip', popover: 'manual', role: 'tooltip' });
+  document.body.append(tip);
+  let current = null, timer, warmUntil = 0;
+  const hide = () => {
+    clearTimeout(timer);
+    if (tip.matches(':popover-open')) { tip.hidePopover(); warmUntil = performance.now() + 300; }
+  };
+  const leave = () => {
+    hide();
+    if (current && !current.hasAttribute('title')) current.title = current.dataset.tip;
+    delete current?.dataset.tip;
+    current = null;
+  };
+  const show = () => {
+    const [first, ...more] = current.dataset.tip.split('\n');
+    const m = first.match(/^(.*?)\s*\(([^()]+)\)$/), keys = m?.[2].split(/, | and /);
+    const shortcut = keys?.every(k => KEY.test(k));
+    render(html`<span>${shortcut ? m[1] : first}</span>${shortcut && html`<span class="keys">${keys.map(k => html`<kbd class="kbd kbd-xs">${k}</kbd>`)}</span>`}
+      ${more.map(line => html`<p>${line}</p>`)}`, tip);
+    tip.showPopover();
+    const r = current.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    const below = r.bottom + 6 + t.height < innerHeight - 8;
+    tip.style.left = `${Math.max(8, Math.min(innerWidth - t.width - 8, r.left + r.width / 2 - t.width / 2))}px`;
+    tip.style.top = `${below ? r.bottom + 6 : r.top - 6 - t.height}px`;
+  };
+  addEventListener('pointerover', e => {
+    const el = /** @type {HTMLElement} */ (/** @type {Element} */ (e.target).closest?.('[title], [data-tip]'));
+    if (el === current) return;
+    leave();
+    if (!el?.title) return;
+    current = el;
+    el.dataset.tip = el.title;
+    el.removeAttribute('title');
+    timer = setTimeout(show, performance.now() < warmUntil ? 0 : 450);
+  });
+  addEventListener('pointerout', e => { if (current && !current.contains(e.relatedTarget)) leave(); });
+  for (const type of ['pointerdown', 'keydown', 'wheel']) addEventListener(type, hide, true);
+}
+
 export function mountUI(act) {
   const at = id => document.getElementById(id);
+  tooltips();
   pickPicture = act.pickPicture;
   render(html`<${Toolbar} act=${act}/>`, at('toolbar'));
   render(html`<${LeftPanel} act=${act}/>`, at('leftPanel'));

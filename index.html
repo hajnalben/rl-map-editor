@@ -55,6 +55,8 @@
   #outline :hover > .eye, #outline .eye.shown { @apply opacity-100; }   /* on hover, and always while something under it is hidden */
   .dropdown-content label { @apply flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer hover:bg-white/5; }
   .select > button { display: contents; } .select > button > span { @apply min-w-0 truncate; }
+  /* lists that open over the panels stand out from them: lighter, edged, shadowed (daisyUI's own is the panel's colour) */
+  :is(.select, .select select)::picker(select) { @apply border-white/10 bg-neutral shadow-xl shadow-black/50; }
   .doc { @apply overflow-auto rounded-md border border-white/5 bg-base-200 px-3 py-2 text-xs leading-relaxed text-base-content/80; }
   .doc h2 { @apply mb-2 text-sm font-semibold text-base-content; }
   .doc h3 { @apply mt-4 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-base-content/60; }
@@ -65,6 +67,12 @@
   .doc table { @apply w-full border-collapse; }
   .doc th, .doc td { @apply border-b border-base-300 px-1.5 py-1 text-left align-top; } .doc th { @apply font-semibold text-base-content/60; }
   #status { @apply truncate; } #status.ok { @apply text-success; } #status.warn { @apply text-warning; }
+  /* ui.js tooltips(): a popover, so it sits above menus and dialogs; placed by left/top */
+  #tip { @apply pointer-events-none fixed m-0 max-w-72 rounded-md border border-white/10 bg-neutral px-2 py-1.5 text-xs leading-snug text-base-content shadow-xl; inset: auto; }
+  #tip:popover-open { animation: tip-in .1s ease-out; }
+  #tip .keys { @apply ml-1.5 inline-flex gap-0.5 align-middle; }
+  #tip p { @apply mt-1 text-base-content/60; }
+  @keyframes tip-in { from { opacity: 0; } }
 </style>
 <style>
   [data-theme=rlme] {
@@ -114,7 +122,13 @@
   <main id="view" class="[grid-area:view] relative overflow-hidden">
     <!-- position inline: it shows before Tailwind has run -->
     <div class="boot-only grid place-items-center" style="position: absolute; inset: 0; z-index: 6; background: var(--color-base-300)">
-      <div class="flex flex-col items-center gap-3 text-base-content/60"><span class="loading loading-spinner loading-md text-primary"></span><span id="bootText">Loading…</span></div>
+      <div class="flex max-w-md flex-col items-center gap-3 text-center text-base-content/60"><span class="loading loading-spinner loading-md text-primary"></span><span id="bootText">Loading…</span>
+        <div id="bootStuck" class="flex flex-col items-center gap-2" hidden>
+          <span id="bootError" class="font-mono text-xs text-error" hidden></span>
+          <button id="bootReset" class="btn btn-sm">Start fresh</button>
+          <span class="text-xs">Forgets the map kept from last time and the offline copy, then reloads. Your files, pieces and library stay.</span>
+        </div>
+      </div>
     </div>
     <div id="loadingMount" class="contents"></div>
     <div id="scriptTexts" class="pointer-events-none absolute inset-0 overflow-hidden"></div>
@@ -142,6 +156,27 @@
   <footer id="footer" class="[grid-area:foot] flex items-center justify-between gap-4 px-2.5 text-xs bg-base-100 border-t border-base-300 min-w-0"></footer>
 </div>
 <div id="overlays"></div>
+<script>
+  // A plain script, so it works when the modules don't: an error while starting, or 10 s without the editor up, offers a fresh start
+  const stuck = why => {
+    if (!document.getElementById('app').classList.contains('booting')) return;
+    if (why) Object.assign(document.getElementById('bootError'), { textContent: why, hidden: false });
+    document.getElementById('bootText').textContent = why ? "The editor didn't start." : 'This is taking longer than it should.';
+    document.getElementById('bootStuck').hidden = false;
+  };
+  addEventListener('error', e => {   // capturing, to also hear a script file that failed to load
+    const why = e.message || e.target.src && `${e.target.src.split('/').pop()} didn't load`;
+    if (why) stuck(why);
+  }, true);
+  addEventListener('unhandledrejection', e => stuck(String(e.reason?.message ?? e.reason)));
+  setTimeout(stuck, 10000);
+  document.getElementById('bootReset').onclick = async () => {
+    for (const r of await navigator.serviceWorker?.getRegistrations() ?? []) await r.unregister();
+    for (const key of await caches.keys()) await caches.delete(key);
+    await new Promise(done => Object.assign(indexedDB.deleteDatabase('rl-map-editor-session'), { onsuccess: done, onerror: done, onblocked: done }));
+    location.reload();
+  };
+</script>
 <script type="module" src="main.js"></script>
 </body>
 </html>
