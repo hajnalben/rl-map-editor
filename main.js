@@ -918,6 +918,7 @@ setMode('translate');
 setTimeout(() => $('app').classList.remove('booting'), 15000);   // never stuck loading, whatever the storage does
 loadLibrary();
 restoreSession();
+navigator.serviceWorker?.register('sw.js');
 
 const api = { doc, commit, select, selected, place, newShape, addLava, settleSpawn, settleBall, floorSurface, newMap, runPlan, planFor, changeSet, setStatus,
               writeHeights, nextFrame, LIGHT_AIM, NEW_LIGHT, surfaces, surfaceOf };

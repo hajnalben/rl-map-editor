@@ -1,0 +1,9 @@
+# Upload only what the browser loads; everything else here (maps, checks, node_modules) stays local
+*
+!*.js
+!index.html
+!ai-guide.md
+!surfaces.upk
+!manifest.webmanifest
+!icon.svg
+!icon-*.png

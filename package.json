@@ -2,10 +2,11 @@
   "name": "rl-map-editor",
   "private": true,
   "type": "module",
-  "description": "Only for checks: the editor runs as plain files in the browser, its libraries from the CDN (index.html importmap)",
+  "description": "Only for checks and deploys: the editor runs as plain files in the browser, its libraries from the CDN (index.html importmap)",
   "scripts": {
     "check": "node check.mjs",
-    "types": "tsc -p ."
+    "types": "tsc -p .",
+    "deploy": "npx wrangler@4 deploy"
   },
   "devDependencies": {
     "@preact/signals": "2.11.3",

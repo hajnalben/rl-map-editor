@@ -1,0 +1,7 @@
+// Static files only (no Worker code): `npm run deploy`. .assetsignore lists what gets uploaded.
+{
+  "name": "rl-map-editor",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "." },
+  "routes": [{ "pattern": "rl-map-editor.hajnalben.com", "custom_domain": true }]
+}

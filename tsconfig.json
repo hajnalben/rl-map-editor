@@ -13,5 +13,6 @@
     "types": ["node"],
     "paths": { "three/addons/*": ["./node_modules/three/examples/jsm/*"] }
   },
-  "include": ["*.js", "*.mjs", "globals.d.ts"]
+  "include": ["*.js", "*.mjs", "globals.d.ts"],
+  "exclude": ["sw.js"]   // a service worker's globals aren't the page's; the webworker lib clashes with dom
 }
