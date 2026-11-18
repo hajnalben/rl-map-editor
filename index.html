@@ -170,6 +170,8 @@
     document.getElementById('bootStuck').hidden = false;
   };
   addEventListener('error', e => {   // capturing, to also hear a script file that failed to load
+    const from = e.filename || e.target.src || '';
+    if (!from.startsWith(location.origin) && !from.startsWith('https://cdn.jsdelivr.net/')) return;   // not the editor's (analytics a blocker stopped)
     const why = e.message || e.target.src && `${e.target.src.split('/').pop()} didn't load`;
     if (why) stuck(why);
   }, true);
@@ -183,5 +185,6 @@
   };
 </script>
 <script type="module" src="main.js"></script>
+<!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "d5f0fa929f7741ce89e7904337038d32"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

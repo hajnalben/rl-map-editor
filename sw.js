@@ -7,8 +7,8 @@ self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 
 self.addEventListener('fetch', e => {
   const { request } = e;
-  if (request.method !== 'GET' || !request.url.startsWith('http')) return;
   const own = new URL(request.url).origin === location.origin;
+  if (request.method !== 'GET' || !own && !request.url.startsWith('https://cdn.jsdelivr.net/')) return;   // analytics and the like: not kept
   e.respondWith(caches.open(CACHE).then(async cache => {
     const hit = await cache.match(request);
     if (hit && !own) return hit;
