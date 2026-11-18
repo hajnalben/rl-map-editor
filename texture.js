@@ -16,7 +16,7 @@ function half({ w, h, rgba }) {                   // the next mip: 2x2 pixels av
   return { w: W, h: H, rgba: out };
 }
 
-const to565 = ([r, g, b]) => (r >> 3) << 11 | (g >> 2) << 5 | b >> 3;
+const to565 = (/** @type {number[]} */ [r, g, b]) => (r >> 3) << 11 | (g >> 2) << 5 | b >> 3;
 const from565 = v => [(v >> 11 & 31) * 255 / 31, (v >> 5 & 63) * 255 / 63, (v & 31) * 255 / 31];
 
 // DXT1 of an RGBA image: per 4x4 block the two corners of its colours' bounding box, pulled in a little, and each

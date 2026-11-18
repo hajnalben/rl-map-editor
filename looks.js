@@ -8,10 +8,10 @@ import { nodeProps } from './kismet.js';
 
 const TEXTURE_PARAMS = ['Diffuse', 'Emissive', 'PaintTexture', 'SourceTexture'];
 const COLOR_PARAMS = ['Color', 'CollisionColor'];
-const GUESSES = [[/fog|mist|haze/i, '#dfe5ec'], [/water|lake|river|ocean/i, '#3d78a8'], [/glass|transparent|clear/i, '#cfe6ff'],
+const GUESSES = /** @type {[RegExp, string][]} */ ([[/fog|mist|haze/i, '#dfe5ec'], [/water|lake|river|ocean/i, '#3d78a8'], [/glass|transparent|clear/i, '#cfe6ff'],
                  [/lava|fire|magma/i, '#ff4a1c'], [/metal|steel|chrome/i, '#9aa0a8'],
                  [/concrete|cement|stone|rock|asphalt/i, '#a7a6a1'], [/ice|snow/i, '#dcefff'], [/grass/i, '#5f9a45'],
-                 [/sand|dirt/i, '#c9a46c'], [/white/i, '#ececec'], [/black/i, '#2a2a2a'], [/boost|orange/i, '#ff9a2e']];
+                 [/sand|dirt/i, '#c9a46c'], [/white/i, '#ececec'], [/black/i, '#2a2a2a'], [/boost|orange/i, '#ff9a2e']]);
 const SEE_THROUGH = /glass|transparent|clear|collision|fog|mist|haze/i;
 
 // {color, opacity} that a surface or mesh name hints at; color is null when the name says nothing

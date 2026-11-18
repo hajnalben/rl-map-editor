@@ -102,6 +102,7 @@ const pathOf = (pkg, i) => { const names = []; for (let r = i + 1; r > 0; r = pk
 // Where the game's textures and materials are: Map(object path, lower case -> package name), from the tables of the
 // packages `names` (opened with `open`). Materials import textures by their original group (TiledPatterns.Hexagons_N),
 // which is no file of its own: the game has it cooked into some other package.
+/** @param {(k: number, n: number) => void} [progress] */
 export async function gameIndex(names, open, progress = () => {}) {
   const index = new Map();
   for (const [k, name] of names.entries()) {

@@ -23,7 +23,10 @@ const TINTS = { Sand: [0.5, 0.375, 0.227], White: [0.8, 0.8, 0.8], Gray: [0.25, 
                 Blue: [0.05, 0.2, 0.6], Orange: [0.8, 0.3, 0.03], Green: [0.1, 0.45, 0.12] };
 
 class Writer {                                    // names, imports and exports, then the package bytes
-  constructor() { Object.assign(this, { names: [], nameAt: new Map(), imports: [], importAt: new Map(), exports: [] }); }
+  constructor() {
+    this.names = []; this.nameAt = new Map(); this.imports = []; this.importAt = new Map();
+    /** @type {any[]} */ this.exports = [];
+  }
   name(text, number = 0) {
     if (!this.nameAt.has(text)) { this.nameAt.set(text, this.names.length); this.names.push(text); }
     return pack('<ii', this.nameAt.get(text), number);
@@ -86,7 +89,7 @@ const P = {
   vector: (w, n, v) => tag(w, n, 'StructProperty', pack('<3f', ...v), 'Vector'),
   rotator: (w, n, v) => tag(w, n, 'StructProperty', pack('<3i', ...v), 'Rotator'),
   guid: (w, n) => tag(w, n, 'StructProperty', crypto.getRandomValues(new Uint8Array(16)), 'Guid'),
-  color: (w, n, [r, g, b]) => tag(w, n, 'StructProperty', Uint8Array.of(b, g, r, 0), 'Color'),
+  color: (w, n, /** @type {number[]} */ [r, g, b]) => tag(w, n, 'StructProperty', Uint8Array.of(b, g, r, 0), 'Color'),
   struct: (w, n, struct, inner) => tag(w, n, 'StructProperty', props(w, inner), struct),
   raw: (w, n, count, bytes) => tag(w, n, 'ArrayProperty', concat(pack('<i', count), bytes)),
 };
@@ -118,7 +121,7 @@ export function blankMap() {
   const pylonRender = exp(engine('NavMeshRenderingComponent'), pylon, 'NavMeshRenderingComponent', 1, INNER, def('TAGame', 'Pylon_Soccar_TA', 'NavMeshRenderer', 'NavMeshRenderingComponent'));
 
   // lights: a key sun, a soft fill from the other side and one from above
-  const SUNS = [[1.3, [-8192, 5461, 0], [255, 250, 240]], [0.35, [-4096, -27307, 0], [220, 230, 255]], [0.3, [-16384, 0, 0], [255, 255, 255]]];
+  const SUNS = /** @type {[number, number[], number[]][]} */ ([[1.3, [-8192, 5461, 0], [255, 250, 240]], [0.35, [-4096, -27307, 0], [220, 230, 255]], [0.3, [-16384, 0, 0], [255, 255, 255]]]);
   const suns = SUNS.map((_, k) => {
     const a = exp(engine('DirectionalLight'), level, 'DirectionalLight', k + 1, ACTOR);
     return [a, exp(engine('DirectionalLightComponent'), a, 'DirectionalLightComponent', k + 1, INNER, def('Engine', 'DirectionalLight', 'DirectionalLightComponent0', 'DirectionalLightComponent'))];
@@ -149,7 +152,7 @@ export function blankMap() {
   const zoneModel = exp(engine('Model'), zone, 'Model', 2, INNER), zonePolys = exp(engine('Polys'), zoneModel, 'Polys', 2, INNER & ~0x0000000100000000n);
 
   const actors = [info, 0, start, pylon, ...suns.map(([a]) => a), floor, dome, zone];
-  const set = (r, { blob, netAt }, bulkAt = []) => Object.assign(w.exports[r - 1], { blob, netAt, bulkAt });
+  const set = (r, /** @type {{blob: Uint8Array, netAt: number}} */ { blob, netAt }, /** @type {number[]} */ bulkAt = []) => Object.assign(w.exports[r - 1], { blob, netAt, bulkAt });
 
   set(world, object(w, [], concat(pack('<ii', level, 0), ...Array.from({ length: 4 }, () => concat(new Uint8Array(24), pack('<f', 10000))), pack('<ii', 0, 0))));
   set(level, object(w, [], concat(
@@ -198,6 +201,7 @@ export function blankMap() {
   set(stickyProp, object(w, [P.bool(w, 'bStickyWheels', true)]));
 
   const meshHead = () => concat(pack('<i', 0), props(w, ['UseSimpleRigidBodyCollision', 'UseSimpleBoxCollision', 'UseSimpleLineCollision'].map(n => P.bool(w, n, false))));
+  /** @returns {[{blob: Uint8Array, netAt: number}, number[]]} */
   const mesh = (geometry, material, streaming) => {
     const template = { head: meshHead(), version: 18, preLod: new Uint8Array(16), sections: [{ fields: [material] }],
                        tail: concat(pack('<i', 1), new Uint8Array(24), new Uint8Array(16), pack('<iif6i', 2, 4, streaming, 0, 0, 0, 1, 0, 0)) };

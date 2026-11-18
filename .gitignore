@@ -1,4 +1,4 @@
-__pycache__/
 .DS_Store
 *.udk
 *.upk
+node_modules/

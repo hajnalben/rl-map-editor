@@ -284,11 +284,11 @@ export function build(source, { edits = [], duplicates = [], removes = [], check
     setHud(add, hudWanted, checkpointZones(p).at(-1)?.dest ?? null, lavaZones(p));
     out = add.save();
   }
-  const notes = meta && { v: 1, objects: Object.fromEntries(meta.objects.map(({ ref, ...o }) => [exportOf(ref), o])) };
+  let notes = meta && { v: 1, objects: Object.fromEntries(meta.objects.map(({ ref, ...o }) => [exportOf(ref), o])) };
   if (notes) {
     const add = new Additions(new Package(out));
-    setEditorData(add, notes);
-    out = add.save();
+    if (setEditorData(add, notes)) out = add.save();
+    else notes = null;
   }
   const packed = compact(out).bytes;              // unused meshes and textures shrunk, superseded copies gone
   if (packed.length < out.length) out = packed;

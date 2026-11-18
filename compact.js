@@ -3,7 +3,7 @@
 // needs any more are swapped for tiny valid stand-ins, and superseded copies left by append-only saves are dropped.
 import { concat, pack, packInto, unpackFrom } from './bytes.js';
 import { geometryMesh, read, write } from './mesh.js';
-import { ATOMIC, Package, bulkAt, bulkHeaders } from './ue3.js';
+import { Package, REFERENCES, bulkAt, bulkHeaders, startsTag, walkTags } from './ue3.js';
 
 const HAS_STACK = 0x0200000000000000n;           // actors carry a script state frame
 const MATERIALISH = /Material/;                   // classes that point at textures from their native data
@@ -17,35 +17,13 @@ function arrayRefs(pkg, e, name) {
   return p[3] === 4 + 4 * n ? unpackFrom(`<${n}i`, pkg.data, p[2] + 4) : [];
 }
 
-// Object references in tagged properties: [start, end) holds a property list; structs and arrays of structs nest.
+// Object references in tagged properties: [start, end) holds a property list; structs and arrays of structs nest,
+// and arrays of ints count as references (object refs, or ints: kept either way). Stops at a name that isn't one.
 function taggedRefs(pkg, start, end, out) {
   const d = pkg.data, names = pkg.names;
-  let p = start;
   const fname = q => { const [i, n] = unpackFrom('<ii', d, q); return names[i] === undefined ? null : n ? `${names[i]}_${n - 1}` : names[i]; };
-  const tagged = q => q + 8 <= end && unpackFrom('<i', d, q)[0] >= 0 && unpackFrom('<i', d, q)[0] < names.length &&
-    (names[unpackFrom('<i', d, q)[0]] === 'None' || (names[unpackFrom('<i', d, q + 8)[0]] || '').endsWith('Property'));
-  while (p + 8 <= end) {
-    const name = fname(p);
-    if (name === null) return;
-    p += 8;
-    if (name === 'None') return p;
-    const ptype = fname(p), [size] = unpackFrom('<ii', d, p + 8);
-    p += 16;
-    let struct = null;
-    if (ptype === 'StructProperty' || ptype === 'ByteProperty') { struct = fname(p); p += 8; }
-    if (ptype === 'BoolProperty') { p += 1; continue; }
-    if (['ObjectProperty', 'ComponentProperty', 'ClassProperty', 'InterfaceProperty'].includes(ptype)) out.push(unpackFrom('<i', d, p)[0]);
-    else if (ptype === 'StructProperty' && !ATOMIC.has(struct)) taggedRefs(pkg, p, p + size, out);
-    else if (ptype === 'ArrayProperty' && size >= 4) {
-      const n = unpackFrom('<i', d, p)[0];
-      if (n > 0 && tagged(p + 4)) {
-        let q = p + 4;
-        for (let k = 0; k < n && q; k++) q = taggedRefs(pkg, q, p + size, out);
-      } else if (size === 4 + 4 * n) out.push(...unpackFrom(`<${n}i`, d, p + 4));   // object refs, or ints: kept either way
-    }
-    p += size;
-  }
-  return p;
+  return walkTags(d, start, end, fname, t => { if (REFERENCES.has(t.type)) out.push(unpackFrom('<i', d, t.at)[0]); },
+                  t => startsTag(d, names, t.at + 4, t.end));   // bounded by the list, not the array
 }
 
 function nativeScan(pkg, from, to, out) {         // any int32 that could be an export reference, at every offset

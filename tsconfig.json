@@ -1,0 +1,17 @@
+{
+  // npm run types: type checks every file (JSDoc types where inference falls short), not strictly
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "allowJs": true,
+    "checkJs": true,
+    "strict": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "paths": { "three/addons/*": ["./node_modules/three/examples/jsm/*"] }
+  },
+  "include": ["*.js", "*.mjs", "globals.d.ts"]
+}

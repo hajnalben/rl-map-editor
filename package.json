@@ -1,0 +1,19 @@
+{
+  "name": "rl-map-editor",
+  "private": true,
+  "type": "module",
+  "description": "Only for checks: the editor runs as plain files in the browser, its libraries from the CDN (index.html importmap)",
+  "scripts": {
+    "check": "node check.mjs",
+    "types": "tsc -p ."
+  },
+  "devDependencies": {
+    "@preact/signals": "2.11.3",
+    "@types/node": "22",
+    "@types/three": "0.160.0",
+    "htm": "3.1.1",
+    "marked": "12.0.2",
+    "preact": "11.0.1",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,10 +1,6 @@
 // Kismet (Sequence) graphs in UE3 v868 maps: decode node properties, and wire up checkpoints.
-import { concat, latin1, latin1Bytes, pack, unpackFrom, utf16 } from './bytes.js';
-
-// Structs serialized as raw bytes instead of tagged properties.
-const ATOMIC = { Vector: '<3f', Rotator: '<3i', Color: '<4B', LinearColor: '<4f', Vector2D: '<2f', IntPoint: '<2i',
-                 Guid: '<4I', Plane: '<4f', Quat: '<4f', Box: null };
-const ATOMIC_SIZE = { '<3f': 12, '<3i': 12, '<4B': 4, '<4f': 16, '<2f': 8, '<2i': 8, '<4I': 16 };
+import { calcsize, concat, latin1, latin1Bytes, pack, unpackFrom, utf16 } from './bytes.js';
+import { ATOMIC, REFERENCES, walkTags } from './ue3.js';
 
 function fname(pkg, p) {
   const [index, number] = unpackFrom('<ii', pkg.data, p);
@@ -14,26 +10,12 @@ function fname(pkg, p) {
 
 function decode(pkg, start, end) {                // tagged properties as [{name: value}, end]; nested values best-effort
   const props = {};
-  let p = start;
-  while (p < end) {
-    const name = fname(pkg, p);
-    p += 8;
-    if (name === 'None') break;
-    const ptype = fname(pkg, p);
-    const [size, index] = unpackFrom('<ii', pkg.data, p + 8);
-    p += 16;
-    let extra = null;
-    if (ptype === 'StructProperty' || ptype === 'ByteProperty') {
-      extra = fname(pkg, p);
-      p += 8;
-    } else if (ptype === 'BoolProperty') {
-      props[name] = !!pkg.data[p];
-      p += 1;
-      continue;
-    }
-    props[index === 0 ? name : `${name}[${index}]`] = readValue(pkg, ptype, extra, p, size);
-    p += size;
-  }
+  // end + 7: best effort, a tag that starts before end is read even when it runs past it
+  const p = walkTags(pkg.data, start, end + 7, q => fname(pkg, q), t => {
+    if (t.type === 'BoolProperty') props[t.name] = !!pkg.data[t.at];
+    else props[t.index === 0 ? t.name : `${t.name}[${t.index}]`] = readValue(pkg, t.type, t.struct, t.at, t.size);
+    return false;
+  });
   return [props, p];
 }
 
@@ -41,7 +23,7 @@ function readValue(pkg, ptype, extra, p, size) {
   const d = pkg.data;
   if (ptype === 'IntProperty') return unpackFrom('<i', d, p)[0];
   if (ptype === 'FloatProperty') return unpackFrom('<f', d, p)[0];
-  if (['ObjectProperty', 'ClassProperty', 'ComponentProperty', 'InterfaceProperty'].includes(ptype)) return unpackFrom('<i', d, p)[0];
+  if (REFERENCES.has(ptype)) return unpackFrom('<i', d, p)[0];
   if (ptype === 'NameProperty') return fname(pkg, p);
   if (ptype === 'StrProperty') {
     const n = unpackFrom('<i', d, p)[0];
@@ -49,8 +31,8 @@ function readValue(pkg, ptype, extra, p, size) {
   }
   if (ptype === 'ByteProperty') return size === 8 ? fname(pkg, p) : d[p];
   if (ptype === 'StructProperty') {
-    const fmt = ATOMIC[extra];
-    if (fmt && size === ATOMIC_SIZE[fmt]) return unpackFrom(fmt, d, p);
+    const fmt = ATOMIC.get(extra);
+    if (fmt && size === calcsize(fmt)) return unpackFrom(fmt, d, p);
     return decode(pkg, p, p + size)[0];
   }
   if (ptype === 'ArrayProperty') {
@@ -287,6 +269,7 @@ export const BALL_TOP_AHEAD = 40;                 // a ball on the car sits this
 // nodes will get, in order, so they can link to each other before they exist; placed() checks that order held.
 export function writer(add) {
   const pkg = add.pkg, enc = new Encoder(add), parent = mainSequence(pkg) + 1, classes = new Map(), nodes = [];
+  if (!parent) throw new Error('this map has no Kismet sequence, so no checkpoints, moving shapes, on-screen texts or scripts');
   const cls = name => {
     if (!classes.has(name)) classes.set(name, add.classRef(name, packageOf(name)));
     return classes.get(name);
@@ -439,7 +422,7 @@ export function addCheckpoints(add, template, checkpoints, fresh = false, spawn 
     node('SeqAct_GetVectorComponents', step([r.which], xyz('Input Vector', 'InVector', r.at, [r.x, r.y, r.z], x + 1550, false), x + 1550, y, 168));
     node('SeqCond_CompareInt', [
       ['InputLinks', A, [inputLink(y + 59, 'In', 59)]],
-      ['OutputLinks', A, [['A <= B', [], 15], ['A > B', [], 37], ['A == B', [r.raise], 59], ['A < B', [r.splitDir], 81], ['A >= B', [], 103]]
+      ['OutputLinks', A, /** @type {[string, number[], number][]} */ ([['A <= B', [], 15], ['A > B', [], 37], ['A == B', [r.raise], 59], ['A < B', [r.splitDir], 81], ['A >= B', [], 103]])
         .map(([d, to, delta]) => outputLink(d, to, y + delta, delta))],
       ['VariableLinks', A, [varLink('A', int, [r.onTop], x + 1780, { prop: 'ValueA', delta: 29 }),
                             varLink('B', int, [r.one], x + 1805, { prop: 'ValueB', delta: 54 })]],
@@ -833,7 +816,7 @@ export function setKeys(add, spawn) {
         x => [varLink('Value', int, [r[`mode${k}`]], x + 34, { prop: 'Value' }), varLink('Target', int, [onTop + 1], x + 90, { prop: 'Target', writeable: true, delta: 68 })], [], 128, 61)];
     }
   });
-  spec.loaded[1].find(([p]) => p === 'ObjComment')[2] = JSON.stringify({ nodes: names.slice(1).map(name => r[name] - 1) });
+  /** @type {any[]} */ (spec.loaded[1]).find(([p]) => p === 'ObjComment')[2] = JSON.stringify({ nodes: names.slice(1).map(name => r[name] - 1) });
   for (const name of names) node(...spec[name]);
   placed(r, 'keys');
   add.appendRefs(seq, 'SequenceObjects', nodes.map(k => k + 1));
@@ -882,7 +865,7 @@ export function setMovers(add, movers) {
         ['VariableLinks', A, [varLink('Duration', cls('SeqVar_Float'), [], x + 225, { prop: 'Duration', delta: 25 })]], ...layout(1, parent, x + 200, y, 150, 77)]);
     }
     node('SeqAct_Interp', [...(motion.once ? [] : [['bLooping', B, true]]), ['ObjComment', S, JSON.stringify(motion)],
-      ['InputLinks', A, [['Play', 15], ['Reverse', 37], ['Stop', 59], ['Pause', 81], ['Change Dir', 103]].map(([d, k]) => inputLink(y + k, d, k))],
+      ['InputLinks', A, /** @type {[string, number][]} */ ([['Play', 15], ['Reverse', 37], ['Stop', 59], ['Pause', 81], ['Change Dir', 103]]).map(([d, k]) => inputLink(y + k, d, k))],
       ['OutputLinks', A, [outputLink('Completed', [], y + 31, 31), outputLink('Reversed', [], y + 87, 87)]],
       ['VariableLinks', A, [varLink('Data', cls('InterpData'), [r.data], x + 431, { maxVars: 1 }),
                             varLink(GROUP, obj, [r.target], x + 496, { minVars: 0, delta: 63 }),
@@ -950,12 +933,14 @@ export function editorDataOf(pkg) {
   const k = editorNodes(pkg)[0];
   try { return k === undefined ? null : JSON.parse(nodeProps(pkg, pkg.exports[k]).ObjComment); } catch { return null; }
 }
-export function setEditorData(add, data) {
+export function setEditorData(add, data) {        // false when the map has no Kismet to keep them in
   const pkg = add.pkg, seq = mainSequence(pkg), old = new Set(editorNodes(pkg));
+  if (seq < 0) return false;
   if (old.size) add.appendRefs(seq, 'SequenceObjects', [], r => !old.has(r - 1));
   const { parent, node } = writer(add), [x, y] = [29000, 69000];
   const i = node('SeqEvent_LevelLoaded', [['MaxWidth', I, 136], ['ObjComment', S, JSON.stringify(data)], ['InputLinks', A, []],
     ['OutputLinks', A, [outputLink('Loaded and Visible', [], y + 14, 14), outputLink('Beginning of Level', [], y + 35, 35), outputLink('Level Reset', [], y + 56, 56)]],
     ['VariableLinks', A, []], ...layout(3, parent, x, y, 98, 85, EDITOR)]);
   add.appendRefs(seq, 'SequenceObjects', [i + 1]);
+  return true;
 }

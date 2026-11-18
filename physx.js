@@ -80,7 +80,7 @@ const above = (v, t, p, eps) => dot(triNormal(v, t), sub(p, v[t[0]])) > eps;
 
 function calchullgen(v) {
   const T = [];
-  const make = (a, b, c, n) => { const t = [a, b, c]; t.n = n; t.id = T.length; t.vmax = -1; t.rise = 0; T.push(t); return t; };
+  const make = (a, b, c, n) => { const t = /** @type {any} */ ([a, b, c]); t.n = n; t.id = T.length; t.vmax = -1; t.rise = 0; T.push(t); return t; };
   const neib = (t, a, b) => { for (let i = 0; i < 3; i++) { const i1 = (i + 1) % 3; if ((t[i] === a && t[i1] === b) || (t[i] === b && t[i1] === a)) return (i + 2) % 3; } throw new Error('physx: broken hull adjacency'); };
   const b2bfix = (s, t) => { for (let i = 0; i < 3; i++) { const a = s[(i + 1) % 3], b = s[(i + 2) % 3];
     const sa = T[s.n[neib(s, a, b)]]; sa.n[neib(sa, b, a)] = t.n[neib(t, b, a)];

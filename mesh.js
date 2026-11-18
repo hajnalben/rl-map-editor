@@ -136,7 +136,7 @@ export function kdop(positions, tris) {
     const mins = [], maxs = [];
     for (let k = 0; k < 3; k++) {
       const ext = pmax[k] - pmin[k];
-      for (const [side, out] of [[0, mins], [1, maxs]]) {
+      for (const [side, out] of /** @type {[number, number[]][]} */ ([[0, mins], [1, maxs]])) {
         if (ext <= 0) { out.push(128); continue; }
         const s = [c0, c1].map(c => side === 0 ? (c[0][k] - pmin[k]) / ext : (pmax[k] - c[1][k]) / ext);
         const q0 = quant(s[0]), q1 = quant(s[1]);
@@ -314,7 +314,7 @@ export function addShapes(add, shapes, geometry, material = null, { name = 'Shap
       meshes.set(key, add.addObject(meshExport.cls, meshExport.outer, name, blob, meshExport.flags, [rawAt]) + 1);
     }
     if (moves) return mover(meshes.get(key), own, values);
-    const tags = { ...ghost, StaticMesh: add.tag('StaticMesh', 'ObjectProperty', pack('<i', meshes.get(key))) };
+    const tags = /** @type {Record<string, Uint8Array>} */ ({ ...ghost, StaticMesh: add.tag('StaticMesh', 'ObjectProperty', pack('<i', meshes.get(key))) });
     if (own !== null) tags.Materials = add.tag('Materials', 'ArrayProperty', pack('<ii', 1, Math.trunc(own)));
     // no baked lighting (LODData): the engine lights the new mesh dynamically
     return add.duplicate(actor, [0, 0, 0], values, { [comp]: [tags, pack('<i', 0)] });
@@ -542,7 +542,7 @@ export function selfcheck() {                     // decode the kDOP tree the wa
     const [lo, hi] = boxes.get(h);
     for (const t of ordered.slice(a, b)) {
       for (const v of t.slice(0, 3)) {
-        assert([0, 1, 2].every(k => lo[k] - 1e-3 <= positions[v][k] && positions[v][k] <= hi[k] + 1e-3), 'leaf box holds its triangles', h);
+        assert([0, 1, 2].every(k => lo[k] - 1e-3 <= positions[v][k] && positions[v][k] <= hi[k] + 1e-3), `leaf box ${h} holds its triangles`);
       }
     }
   }

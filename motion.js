@@ -42,7 +42,7 @@ export function motionErrors(m, limit = 100000) {
 }
 
 const UU = Math.PI / 32768, DEG = 65536 / 360;
-export function ueAxes([pitch, yaw, roll]) {      // FRotationMatrix rows: local X, Y, Z in world space
+export function ueAxes(/** @type {number[]} */ [pitch, yaw, roll]) {   // FRotationMatrix rows: local X, Y, Z in world space
   const [SP, CP, SY, CY, SR, CR] = [Math.sin(pitch * UU), Math.cos(pitch * UU), Math.sin(yaw * UU), Math.cos(yaw * UU), Math.sin(roll * UU), Math.cos(roll * UU)];
   return [[CP * CY, CP * SY, SP],
           [SR * SP * CY - CR * SY, SR * SP * SY + CR * CY, -SR * CP],
@@ -62,7 +62,8 @@ const turned = (euler, v) => {                    // v in the shape's frame, aft
 export function motionKeys(m, rot, box) {
   const ax = ueAxes(rot), local = v => ax.map(a => a[0] * v[0] + a[1] * v[1] + a[2] * v[2]);
   const keys = [{ t: 0, pos: ZERO, rot: ZERO, arrive: [ZERO, ZERO], leave: [ZERO, ZERO] }];
-  const STEADY = [u => u, () => 1], SMOOTH = [u => u * u * (3 - 2 * u), u => 6 * u * (1 - u)];
+  /** @typedef {[(u: number) => number, (u: number) => number]} Easing a curve over 0..1 and its slope */
+  const STEADY = /** @type {Easing} */ ([u => u, () => 1]), SMOOTH = /** @type {Easing} */ ([u => u * u * (3 - 2 * u), u => 6 * u * (1 - u)]);
   // d seconds of f(u) = [pos, rot, dpos/du, drot/du], u from 0 to 1, as `pieces` Hermite pieces
   const segment = (d, f, pieces = 1) => {
     const last = keys.at(-1), per = v => v.map(x => x / d);
@@ -107,9 +108,10 @@ export function motionKeys(m, rot, box) {
     for (let k = 0; k < steps; k++) { spin(m.seconds, k * step, (k + 1) * step, m.axis, [cx, cy, cz], m.smooth ? SMOOTH : STEADY); hold(m.pause); }
   } else {
     const pivot = [cx, cy, cz + { top: ez, middle: 0, bottom: -ez }[m.hinge]], A = m.angle, d = m.seconds;
-    const out = m.smooth ? [u => Math.sin(u * Math.PI / 2), u => Math.PI / 2 * Math.cos(u * Math.PI / 2)] : STEADY;   // a pendulum: fastest as it hangs
-    const across = m.smooth ? [u => (1 - Math.cos(u * Math.PI)) / 2, u => Math.PI / 2 * Math.sin(u * Math.PI)] : STEADY;
-    const back = m.smooth ? [u => 1 - Math.cos(u * Math.PI / 2), u => Math.PI / 2 * Math.sin(u * Math.PI / 2)] : STEADY;
+    /** @type {Easing[]} */
+    const [out, across, back] = m.smooth ? [[u => Math.sin(u * Math.PI / 2), u => Math.PI / 2 * Math.cos(u * Math.PI / 2)],   // a pendulum: fastest as it hangs
+      [u => (1 - Math.cos(u * Math.PI)) / 2, u => Math.PI / 2 * Math.sin(u * Math.PI)], [u => 1 - Math.cos(u * Math.PI / 2), u => Math.PI / 2 * Math.sin(u * Math.PI / 2)]]
+      : [STEADY, STEADY, STEADY];
     spin(d / 4, 0, A, m.axis, pivot, out, m.smooth);
     hold(m.pause);
     spin(d / 2, A, -A, m.axis, pivot, across, m.smooth);

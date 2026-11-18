@@ -93,7 +93,7 @@ function lava(W, seed = 11) {
     if (points.every(([qx, qy]) => Math.hypot(wrap(p[0] - qx), wrap(p[1] - qy)) > W / 9)) points.push(p);
   }
   const warpX = layer(5), warpY = layer(5), width = layer(6), reach = layer(4), grain = layer(48), grit = layer(160);
-  const ramp = [[0, [12, 5, 3]], [0.3, [80, 12, 2]], [0.6, [205, 50, 5]], [0.85, [250, 135, 18]], [1, [255, 215, 95]]];
+  const ramp = /** @type {[number, number[]][]} */ ([[0, [12, 5, 3]], [0.3, [80, 12, 2]], [0.6, [205, 50, 5]], [0.85, [250, 135, 18]], [1, [255, 215, 95]]]);
   const heat = t => {
     const k = ramp.findIndex(([at]) => at >= t), [a, ca] = ramp[Math.max(0, k - 1)], [b, cb] = ramp[k];
     return ca.map((v, c) => v + (cb[c] - v) * (b > a ? (t - a) / (b - a) : 0));

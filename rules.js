@@ -31,7 +31,7 @@ export function setScript(add, script) {
     // nodes: props(R, outs, x, y) is called on writing, R mapping node ids to object references
     const make = (className, props, outs = 0, extra = {}) => list.push({ className, props, outs: Array.from({ length: outs }, () => []), ...extra }) - 1;
     const link = (from, to, input = 0) => from.forEach(([id, out]) => list[id].outs[out].push([to, input]));
-    const op = (className, version, ins, outs, links, { pre = [], post = () => [], size = [150, 77], name = null, tail } = {}) =>
+    const op = (className, version, ins, outs, links, { pre = [], post = (/** @type {number} */ x) => [], size = [150, 77], name = null, tail = undefined } = {}) =>
       make(className, (R, o, x, y) => [...pre, ['InputLinks', A, ins.map(([d, k]) => inputLink(y + k, d, k))],
         ['OutputLinks', A, outs.map(([d, k], j) => outputLink(d, o[j], y + k, k))], ['VariableLinks', A, links(R, x)], ...post(x),
         ...layout(version, parent, x, y, ...size, name)], outs.length, { tail });

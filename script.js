@@ -118,6 +118,124 @@ export function runScript(source, kindOf) {
   return plan;
 }
 
+// runScript in a sandboxed frame: an origin of its own with no storage and no network, as a map's script is code
+// from whoever made the map. `kinds`: {name: what runScript's kindOf says}. The plan, or rejects with what is wrong.
+const FRAME = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:"><script type="module">
+let run;
+addEventListener('message', async ({ data }) => {
+  if (data.modules) {
+    const url = text => URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
+    ({ runScript: run } = await import(url(data.modules.script.replace("'./motion.js'", JSON.stringify(url(data.modules.motion))))));
+    return parent.postMessage({ ready: true }, '*');
+  }
+  try { parent.postMessage({ id: data.id, plan: run(data.source, name => data.kinds[name] ?? null) }, '*'); }
+  catch (err) { parent.postMessage({ id: data.id, error: String(err?.message ?? err) }, '*'); }
+});
+</script>`;
+let sandbox = null, asked = 0;
+function openSandbox() {
+  const frame = Object.assign(document.createElement('iframe'), { srcdoc: FRAME, hidden: true });
+  frame.setAttribute('sandbox', 'allow-scripts');
+  const waiting = new Map(), ready = /** @type {Promise<void>} */ (new Promise(resolve => addEventListener('message', ({ source, data }) => {
+    if (source !== frame.contentWindow) return;
+    if (data?.ready) return resolve();
+    waiting.get(data?.id)?.(data);
+  })));
+  frame.onload = async () => {
+    const text = name => fetch(new URL(name, import.meta.url), { cache: 'no-store' }).then(r => r.text());
+    frame.contentWindow.postMessage({ modules: { script: await text('script.js'), motion: await text('motion.js') } }, '*');
+  };
+  document.body.append(frame);
+  return { frame, waiting, ready };
+}
+export async function runSandboxed(source, kinds, seconds = 5) {
+  sandbox ??= openSandbox();
+  const { frame, waiting, ready } = sandbox, id = ++asked;
+  await ready;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {                // a script that never ends: its frame goes, a new one comes next time
+      frame.remove();
+      if (sandbox?.frame === frame) sandbox = null;
+      reject(new Error(`it ran for over ${seconds} s without finishing`));
+    }, seconds * 1000);
+    waiting.set(id, data => {
+      clearTimeout(timer);
+      waiting.delete(id);
+      data.error === undefined ? resolve(data.plan) : reject(new Error(data.error));
+    });
+    frame.contentWindow.postMessage({ id, source, kinds }, '*');
+  });
+}
+
+export const eventLabel = e => ({ start: 'start', reset: 'reset', enter: `${e.zone ?? e.checkpoint} entered by ${e.by}`, leave: `${e.zone ?? e.checkpoint} left by ${e.by}`,
+  reached: `${e.checkpoint} reached`, after: `after ${e.seconds} s`, every: `every ${e.seconds} s`, pressed: `${e.button} pressed`, signal: `signal ${e.name}`,
+  lava: `lava (${e.by})`, goal: `goal (${e.team})`, finished: `${e.clip} finished`, reversed: `${e.clip} back at its start` })[e.on];
+
+// The editor's preview of a plan: its reactions played when you set off its events. Launches and teleports only
+// say so. hooks: track(name, motion) -> {keys, length} of a clip on that shape (motion.js), lightOn(name),
+// showText({text, seconds, size, at, color}) -> a way to take it down again.
+export function previewOf(plan, { track, lightOn, showText }) {
+  const p = { clips: plan.clips.map(c => ({ id: c.id, target: c.target, loop: c.loop, ...track(c.target, c.motion), t: 0, dir: 1, playing: false, started: false })),
+              flags: new Map(plan.flags.map(f => [f.id, f.value])), counters: new Map(plan.counters.map(c => [c.id, c.value])),
+              lights: new Map(), hidden: new Set(), timers: [], once: new Set() };
+  const later = (ms, fn) => p.timers.push(setTimeout(fn, ms));
+  const fire = (match, it = null) => { for (const r of plan.rules) if (match(r.event)) run(r.actions, it); };
+  const run = (actions, it) => { for (const a of actions) react(a, it); };
+  function react(a, it) {
+    const clip = p.clips.find(c => c.id === a.clip);
+    switch (a.do) {
+      case 'play': if (!clip.loop && clip.t >= clip.length) clip.t = 0; Object.assign(clip, { started: true, playing: true, dir: 1 }); break;
+      case 'reverse': Object.assign(clip, { started: true, playing: true, dir: -1 }); break;
+      case 'stop': clip.playing = false; break;
+      case 'pause': clip.playing = !clip.playing && clip.started; break;
+      case 'flip': clip.dir = -clip.dir; break;
+      case 'text': later(a.seconds * 1000, showText(a)); break;
+      case 'light': { const on = p.lights.get(a.light) ?? lightOn(a.light); p.lights.set(a.light, a.to === 'toggle' ? !on : a.to === 'on'); break; }
+      case 'show': p.hidden.delete(a.shape); break;
+      case 'hide': p.hidden.add(a.shape); break;
+      case 'launch': case 'teleport': later(1500, showText({ text: `(${a.do} ${a.what}${a.to ? ' to ' + a.to : ''}: only in the game)`, size: 1, at: [0, 300], color: [170, 170, 170] })); break;
+      case 'emit': fire(e => e.on === 'signal' && e.name === a.name, it); break;
+      case 'set': p.flags.set(a.flag, a.value); break;
+      case 'toggle': p.flags.set(a.flag, !p.flags.get(a.flag)); break;
+      case 'add': p.counters.set(a.counter, p.counters.get(a.counter) + a.by); break;
+      case 'count': p.counters.set(a.counter, a.value); break;
+      case 'wait': later(a.seconds * 1000, () => run(a.then, it)); break;
+      case 'when': {
+        const t = a.test, n = p.counters.get(t.counter);
+        const yes = t.flag ? p.flags.get(t.flag) === t.is : t.op === '==' ? n === t.value : t.op === '>=' ? n >= t.value : n < t.value;
+        run(yes ? a.then : a.otherwise, it);
+        break;
+      }
+      case 'once': if (!p.once.has(a.id)) { p.once.add(a.id); run(a.then, it); } break;
+    }
+  }
+  return Object.assign(p, {
+    fire,
+    fireEvent: e => fire(x => JSON.stringify(x) === JSON.stringify(e) || (e.on === 'enter' && x.on === 'enter' && x.zone === e.zone && x.by === 'any')),
+    start() {                                     // the map-start events, and the timers
+      fire(e => e.on === 'start');
+      for (const r of plan.rules) {
+        if (r.event.on === 'after') later(r.event.seconds * 1000, () => run(r.actions, null));
+        if (r.event.on === 'every') p.timers.push(setInterval(() => run(r.actions, null), r.event.seconds * 1000));
+      }
+    },
+    stop() { p.timers.forEach(t => { clearTimeout(t); clearInterval(t); }); p.timers.length = 0; },
+    advance(dt) {                                 // clips play on; reaching an end sets off finished/reversed
+      for (const c of p.clips) {
+        if (!c.playing) continue;
+        c.t += dt * c.dir;
+        if (c.dir > 0 && c.t >= c.length) {
+          if (c.loop) c.t %= c.length;
+          else { c.t = c.length; c.playing = false; fire(e => e.on === 'finished' && e.clip === c.id); }
+        } else if (c.dir < 0 && c.t <= 0) {
+          if (c.loop) c.t = c.length + (c.t % c.length);
+          else { c.t = 0; c.playing = false; fire(e => e.on === 'reversed' && e.clip === c.id); }
+        }
+      }
+    },
+  });
+}
+
 // The object names a plan refers to, with what each must be able to do: 'moves' for shapes it moves, shows or hides
 export function planNames(plan) {
   const names = new Map(), use = (name, need = null) => { if (name && !(names.get(name) === 'moves')) names.set(name, need ?? names.get(name) ?? null); };

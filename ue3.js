@@ -3,8 +3,43 @@ import { calcsize, concat, latin1, latin1Bytes, pack, packInto, pyRound, unpackF
 
 const HAS_STACK = 0x0200000000000000n;           // RF_HasStack: actors carry a script state frame
 const PROBE = (0x0dn << 32n) | 0xffffffffn;       // a new actor's state frame probe mask, as most workshop maps' lights and movers have
-export const ATOMIC = new Set(['Vector', 'Rotator', 'Color', 'LinearColor', 'Vector2D', 'IntPoint', 'Guid', 'Plane', 'Quat', 'Box']);   // structs saved as raw bytes
-const REFERENCES = new Set(['ObjectProperty', 'ComponentProperty', 'ClassProperty', 'InterfaceProperty']);
+// structs saved as raw bytes instead of tagged properties, by their format (Box: two vectors and a byte)
+export const ATOMIC = new Map(Object.entries({ Vector: '<3f', Rotator: '<3i', Color: '<4B', LinearColor: '<4f', Vector2D: '<2f',
+                                               IntPoint: '<2i', Guid: '<4I', Plane: '<4f', Quat: '<4f', Box: null }));
+export const REFERENCES = new Set(['ObjectProperty', 'ComponentProperty', 'ClassProperty', 'InterfaceProperty']);
+
+export const startsTag = (d, names, q, end) => {  // q starts a property tag or a None (an array item that is a struct)
+  const k = unpackFrom('<i', d, q)[0];
+  return q + 8 <= end && k >= 0 && k < names.length && (names[k] === 'None' || (names[unpackFrom('<i', d, q + 8)[0]] ?? '').endsWith('Property'));
+};
+
+// The tagged property list at [p, end) of `d`, its FNames read with fname(q) (which may also re-point them; a null
+// one stops the walk with null): visit({name, type, struct, index, at, size, end}) per property, `at` where its value
+// starts (a BoolProperty's byte), `end` the list's. Unless visit returns false, structs not in ATOMIC and arrays whose
+// first item passes tagged(t) are walked into, and other arrays of 4-byte items visited item by item as object
+// references. Returns where the list stops: after its None, or at `end`.
+export function walkTags(d, p, end, fname, visit, tagged) {
+  while (p + 8 <= end) {
+    const name = fname(p);
+    if (name === null) return null;
+    if (name === 'None') return p + 8;
+    const [size] = unpackFrom('<i', d, p + 16), type = fname(p + 8), [index] = unpackFrom('<i', d, p + 20);
+    let struct = null;
+    p += 24;
+    if (type === 'StructProperty' || type === 'ByteProperty') { struct = fname(p); p += 8; }
+    const t = { name, type, struct, index, at: p, size, end };
+    if (visit(t) !== false && type !== 'BoolProperty') {
+      if (type === 'StructProperty' && !ATOMIC.has(struct)) walkTags(d, p, p + size, fname, visit, tagged);
+      else if (type === 'ArrayProperty' && size >= 4) {
+        const n = unpackFrom('<i', d, p)[0];
+        if (n > 0 && tagged(t)) for (let k = 0, q = p + 4; k < n && q !== null; k++) q = walkTags(d, q, p + size, fname, visit, tagged);
+        else if (size === 4 + 4 * n) for (let k = 0; k < n; k++) visit({ ...t, type: 'ObjectProperty', at: p + 4 + 4 * k, size: 4 });
+      }
+    }
+    p += type === 'BoolProperty' ? 1 : size;
+  }
+  return p;
+}
 
 export const bulkAt = (pkg, q) => {               // an inline bulk header at q: its data starts right after it
   const [flags, count, size, off] = unpackFrom('<Iiii', pkg.data, q);
@@ -165,9 +200,9 @@ export class Package {
   }
 
   shape(actor, cache) {                           // [export index, local bounds] of an actor's mesh or brush
-    let comp = this.get(actor, 'StaticMeshComponent', '<i') || this.get(actor, 'CollisionComponent', '<i');
-    if (!comp || comp[0] <= 0) return [null, null];
-    comp = this.exports[comp[0] - 1];
+    const ref = this.get(actor, 'StaticMeshComponent', '<i') || this.get(actor, 'CollisionComponent', '<i');
+    if (!ref || ref[0] <= 0) return [null, null];
+    const comp = this.exports[ref[0] - 1];
     const shape = this.get(comp, 'StaticMesh', '<i') || this.get(comp, 'Brush', '<i');
     if (!shape || shape[0] <= 0) return [null, null];
     if (!cache.has(shape[0])) cache.set(shape[0], this.nativeBounds(this.exports[shape[0] - 1]));
@@ -336,6 +371,7 @@ export class Additions {
     this.added = [];                              // [export table entry, object bytes]
     this.nextNumber = new Map();                  // name index -> next free FName number
     this.newNames = [];
+    this.levelListAt = undefined;                 // where the Level's actor list starts in its data, once known
     this.newImports = [];                         // raw import table entries
     this.importInfo = [];                         // and what each one is: {cls, outer, name}
     this.bulkAt = new Map();                      // added object position -> inline bulk headers storing a file offset
@@ -393,41 +429,18 @@ export class Additions {
       done.set(ref, out);
       return out;
     }
-    const e = src.exports[ref - 1], blob = src.data.slice(e.off, e.off + e.size), at = q => q - e.off;
+    const e = src.exports[ref - 1], blob = src.data.slice(e.off, e.off + e.size), at = q => q - e.off, names = src.names;
     const name = q => {                           // re-point the FName at blob offset q
       const [k, number] = unpackFrom('<ii', blob, q);
-      packInto('<ii', blob, q, this.name(src.names[k])[0], number);
+      packInto('<ii', blob, q, this.name(names[k])[0], number);
     };
     const object = q => packInto('<i', blob, q, this.copyFrom(src, unpackFrom('<i', blob, q)[0], done));
-    const names = src.names, tagged = (q, end) => {
-      const k = unpackFrom('<i', blob, q)[0];
-      return q + 8 <= end && k >= 0 && k < names.length && (names[k] === 'None' || (names[unpackFrom('<i', blob, q + 8)[0]] ?? '').endsWith('Property'));
-    };
-    const props = (q, end) => {                   // a property list in [q, end): returns where it stops
-      while (q + 8 <= end) {
-        const tag = names[unpackFrom('<i', blob, q)[0]];
-        name(q);
-        if (tag === 'None') return q + 8;
-        const type = names[unpackFrom('<i', blob, q + 8)[0]], [size] = unpackFrom('<i', blob, q + 16);
-        name(q + 8);
-        q += 24;
-        let struct = null;
-        if (type === 'StructProperty' || type === 'ByteProperty') { struct = names[unpackFrom('<i', blob, q)[0]]; name(q); q += 8; }
-        if (type === 'BoolProperty') { q += 1; continue; }
-        if (REFERENCES.has(type)) object(q);
-        else if (type === 'NameProperty' || (type === 'ByteProperty' && size === 8)) name(q);
-        else if (type === 'StructProperty' && !ATOMIC.has(struct)) props(q, q + size);
-        else if (type === 'ArrayProperty' && size >= 4) {
-          const n = unpackFrom('<i', blob, q)[0];
-          if (n > 0 && tagged(q + 4, q + size)) for (let k = 0, p = q + 4; k < n; k++) p = props(p, q + size);
-          else if (size === 4 + 4 * n) for (let k = 0; k < n; k++) object(q + 4 + 4 * k);   // object refs (no other int arrays seen)
-        }
-        q += size;
-      }
-      return q;
-    };
+    const fname = q => { const k = unpackFrom('<i', blob, q)[0]; name(q); return names[k]; };
     // ponytail: what it refers to is copied first, so objects referring to each other in a loop aren't supported
-    props(at(src.netIndexAt(e)) + 4, blob.length);
+    walkTags(blob, at(src.netIndexAt(e)) + 4, blob.length, fname, t => {
+      if (REFERENCES.has(t.type)) object(t.at);   // int array items too: object refs (no other int arrays seen)
+      else if (t.type === 'NameProperty' || (t.type === 'ByteProperty' && t.size === 8)) name(t.at);
+    }, t => startsTag(blob, names, t.at + 4, t.at + t.size));
     const added = this.addObject(this.copyFrom(src, e.cls, done), 0, rename ?? src.names[e.nameRaw[0]], blob, e.flags, bulkHeaders(src, e), { netAt: at(src.netIndexAt(e)) });
     done.set(ref, added + 1);
     return added + 1;
@@ -576,7 +589,7 @@ export class Additions {
     const newRef = pkg.exports.length + this.added.length + 1;   // object references are 1-based
     const kids = [];
     pkg.exports.forEach((e, k) => { if (e.outer === i + 1) kids.push(k); });
-    const remap = new Map([[i + 1, newRef], ...kids.map((k, n) => [k + 1, newRef + 1 + n])]);
+    const remap = new Map([[i + 1, newRef], ...kids.map((k, n) => /** @type {[number, number]} */ ([k + 1, newRef + 1 + n]))]);
     const present = new Set([...pkg.properties(src)].map(([name]) => name));
     const clsRef = cls && this.classRef(cls, 'Engine');
     for (const [k, ref] of [[i, newRef], ...kids.map(k => [k, remap.get(k + 1)])]) {
