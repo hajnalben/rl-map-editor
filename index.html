@@ -62,15 +62,18 @@
   .select > button { display: contents; } .select > button > span { @apply min-w-0 truncate; }
   /* lists that open over the panels stand out from them: lighter, edged, shadowed (daisyUI's own is the panel's colour) */
   :is(.select, .select select)::picker(select) { @apply border-white/10 bg-neutral shadow-xl shadow-black/50; }
-  .doc { @apply overflow-auto rounded-md border border-white/5 bg-base-200 px-3 py-2 text-xs leading-relaxed text-base-content/80; }
-  .doc h2 { @apply mb-2 text-sm font-semibold text-base-content; }
-  .doc h3 { @apply mt-4 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-base-content/60; }
-  .doc p, .doc pre, .doc table { @apply mb-3; }
-  .doc strong { @apply text-base-content; }
-  .doc code { @apply rounded bg-base-300 px-1 font-mono text-[11px] text-base-content; }
-  .doc pre { @apply overflow-auto rounded-md bg-base-300 p-2; } .doc pre code { @apply bg-transparent p-0; }
-  .doc table { @apply w-full border-collapse; }
-  .doc th, .doc td { @apply border-b border-base-300 px-1.5 py-1 text-left align-top; } .doc th { @apply font-semibold text-base-content/60; }
+  /* the Script reference: prose kept to a readable measure, code and tables use the full width */
+  .doc { @apply overflow-auto text-sm leading-6 text-base-content; }
+  #scriptPanel dialog.modal { background-color: rgb(0 0 0 / .65); }   /* the editor behind recedes, so the reference stands out */
+  .doc h3 { @apply mt-8 mb-2 text-base font-semibold text-base-content; }
+  .doc p, .doc ul { @apply mb-4 max-w-[68ch]; } .doc pre, .doc table { @apply mb-6; }
+  .doc ul { @apply list-disc pl-5; } .doc li { @apply mb-1; }
+  .doc strong { @apply font-semibold text-base-content; }
+  .doc code { @apply rounded bg-white/10 px-1 py-px font-mono text-[0.85em] text-base-content; }
+  .doc pre { @apply overflow-x-auto rounded-lg border border-white/10 bg-base-300 px-4 py-3 text-xs leading-5; } .doc pre code { @apply bg-transparent p-0 text-[1em]; }
+  .doc table { @apply w-full border-collapse text-[13px] leading-5; }
+  .doc th, .doc td { @apply border-b border-white/10 px-2 py-2 text-left align-top; } .doc td:first-child { @apply w-2/5; }
+  .doc th { @apply py-1.5 text-[11px] font-semibold uppercase tracking-wider text-base-content/70; }
   #status { @apply truncate; } #status.ok { @apply text-success; } #status.warn { @apply text-warning; }
   /* ui.js tooltips(): a popover, so it sits above menus and dialogs; placed by left/top */
   #tip { @apply pointer-events-none fixed m-0 max-w-72 rounded-md border border-white/10 bg-neutral px-2 py-1.5 text-xs leading-snug text-base-content shadow-xl; inset: auto; }

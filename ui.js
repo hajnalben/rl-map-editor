@@ -317,7 +317,7 @@ function Inspector({ act }) {
   return html`
     <div class="break-words text-base-content/60">
       <div><b class="text-sm font-semibold text-base-content">${info.title}</b>${info.note && html` <span>${info.note}</span>`}</div>
-      <div class="mt-0.5">${info.text}</div>
+      ${info.text && html`<div class="mt-0.5">${info.text}</div>`}
     </div>
     <div class="flex flex-col gap-3">
       ${s.name !== null && html`<label class="field" title="What the Script and AI agents call it: letters, digits, - and _">Name
@@ -361,11 +361,10 @@ const SCRIPT_EXAMPLE = "const pad = zone('pad');\non(pad.enter('car'), text('Hel
 async function scriptGuide() {                   // ai-guide.md's Scripts section, as HTML
   const [{ marked }, md] = await Promise.all([import('marked'), fetch('ai-guide.md', { cache: 'no-store' }).then(r => r.text())]);
   const from = md.indexOf('## Scripts');
-  return marked.parse(md.slice(from, md.indexOf('\n## ', from)));
+  return marked.parse(md.slice(md.indexOf('\n', from), md.indexOf('\n## ', from)));   // without its heading: the modal's title says it
 }
 function ScriptPanel({ act }) {                  // stays mounted while closed: hidden, so #app:has(#scriptPanel:not([hidden])) lights the toolbar button
   const ref = useRef(null), open = ui.scriptOpen.value, status = ui.scriptStatus.value, [guide, setGuide] = useState(null);
-  const toggleGuide = async () => setGuide(guide ? null : await scriptGuide());
   useEffect(() => { if (open) ref.current.focus(); }, [open]);
   const keys = e => {
     e.stopPropagation();                         // typing isn't a shortcut
@@ -374,7 +373,7 @@ function ScriptPanel({ act }) {                  // stays mounted while closed: 
   };
   return html`<section id="scriptPanel" class="absolute inset-x-0 bottom-0 z-[5] flex h-[45%] flex-col border-t border-base-300 bg-base-100" hidden=${!open}>
     <div class="flex items-center gap-2 px-3 py-1.5"><b>Script</b> <span class="min-w-0 ${status.error ? 'text-error' : 'text-base-content/60'}">${status.text}</span><span class="grow"></span>
-      <button class="btn btn-sm btn-ghost ${guide ? 'active' : ''}" title="What a script can do" onClick=${toggleGuide}><${Icon} name="BookOpen"/>Reference</button>
+      <button class="btn btn-sm btn-ghost" title="What a script can do" onClick=${async () => setGuide(await scriptGuide())}><${Icon} name="BookOpen"/>Reference</button>
       <button class="btn btn-sm btn-primary" title=${`Run the script: check it and use it from now on (${MOD}↵)`} onClick=${act.runScript}>Apply</button>
       <button class="btn btn-sm btn-square btn-ghost" title="Close" onClick=${() => { ui.scriptOpen.value = false; }}>✕</button></div>
     <div class="flex min-h-0 flex-1 gap-2 px-3 pb-3">
@@ -384,8 +383,15 @@ function ScriptPanel({ act }) {                  // stays mounted while closed: 
         <button class="btn btn-sm justify-start" title="Back to the start, then the map-start events" onClick=${act.startPreview}>▶ Start over</button>
         ${ui.scriptEvents.value.map(({ label, event }) => html`
           <button class="btn btn-sm h-auto min-h-8 justify-start whitespace-normal py-1 text-left font-mono text-xs font-normal" onClick=${() => act.fireEvent(event)}>${label}</button>`)}</div>
-      ${guide && html`<div class="doc w-[min(30rem,45%)]" dangerouslySetInnerHTML=${{ __html: guide }}></div>`}
     </div>
+    ${guide && html`<dialog class="modal" ref=${d => d && !d.open && d.showModal()} onClose=${() => setGuide(null)}>
+      <div class="modal-box flex h-[min(52rem,calc(100vh-4rem))] w-[min(60rem,calc(100vw-2rem))] max-w-none flex-col overflow-hidden border border-white/10 p-0 shadow-2xl">
+        <div class="flex items-center border-b border-white/5 py-2.5 pl-6 pr-3"><b class="text-base">Script reference</b><span class="grow"></span>
+          <form method="dialog"><button class="btn btn-sm btn-square btn-ghost" title="Close (Esc)">✕</button></form></div>
+        <div class="doc min-h-0 flex-1 px-6 py-5" dangerouslySetInnerHTML=${{ __html: guide }}></div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button>Close</button></form>
+    </dialog>`}
   </section>`;
 }
 const Loading = () => html`

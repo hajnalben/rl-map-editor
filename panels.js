@@ -88,8 +88,7 @@ function motionOf(e, doc) {                       // the Inspector's Motion sett
            trigger: m.trigger && checkpoints.some(c => c.uid === m.trigger) ? m.trigger : '' };
 }
 function infoOf(e) {                              // the Inspector's heading: what `e` is and does
-  const own = e.i === null ? '(new)' : e.name;
-  if (e.kind === 'spawn') return { title: 'Spawn', note: e.name, text: 'Where your car starts, facing the way it points, and comes back to on resets until you reach a checkpoint. Drag it anywhere: it settles just above the ground under it.' };
+  if (e.kind === 'spawn') return { title: 'Spawn', note: null, text: 'Where your car starts, facing the way it points, and comes back to on resets until you reach a checkpoint. Drag it anywhere: it settles just above the ground under it.' };
   if (e.kind === 'ball') return { title: e.placed ? 'Ball spawn' : 'Ball start', note: null, text: `${e.placed
     ? `Where the ball starts, and comes back to on resets until you reach a checkpoint${e.onRoof ? ": on the spawn car's roof, following the car" : ''}.`
     : 'Where the game puts the ball now.'} Drag it to give the ball a spawn of its own: let go over the car to start on its roof, anywhere else to rest on the ground.` };
@@ -97,24 +96,24 @@ function infoOf(e) {                              // the Inspector's heading: wh
     const from = e.shape.startsWith('std:') ? 'built-in shape' : e.shape.startsWith('lib:model:') ? 'imported model' : 'from ' + (ed.library.get(e.shape.slice(4))?.source ?? 'your library');
     return { title: e.name, note: `(${from})`, text: `${e.i === null ? 'A new mesh' : 'A shape added in the editor'}; the car collides with ${e.motion ? 'its box, as it moves' : 'its shape'}.` };
   }
-  if (e.kind === 'lava') return { title: 'Lava', note: own, text: [e.lava.car && 'When your car touches it, it goes back to the last checkpoint, as after a reset.',
+  if (e.kind === 'lava') return { title: 'Lava', note: null, text: [e.lava.car && 'When your car touches it, it goes back to the last checkpoint, as after a reset.',
     e.lava.ball && 'When the ball touches it, the car goes back to the last checkpoint with a fresh ball (in front of the car after a car checkpoint).', 'Before the first checkpoint, that is the spawn.'].filter(Boolean).join(' ') };
   if (e.kind === 'checkpoint') {
     const gate = isGate(e);
-    return { title: `${e.ball ? 'Ball' : 'Car'} ${gate ? 'gate' : 'checkpoint'}`, note: own, text: `${e.ball
+    return { title: `${e.ball ? 'Ball' : 'Car'} ${gate ? 'gate' : 'checkpoint'}`, note: null, text: `${e.ball
       ? `Becomes your respawn point when the ball ${gate ? 'passes through' : 'gets into'} it.`
       : `Becomes your respawn point when your car ${gate ? 'passes through' : 'drives or flies into'} it.`} After a reset the car appears ${gate ? `just past the gate (${GATE_PAST} units)` : 'inside it'}, on the ground when it reaches some, facing the arrow${e.ball
       ? `, with the new ball ${e.ballOnTop ? 'just over the roof' : `${BALL_AHEAD} units ahead`}` : ''}: the ghosts show where.` };
   }
-  if (e.kind === 'gravity') return { title: 'Gravity zone', note: own, text: "Inside it, the car and ball fall with this gravity instead of the map's (Rocket League's is −650): less floats, more is heavy, above 0 pulls up." };
-  if (e.kind === 'zone') return { title: 'Trigger zone', note: own, text: `Sets off script events when the car or ball goes in or out: zone('${e.id}').enter('car'), .leave(). Nothing happens unless the Script uses it.` };
-  if (e.kind === 'light') return { title: LIGHT_KINDS[e.light.kind].name, note: own, text: {
+  if (e.kind === 'gravity') return { title: 'Gravity zone', note: null, text: "Inside it, the car and ball fall with this gravity instead of the map's (Rocket League's is −650): less floats, more is heavy, above 0 pulls up." };
+  if (e.kind === 'zone') return { title: 'Trigger zone', note: null, text: `Sets off script events when the car or ball goes in or out: zone('${e.id}').enter('car'), .leave(). Nothing happens unless the Script uses it.` };
+  if (e.kind === 'light') return { title: LIGHT_KINDS[e.light.kind].name, note: null, text: {
     point: 'Shines every way, fading out to its radius.',
     spot: "Shines a cone the way it points: rotate it to aim. Full brightness inside the core, fading out to the cone's edge.",
     sun: "Light from far away, the way the arrow points; where it stands doesn't matter.",
     sky: "Even light from all around; where it stands doesn't matter.",
   }[e.light.kind] };
-  return { title: e.name, note: null, text: `${e.cls}${e.mesh ? ' · ' + e.mesh : ''}` };
+  return { title: e.mesh || e.cls, note: null, text: null };
 }
 function inspect(e, doc) {                        // what the Inspector shows for `e` (ui.js Inspector)
   const can = abilities([e]), l = e.light, lava = e.lava, offered = surfaces.value.length > 0, surface = surfaceOf(e, doc), parts = Array.isArray(surface);
