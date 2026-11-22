@@ -1,6 +1,7 @@
 {
   "name": "rl-map-editor",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Only for checks and deploys: the editor runs as plain files in the browser, its libraries from the CDN (index.html importmap)",
   "scripts": {
