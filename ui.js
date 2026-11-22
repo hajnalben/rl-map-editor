@@ -50,7 +50,6 @@ function Toolbar({ act }) {
     disabled=${modes !== null && !modes.includes(mode)} title=${title} onClick=${() => act.setMode(mode)}><${Icon} name=${icon}/></button>`;
   return html`
     <div class="flex items-center gap-1 min-w-0">
-      <div class="flex items-center gap-2 pl-1 pr-2"><img src="icon.svg" alt="" class="size-7 shrink-0"/><span class="text-sm font-semibold tracking-tight whitespace-nowrap max-[1360px]:hidden">RL Map Editor</span></div>
       <button class="btn btn-sm btn-ghost btn-square" title="New map: flat grass, the car and the ball" onClick=${act.newMap}><${Icon} name="FilePlus"/></button>
       <button class="btn btn-sm btn-ghost btn-square" title=${`Open a Rocket League workshop map (.udk), a map piece (.json), a 3D model (.glb, .gltf, .obj, .stl) or a picture, or drop one on the view. Nothing leaves this computer. (${MOD}O)`} onClick=${act.open}><${Icon} name="FolderOpen"/></button>
       <button class="btn btn-sm btn-ghost btn-square" title=${`Undo (${MOD}Z)`} onClick=${act.undo}><${Icon} name="Undo2"/></button>
@@ -186,10 +185,11 @@ const SelectField = ({ label, title, value, options, onChange }) => html`
     ${options.map(([v, text]) => html`<option value=${v}>${text}</option>`)}</select></label>`;
 // each field's axis letter in the gizmo's colour for it (the view's Y and Z are Unreal's Z and Y)
 const AXES = [['X', 'text-error'], ['Y', 'text-info'], ['Z', 'text-success']];
-const TURNS = [['P', 'text-info', 'Pitch'], ['Y', 'text-success', 'Yaw'], ['R', 'text-error', 'Roll']];
+// Roll, pitch, yaw sit under X, Y, Z, the axes they turn about (as UE5 lays them out); the values stay [pitch, yaw, roll]
+const TURNS = [['R', 'text-error', 'Roll', 2], ['P', 'text-info', 'Pitch', 0], ['Y', 'text-success', 'Yaw', 1]];
 const Vec = ({ label, title, values, step, axes = AXES, unused = [], onChange }) => html`
-  <div class="vec" title=${title}><span>${label}</span>${values.map((v, k) => html`<label class="input input-sm w-full ${unused.includes(k) ? 'invisible' : ''}" title=${axes[k][2]}>
-    <span class=${axes[k][1]}>${axes[k][0]}</span><input type="number" step=${step} value=${v} onChange=${e => onChange(k, e.currentTarget.value)}/></label>`)}</div>`;
+  <div class="vec" title=${title}><span>${label}</span>${axes.map(([letter, color, name, k = AXES.findIndex(a => a[0] === letter)]) => html`<label class="input input-sm w-full ${unused.includes(k) ? 'invisible' : ''}" title=${name}>
+    <span class=${color}>${letter}</span><input type="number" step=${step} value=${values[k]} onChange=${e => onChange(k, e.currentTarget.value)}/></label>`)}</div>`;
 const Join = ({ buttons }) => html`<div class="join w-full">${buttons.map(([label, title, active, onClick, disabled]) => html`
   <button class="btn btn-sm join-item flex-1 ${active ? 'active' : ''}" title=${title} disabled=${disabled} onClick=${onClick}>${label}</button>`)}</div>`;
 const PICTURE = 'picture';                       // the Surface option that asks for a picture
@@ -429,7 +429,7 @@ function tooltips() {
     const [first, ...more] = current.dataset.tip.split('\n');
     const m = first.match(/^(.*?)\s*\(([^()]+)\)$/), keys = m?.[2].split(/, | and /);
     const shortcut = keys?.every(k => KEY.test(k));
-    render(html`<span>${shortcut ? m[1] : first}</span>${shortcut && html`<span class="keys">${keys.map(k => html`<kbd class="kbd kbd-xs">${k}</kbd>`)}</span>`}
+    render(html`<div class="row"><span>${shortcut ? m[1] : first}</span>${shortcut && html`<span class="keys">${keys.map(k => html`<kbd class="kbd kbd-xs">${k}</kbd>`)}</span>`}</div>
       ${more.map(line => html`<p>${line}</p>`)}`, tip);
     tip.showPopover();
     const r = current.getBoundingClientRect(), t = tip.getBoundingClientRect();

@@ -75,7 +75,10 @@
   /* ui.js tooltips(): a popover, so it sits above menus and dialogs; placed by left/top */
   #tip { @apply pointer-events-none fixed m-0 max-w-72 rounded-md border border-white/10 bg-neutral px-2 py-1.5 text-xs leading-snug text-base-content shadow-xl; inset: auto; }
   #tip:popover-open { animation: tip-in .1s ease-out; }
-  #tip .keys { @apply ml-1.5 inline-flex gap-0.5 align-middle; }
+  #tip .row { @apply flex items-baseline gap-2; }
+  #tip .keys { @apply ml-auto flex shrink-0 gap-0.5; }
+  #tip kbd { font-family: inherit; }   /* monospace fonts lack ⌘⇧⌥⌃, and the fallback glyphs sit off the line */
+  .kbd.kbd-xs { border-bottom-width: 1px; border-radius: 4px; }   /* flat: a keycap's thick bottom edge smudges at this size */
   #tip p { @apply mt-1 text-base-content/60; }
   @keyframes tip-in { from { opacity: 0; } }
 </style>
